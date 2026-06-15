@@ -1,7 +1,11 @@
 """Configuration loader for YAML-based model definitions.
 
-Supports two formats:
-1. Simple format: Just list field names (recommended)
+Supports three formats:
+1. Auto-detect format: Just model name (fetch all fields from Odoo)
+   models:
+     - odoo_model: purchase.order  # Auto-detects all fields!
+
+2. Simple format: Just list field names
    models:
      - odoo_model: res.partner
        postgres_table: res_partner
@@ -10,7 +14,7 @@ Supports two formats:
          - name
          - email
 
-2. Verbose format: Full field definitions
+3. Verbose format: Full field definitions
    models:
      - odoo_model: res.partner
        postgres_table: res_partner
@@ -100,6 +104,9 @@ class ConfigLoader:
 
         # Extract models
         models_data = raw_config.get("models", [])
+        
+        # Auto-detect fields from Odoo if no fields specified
+        models_data = self._auto_detect_fields_from_odoo(models_data)
         
         # Expand simple field formats (just field names) to full field definitions
         models_data = self._expand_simple_fields(models_data)
@@ -246,6 +253,172 @@ class ConfigLoader:
         config["odoo_field"] = odoo_field
         
         return config
+
+    def _auto_detect_fields_from_odoo(self, models_data: list) -> list:
+        """
+        Auto-detect fields from Odoo for models without fields specified.
+        
+        If a model has no 'fields' key, this will:
+        1. Connect to Odoo using settings
+        2. Call fields_get() on the model
+        3. Generate field configs from Odoo's field definitions
+        
+        Supports:
+        - Empty fields: fields: [] or fields: null
+        - No fields key at all
+        """
+        from src.clients.odoo_client import OdooClient
+        from src.utils.settings import get_settings
+        from src.utils.logging import get_logger
+        
+        logger = get_logger(__name__)
+        expanded_models = []
+        
+        for model_data in models_data:
+            model_data = model_data.copy()
+            
+            # Check if fields need to be auto-detected
+            if 'fields' not in model_data or not model_data['fields']:
+                odoo_model = model_data.get('odoo_model')
+                if not odoo_model:
+                    expanded_models.append(model_data)
+                    continue
+                
+                try:
+                    # Connect to Odoo
+                    settings = get_settings()
+                    client = OdooClient(
+                        url=settings.odoo_url,
+                        db=settings.odoo_db,
+                        username=settings.odoo_username,
+                        api_key=settings.odoo_api_key,
+                    )
+                    
+                    # Get fields from Odoo
+                    logger.info("Auto-detecting fields from Odoo", model=odoo_model)
+                    odoo_fields = client.get_model_fields(odoo_model)
+                    
+                    # Generate field configs
+                    fields = self._generate_fields_from_odoo(odoo_model, odoo_fields)
+                    model_data['fields'] = fields
+                    
+                    # Auto-generate table name if not specified
+                    if 'postgres_table' not in model_data:
+                        model_data['postgres_table'] = odoo_model.replace('.', '_')
+                    
+                    logger.info(
+                        "Auto-detected fields",
+                        model=odoo_model,
+                        field_count=len(fields),
+                    )
+                    
+                except Exception as e:
+                    logger.warning(
+                        "Failed to auto-detect fields from Odoo, using empty config",
+                        model=odoo_model,
+                        error=str(e),
+                    )
+                    model_data['fields'] = []
+            
+            expanded_models.append(model_data)
+        
+        return expanded_models
+    
+    def _generate_fields_from_odoo(self, model: str, fields_def: dict) -> list:
+        """
+        Generate field configs from Odoo fields_get() response.
+        
+        Args:
+            model: Model name (for logging)
+            fields_def: Dictionary from fields_get()
+            
+        Returns:
+            List of field config dicts
+        """
+        fields = []
+        
+        for field_name, field_def in fields_def.items():
+            config = self._create_field_from_odoo(field_name, field_def)
+            if config:
+                fields.append(config)
+        
+        return fields
+    
+    def _create_field_from_odoo(self, field_name: str, field_def: dict) -> Optional[dict]:
+        """
+        Create a field config from Odoo field definition.
+        
+        Args:
+            field_name: Field technical name
+            field_def: Field definition from fields_get()
+            
+        Returns:
+            Field config dict or None if field should be skipped
+        """
+        odoo_type = field_def.get('type', 'char')
+        
+        # Skip one2many and many2many
+        if odoo_type in ('one2many', 'many2many'):
+            return None
+        
+        # Skip binary by default
+        if odoo_type == 'binary':
+            return None
+        
+        # Skip internal fields
+        if field_name.startswith('__') or field_name in ('__last_update',):
+            return None
+        
+        # Map Odoo type to PostgreSQL
+        pg_type = self._map_odoo_type_to_postgres(odoo_type)
+        
+        config = {
+            'odoo_field': field_name,
+            'postgres_column': field_name,
+            'postgres_type': pg_type,
+            'nullable': not field_def.get('required', False),
+        }
+        
+        # Primary key
+        if field_name == 'id':
+            config['primary_key'] = True
+            config['nullable'] = False
+            config['indexed'] = True
+        
+        # Foreign key (many2one)
+        elif odoo_type == 'many2one':
+            config['is_foreign_key'] = True
+            config['indexed'] = True
+            config['field_type'] = 'many2one'
+            if 'relation' in field_def:
+                config['related_model'] = field_def['relation']
+        
+        # Sync date fields
+        elif field_name in ('write_date', 'create_date'):
+            config['is_sync_date'] = True
+            config['indexed'] = True
+        
+        return config
+    
+    def _map_odoo_type_to_postgres(self, odoo_type: str) -> str:
+        """Map Odoo field type to PostgreSQL type."""
+        type_map = {
+            'integer': 'INTEGER',
+            'bigint': 'BIGINT',
+            'float': 'NUMERIC(20,4)',
+            'monetary': 'NUMERIC(20,4)',
+            'boolean': 'BOOLEAN',
+            'char': 'TEXT',
+            'text': 'TEXT',
+            'selection': 'VARCHAR(255)',
+            'date': 'DATE',
+            'datetime': 'TIMESTAMP',
+            'many2one': 'INTEGER',
+            'binary': 'BYTEA',
+            'html': 'TEXT',
+            'reference': 'VARCHAR(255)',
+        }
+        return type_map.get(odoo_type, 'TEXT')
 
     def _validate_config(self, config: SyncConfig) -> None:
         """
