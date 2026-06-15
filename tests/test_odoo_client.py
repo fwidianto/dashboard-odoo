@@ -176,6 +176,10 @@ class TestOdooClientAuth:
                 
                 assert uid == 1
                 assert client._uid == 1
+                # Verify authenticate was called with 4 arguments (including user_agent_env)
+                mock_server.authenticate.assert_called_once()
+                call_args = mock_server.authenticate.call_args
+                assert len(call_args[0]) == 4  # db, login, password/api_key, user_agent_env
 
     def test_authenticate_password_success(self, mock_settings_password):
         """Test successful password authentication (deprecated)."""
@@ -191,6 +195,10 @@ class TestOdooClientAuth:
                 
                 assert uid == 1
                 assert client._uid == 1
+                # Verify authenticate was called with 4 arguments (including user_agent_env)
+                mock_server.authenticate.assert_called_once()
+                call_args = mock_server.authenticate.call_args
+                assert len(call_args[0]) == 4  # db, login, password/api_key, user_agent_env
 
     def test_execute_with_api_key(self, mock_settings_api_key):
         """Test execute method uses correct auth parameter."""

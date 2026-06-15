@@ -208,7 +208,9 @@ class OdooClient:
         """
         Authenticate using API key via the common endpoint.
         
-        Uses: common.authenticate(db, login, api_key)
+        Uses: common.authenticate(db, login, api_key, {})
+        
+        Compatible with Odoo 17, Odoo 18, and Odoo Online (SaaS).
         
         Returns:
             Authenticated user ID.
@@ -217,11 +219,13 @@ class OdooClient:
 
         def _do_auth():
             # IMPORTANT: Use common.authenticate() not execute_kw!
+            # Note: Odoo 17/18 requires the 4th parameter (user_agent_env)
             common = xmlrpc_lib.ServerProxy(self.common_endpoint)
             return common.authenticate(
                 self.db,
                 self.username,
                 self.api_key,
+                {},  # Required: user_agent_env (can be empty dict)
             )
 
         try:
@@ -254,7 +258,9 @@ class OdooClient:
         """
         Authenticate using password via the common endpoint (DEPRECATED).
         
-        Uses: common.authenticate(db, login, password)
+        Uses: common.authenticate(db, login, password, {})
+        
+        Compatible with Odoo 17, Odoo 18, and Odoo Online (SaaS).
         
         Returns:
             Authenticated user ID.
@@ -267,11 +273,13 @@ class OdooClient:
 
         def _do_auth():
             # IMPORTANT: Use common.authenticate() not execute_kw!
+            # Note: Odoo 17/18 requires the 4th parameter (user_agent_env)
             common = xmlrpc_lib.ServerProxy(self.common_endpoint)
             return common.authenticate(
                 self.db,
                 self.username,
                 self.password,
+                {},  # Required: user_agent_env (can be empty dict)
             )
 
         try:
