@@ -237,6 +237,161 @@ class TestCreateModelTable:
                 assert 'primary_key' not in kwargs, \
                     "Table() should NOT have primary_key parameter - use Column.primary_key=True"
 
+    def test_create_model_table_idempotent(self, model_config_with_pk):
+        """
+        Test that create_model_table() can be called multiple times without error.
+        
+        This verifies the fix for:
+        sqlalchemy.exc.InvalidRequestError: Table 'res_partner' is already defined
+        """
+        from src.clients.postgres_client import PostgresClient
+        
+        with patch('src.clients.postgres_client.get_settings') as mock_settings:
+            mock_settings.return_value = MagicMock()
+            mock_settings.return_value.postgres.connection_url = "postgresql://test:test@localhost/test"
+            
+            client = PostgresClient(connection_url="postgresql://test:test@localhost/test")
+            
+            # Use a mutable dict for testing
+            client._metadata.tables = {}
+            
+            # Track Table() calls
+            table_calls = []
+            
+            def capture_table(*args, **kwargs):
+                table_calls.append(kwargs)
+                # Simulate SQLAlchemy: Table() adds itself to metadata.tables
+                table_name = args[0] if args else kwargs.get('name')
+                if table_name and table_name not in client._metadata.tables:
+                    client._metadata.tables[table_name] = MagicMock()
+                return MagicMock()
+            
+            with patch('src.clients.postgres_client.Table', side_effect=capture_table):
+                with patch('src.clients.postgres_client.inspect') as mock_inspect:
+                    mock_inspect.return_value.get_table_names.return_value = []
+                    mock_inspect.return_value.get_pk_constraint.return_value = {'constrained_columns': ['id']}
+                    
+                    client._engine = MagicMock()
+                    
+                    # Call create_model_table() twice - should NOT raise
+                    client.create_model_table(model_config_with_pk)
+                    client.create_model_table(model_config_with_pk)  # Second call
+                    
+                    # Table() should only be called ONCE (idempotent)
+                    assert len(table_calls) == 1, \
+                        f"Table() should only be called once for idempotency, got {len(table_calls)} calls"
+
+    def test_table_extend_existing_parameter(self, model_config_with_pk):
+        """Test that Table() is created with extend_existing=True."""
+        from src.clients.postgres_client import PostgresClient
+        
+        with patch('src.clients.postgres_client.get_settings') as mock_settings:
+            mock_settings.return_value = MagicMock()
+            mock_settings.return_value.postgres.connection_url = "postgresql://test:test@localhost/test"
+            
+            client = PostgresClient(connection_url="postgresql://test:test@localhost/test")
+            
+            # Use a mutable dict for testing
+            client._metadata.tables = {}
+            
+            table_calls = []
+            def capture_table(*args, **kwargs):
+                table_calls.append(kwargs)
+                # Simulate SQLAlchemy adding to metadata
+                table_name = args[0] if args else kwargs.get('name')
+                if table_name:
+                    client._metadata.tables[table_name] = MagicMock()
+                return MagicMock()
+            
+            with patch('src.clients.postgres_client.Table', side_effect=capture_table):
+                with patch('src.clients.postgres_client.inspect') as mock_inspect:
+                    mock_inspect.return_value.get_table_names.return_value = []
+                    mock_inspect.return_value.get_pk_constraint.return_value = {'constrained_columns': ['id']}
+                    
+                    client._engine = MagicMock()
+                    client.create_model_table(model_config_with_pk)
+            
+            # Verify extend_existing=True was passed
+            assert len(table_calls) == 1
+            assert table_calls[0].get('extend_existing') is True, \
+                "Table() should be called with extend_existing=True"
+
+
+class TestSchemaValidationIdempotency:
+    """Test that schema validation can run multiple times without conflicts."""
+
+    def test_validate_and_migrate_schema_idempotent(self):
+        """
+        Test that validate_and_migrate_schema() can be called multiple times.
+        
+        Verifies the full flow:
+        - create_model_table()
+        - validate_and_migrate_schema()
+        - ensure_table_schema()
+        
+        All can run repeatedly without metadata conflicts.
+        """
+        from src.clients.postgres_client import PostgresClient
+        
+        with patch('src.clients.postgres_client.get_settings') as mock_settings:
+            mock_settings.return_value = MagicMock()
+            mock_settings.return_value.postgres.connection_url = "postgresql://test:test@localhost/test"
+            
+            client = PostgresClient(connection_url="postgresql://test:test@localhost/test")
+            
+            # Use a mutable dict for testing
+            client._metadata.tables = {}
+            
+            model_config = ModelConfig(
+                odoo_model="res.partner",
+                postgres_table="res_partner",
+                fields=[
+                    FieldConfig(
+                        odoo_field="id",
+                        postgres_column="id",
+                        postgres_type="INTEGER",
+                        primary_key=True,
+                        nullable=False,
+                    ),
+                    FieldConfig(
+                        odoo_field="name",
+                        postgres_column="name",
+                        postgres_type="VARCHAR(255)",
+                        nullable=True,
+                    ),
+                ],
+            )
+            
+            table_calls = []
+            def capture_table(*args, **kwargs):
+                table_calls.append(kwargs)
+                # Simulate SQLAlchemy adding to metadata
+                table_name = args[0] if args else kwargs.get('name')
+                if table_name and table_name not in client._metadata.tables:
+                    client._metadata.tables[table_name] = MagicMock()
+                return MagicMock()
+            
+            with patch('src.clients.postgres_client.Table', side_effect=capture_table):
+                with patch('src.clients.postgres_client.inspect') as mock_inspect:
+                    mock_inspect.return_value.get_table_names.return_value = []
+                    mock_inspect.return_value.get_pk_constraint.return_value = {'constrained_columns': ['id']}
+                    mock_inspect.return_value.get_columns.return_value = [
+                        {'name': 'id', 'type': 'INTEGER', 'nullable': False},
+                        {'name': 'name', 'type': 'VARCHAR(255)', 'nullable': True},
+                    ]
+                    
+                    client._engine = MagicMock()
+                    
+                    # Run the full flow multiple times
+                    for i in range(3):
+                        # This should NOT raise InvalidRequestError
+                        client.create_model_table(model_config)
+                        client.ensure_table_schema(model_config)
+                    
+                    # Table() should only be called ONCE despite multiple invocations
+                    assert len(table_calls) == 1, \
+                        f"Table() should only be called once, got {len(table_calls)} calls"
+
 
 class TestUpsertWithPrimaryKey:
     """Test that upsert requires a primary key constraint."""

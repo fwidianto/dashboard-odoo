@@ -166,10 +166,21 @@ class PostgresClient:
     def create_model_table(self, model_config: ModelConfig) -> None:
         """
         Create a table for a model if it doesn't exist.
+        
+        This method is idempotent - safe to call multiple times.
+        Uses extend_existing=True to handle repeated calls.
 
         Args:
             model_config: Model configuration defining table structure.
         """
+        # IDEMPOTENCY: Check if table already exists in metadata
+        if model_config.postgres_table in self._metadata.tables:
+            self._logger.debug(
+                "Table already defined in metadata, skipping",
+                table=model_config.postgres_table,
+            )
+            return
+
         self._logger.info(
             "Ensuring table exists",
             table=model_config.postgres_table,
@@ -209,10 +220,12 @@ class PostgresClient:
                     )
                 )
 
-        # Create table (DO NOT pass primary_key parameter to Table() - it's invalid!)
+        # Create table with extend_existing=True for idempotency
+        # Also do NOT pass primary_key parameter to Table() - use Column.primary_key=True
         table = Table(
             model_config.postgres_table,
             self._metadata,
+            extend_existing=True,  # Idempotency safeguard
             *columns,
             *indexes,
         )
