@@ -168,7 +168,6 @@ class PostgresClient:
         )
 
         columns = []
-        pk_columns = []
         indexes = []
 
         for field in model_config.fields:
@@ -184,14 +183,16 @@ class PostgresClient:
             if field.default_value is not None:
                 col_args["default"] = field.default_value
 
+            # CRITICAL: Define primary_key on Column, not on Table()
+            if field.primary_key:
+                col_args["primary_key"] = True
+
             column = Column(**col_args)
             columns.append(column)
 
-            if field.primary_key:
-                pk_columns.append(column)
-
-            # Create indexes for indexed fields, primary keys, sync dates, and foreign keys
-            if field.indexed or field.primary_key or field.is_sync_date or field.is_foreign_key:
+            # Create indexes for indexed fields (EXCLUDING primary keys - they have PK constraint)
+            # Primary key columns don't need separate indexes
+            if field.indexed and not field.primary_key:
                 indexes.append(
                     Index(
                         f"idx_{model_config.postgres_table}_{field.postgres_column}",
@@ -199,20 +200,86 @@ class PostgresClient:
                     )
                 )
 
-        # Create table
+        # Create table (DO NOT pass primary_key parameter to Table() - it's invalid!)
         table = Table(
             model_config.postgres_table,
             self._metadata,
             *columns,
-            primary_key=tuple(pk_columns) if pk_columns else False,
             *indexes,
         )
 
         table.create(self.engine, checkfirst=True)
+        
+        # Migration safety: If table exists but primary key is missing, add it
+        self._ensure_primary_key_constraint(model_config)
+        
         self._logger.info(
             "Table ready",
             table=model_config.postgres_table,
         )
+    
+    def _ensure_primary_key_constraint(self, model_config: ModelConfig) -> None:
+        """
+        Ensure the primary key constraint exists on the configured primary key column.
+        
+        This handles migration for existing tables that were created without PK constraints.
+        """
+        pk_field = None
+        for field in model_config.fields:
+            if field.primary_key:
+                pk_field = field
+                break
+        
+        if not pk_field:
+            return
+        
+        try:
+            inspector = inspect(self.engine)
+            pk_column = pk_field.postgres_column
+            table_name = model_config.postgres_table
+            
+            # Check if table exists
+            if table_name not in inspector.get_table_names():
+                return
+            
+            # Check existing PK constraints
+            pk_constraints = inspector.get_pk_constraint(table_name)
+            
+            if not pk_constraints or not pk_constraints.get('constrained_columns'):
+                # No PK constraint - need to add it
+                self._logger.warning(
+                    f"Table '{table_name}' missing primary key constraint on '{pk_column}'. Adding constraint.",
+                    table=table_name,
+                    column=pk_column,
+                )
+                
+                # PostgreSQL doesn't support ADD PRIMARY KEY IF NOT EXISTS directly,
+                # so we use a block that silently succeeds if it already exists
+                sql = text(f"""
+                    DO $$
+                    BEGIN
+                        ALTER TABLE "{table_name}" ADD CONSTRAINT "{table_name}_pkey" 
+                        PRIMARY KEY ("{pk_column}");
+                    EXCEPTION
+                        WHEN duplicate_object THEN NULL;
+                    END $$;
+                """)
+                
+                with self.engine.connect() as conn:
+                    conn.execute(sql)
+                    conn.commit()
+                    
+                self._logger.info(
+                    "Primary key constraint added",
+                    table=table_name,
+                    column=pk_column,
+                )
+        except Exception as e:
+            self._logger.error(
+                "Failed to ensure primary key constraint",
+                table=model_config.postgres_table,
+                error=str(e),
+            )
 
     def create_indexes_for_model(self, model_config: ModelConfig) -> list[str]:
         """

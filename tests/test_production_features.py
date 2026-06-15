@@ -370,7 +370,8 @@ class TestIndexes:
         indexed_fields = model.get_indexed_fields()
         field_names = [f.odoo_field for f in indexed_fields]
         
-        assert "id" in field_names  # Primary key
+        # Primary keys are excluded - they have their own constraint
+        assert "id" not in field_names
         assert "write_date" in field_names  # Sync date
         assert "partner_id" in field_names  # Foreign key
         assert "name" not in field_names  # Not indexed
