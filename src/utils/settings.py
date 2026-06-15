@@ -2,8 +2,9 @@
 
 from functools import lru_cache
 from typing import Literal, Optional
+import warnings
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,8 +14,47 @@ class OdooSettings(BaseSettings):
     url: str = Field(default="http://localhost:8069", description="Odoo server URL")
     db: str = Field(default="odoo_db", description="Odoo database name")
     username: str = Field(default="admin", description="Odoo username")
-    password: str = Field(default="admin", description="Odoo password")
+    
+    # API Key authentication (preferred)
+    api_key: Optional[str] = Field(default=None, description="Odoo API key for authentication")
+    
+    # Password authentication (deprecated, fallback only)
+    password: Optional[str] = Field(default=None, description="Odoo password (deprecated, use API key)")
+    
     api_version: int = Field(default=17, description="Odoo API version")
+
+    @model_validator(mode='after')
+    def validate_auth_method(self):
+        """Validate authentication method and warn about password usage."""
+        if self.api_key and self.password:
+            # Both provided - prefer API key
+            warnings.warn(
+                "Both API_KEY and PASSWORD provided. Using API_KEY authentication. "
+                "Consider removing PASSWORD for security.",
+                DeprecationWarning,
+                stacklevel=2
+            )
+        elif not self.api_key and not self.password:
+            raise ValueError(
+                "Either ODOO_API_KEY or ODOO_PASSWORD must be provided. "
+                "API key is recommended for better security."
+            )
+        elif self.password:
+            warnings.warn(
+                "Using password authentication. This is deprecated and less secure. "
+                "Please migrate to API key authentication using ODOO_API_KEY. "
+                "See: https://www.odoo.com/documentation/17.0/developer/reference/external_api.html",
+                DeprecationWarning,
+                stacklevel=2
+            )
+        return self
+    
+    @property
+    def auth_method(self) -> Literal["api_key", "password"]:
+        """Return the authentication method being used."""
+        if self.api_key:
+            return "api_key"
+        return "password"
 
 
 class PostgresSettings(BaseSettings):

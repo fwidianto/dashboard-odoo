@@ -5,14 +5,16 @@ A production-ready, metadata-driven synchronization platform that bridges Odoo E
 ## Features
 
 - **Metadata-Driven Architecture**: Configure Odoo models and fields via YAML - no code changes needed
+- **API Key Authentication**: Secure authentication using Odoo API keys (password auth deprecated)
 - **Incremental Synchronization**: Uses `write_date` for efficient delta syncs
 - **Automatic Schema Evolution**: Creates tables and adds columns automatically
 - **UPSERT Operations**: Uses PostgreSQL `INSERT ON CONFLICT DO UPDATE`
 - **Dual Sync Modes**: Full sync and incremental sync supported
 - **Scheduled Execution**: APScheduler-based job scheduling
-- **REST API Ready**: FastAPI integration for future deployment
+- **REST API Ready**: FastAPI integration for production deployment
 - **Comprehensive Logging**: Structured logging with structlog
 - **State Tracking**: Persistent sync state in `sync_state` table
+- **Health Monitoring**: `/health`, `/sync-status`, `/sync-history` endpoints
 
 ## Project Structure
 
@@ -82,7 +84,10 @@ Configure your Odoo and PostgreSQL connections in `.env`:
 ODOO_URL=http://your-odoo-server:8069
 ODOO_DB=your_database
 ODOO_USERNAME=your_username
-ODOO_PASSWORD=your_password
+
+# Authentication - API Key is recommended for security
+ODOO_API_KEY=your_api_key_here
+# ODOO_PASSWORD=your_password  # DEPRECATED - only use if API key not available
 
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
@@ -351,10 +356,15 @@ pytest tests/test_sync_engine.py -v
 - Check URL in `.env` file
 - Ensure firewall allows connection
 
-**Authentication failed**
-- Verify username and password
-- Check if Odoo database exists
-- Ensure user has API access
+**Authentication Errors**
+- **API Key authentication failed**: Verify the API key is valid and associated with the user
+  - Generate an API key in Odoo: Settings → User → API Key
+  - Ensure the key hasn't expired or been revoked
+- **Password authentication deprecated**: Consider migrating to API key
+  - Set `ODOO_API_KEY` instead of `ODOO_PASSWORD`
+  - See: [Odoo API Key Documentation](https://www.odoo.com/documentation/17.0/developer/reference/external_api.html)
+- **Both methods fail**: Check that the username matches an existing Odoo user
+- **User lacks permissions**: Ensure the user has access to the models being synced
 
 **Table not found**
 - Run full sync to create tables
@@ -363,6 +373,30 @@ pytest tests/test_sync_engine.py -v
 **Missing columns**
 - Run full sync to add new columns
 - Check field names match Odoo model
+
+### Authentication Methods
+
+The platform supports two authentication methods:
+
+| Method | Environment Variable | Security | Recommendation |
+|--------|-------------------|----------|----------------|
+| API Key | `ODOO_API_KEY` | High | **Preferred** |
+| Password | `ODOO_PASSWORD` | Low | Deprecated |
+
+#### Generating an Odoo API Key
+
+1. Log in to Odoo as the target user
+2. Go to Settings → Users & Companies → Users
+3. Open the user profile
+4. Click "Preferences" or "Change API Key"
+5. Generate a new API key (copy it immediately - it won't be shown again)
+
+#### Security Best Practices
+
+- **Use API keys**: They don't expose user passwords
+- **Rotate keys periodically**: Regenerate keys every 90 days
+- **Use least privilege**: Create dedicated API users with minimal permissions
+- **Store securely**: Use environment variables or secret management, never in code
 
 ### Debug Mode
 

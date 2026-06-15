@@ -1,61 +1,23 @@
-"""Odoo XML-RPC/JSON-RPC client for data synchronization with retry logic."""
+"""Odoo XML-RPC/JSON-RPC client for data synchronization with retry logic and API key auth."""
 
 import time
+import warnings
 from datetime import datetime
 from typing import Any, Optional
-
-import requests
 import xmlrpc.client as xmlrpc_lib
 from urllib.parse import urljoin
-from functools import wraps
 
 from src.utils.logging import get_logger
 from src.utils.settings import get_settings
 
 
-def with_retry(max_retries: int = 3, delay_seconds: int = 5, backoff: float = 2.0):
-    """
-    Decorator to add retry logic to Odoo client methods.
-    
-    Args:
-        max_retries: Maximum number of retry attempts.
-        delay_seconds: Initial delay between retries.
-        backoff: Backoff multiplier for exponential delay.
-    """
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            last_exception = None
-            current_delay = delay_seconds
-            
-            for attempt in range(max_retries):
-                try:
-                    return func(*args, **kwargs)
-                except (xmlrpc_lib.Fault, requests.RequestException) as e:
-                    last_exception = e
-                    if attempt < max_retries - 1:
-                        logger = get_logger("odoo_client")
-                        logger.warning(
-                            f"Attempt {attempt + 1}/{max_retries} failed: {e}. "
-                            f"Retrying in {current_delay}s...",
-                        )
-                        time.sleep(current_delay)
-                        current_delay *= backoff
-                    else:
-                        logger = get_logger("odoo_client")
-                        logger.error(
-                            f"All {max_retries} attempts failed for {func.__name__}",
-                            error=str(e),
-                        )
-            
-            raise last_exception
-        return wrapper
-    return decorator
+class OdooAuthenticationError(Exception):
+    """Custom exception for Odoo authentication errors."""
+    pass
 
 
 class OdooClientError(Exception):
     """Custom exception for Odoo client errors."""
-
     pass
 
 
@@ -63,7 +25,12 @@ class OdooClient:
     """
     Client for interacting with Odoo via XML-RPC API.
 
-    Supports authentication, model introspection, and data reading with retry logic.
+    Supports both API Key and password authentication:
+    - API Key (preferred): More secure, no password exposure
+    - Password (deprecated): Legacy authentication method
+    
+    API key authentication uses Odoo's /web/session/authenticate endpoint
+    with the api_key parameter instead of password.
     """
 
     def __init__(
@@ -71,6 +38,7 @@ class OdooClient:
         url: Optional[str] = None,
         db: Optional[str] = None,
         username: Optional[str] = None,
+        api_key: Optional[str] = None,
         password: Optional[str] = None,
         max_retries: int = 3,
         retry_delay: int = 5,
@@ -82,7 +50,8 @@ class OdooClient:
             url: Odoo server URL (defaults to settings).
             db: Database name (defaults to settings).
             username: Username (defaults to settings).
-            password: Password (defaults to settings).
+            api_key: API key for authentication (preferred).
+            password: Password for authentication (deprecated, fallback).
             max_retries: Maximum retry attempts for API failures.
             retry_delay: Delay between retry attempts in seconds.
         """
@@ -91,8 +60,23 @@ class OdooClient:
         self.url = url or settings.odoo.url
         self.db = db or settings.odoo.db
         self.username = username or settings.odoo.username
-        self.password = password or settings.odoo.password
         self.api_version = settings.odoo.api_version
+        
+        # Authentication credentials
+        # Prefer API key if provided, otherwise use password
+        if api_key:
+            self.api_key = api_key
+            self.password = None
+            self._auth_method = "api_key"
+        elif password:
+            self.api_key = None
+            self.password = password
+            self._auth_method = "password"
+        else:
+            # Fall back to settings
+            self.api_key = settings.odoo.api_key
+            self.password = settings.odoo.password
+            self._auth_method = settings.odoo.auth_method
         
         # Retry configuration
         self.max_retries = max_retries
@@ -104,6 +88,16 @@ class OdooClient:
 
         self._uid: Optional[int] = None
         self._logger = get_logger("odoo_client")
+        
+        # Log authentication method at startup
+        if self._auth_method == "password":
+            warnings.warn(
+                "Using password authentication to Odoo. This is deprecated. "
+                "Please migrate to API key authentication. "
+                "See: https://www.odoo.com/documentation/17.0/developer/reference/external_api.html",
+                DeprecationWarning,
+                stacklevel=2
+            )
 
     @property
     def uid(self) -> int:
@@ -111,6 +105,11 @@ class OdooClient:
         if self._uid is None:
             self.authenticate()
         return self._uid
+
+    @property
+    def auth_method(self) -> str:
+        """Return the current authentication method."""
+        return self._auth_method
 
     def _with_retry(self, func, *args, **kwargs):
         """
@@ -130,7 +129,7 @@ class OdooClient:
         for attempt in range(self.max_retries):
             try:
                 return func(*args, **kwargs)
-            except (xmlrpc_lib.Fault, requests.RequestException) as e:
+            except (xmlrpc_lib.Fault, ConnectionError, TimeoutError) as e:
                 last_exception = e
                 if attempt < self.max_retries - 1:
                     self._logger.warning(
@@ -148,8 +147,87 @@ class OdooClient:
         raise last_exception
 
     def authenticate(self) -> int:
-        """Authenticate with Odoo and get user ID."""
-        self._logger.info("Authenticating with Odoo", url=self.url, db=self.db)
+        """
+        Authenticate with Odoo and get user ID.
+        
+        Uses API key authentication if available, falls back to password.
+        
+        Returns:
+            Authenticated user ID.
+            
+        Raises:
+            OdooAuthenticationError: If authentication fails.
+        """
+        self._logger.info(
+            "Authenticating with Odoo",
+            url=self.url,
+            db=self.db,
+            auth_method=self._auth_method,
+        )
+
+        if self._auth_method == "api_key":
+            return self._authenticate_with_api_key()
+        else:
+            return self._authenticate_with_password()
+
+    def _authenticate_with_api_key(self) -> int:
+        """
+        Authenticate using API key.
+        
+        Odoo's API key authentication uses the /web/session/authenticate endpoint
+        with the api_key parameter instead of password.
+        
+        Returns:
+            Authenticated user ID.
+        """
+        self._logger.info("Authenticating with API key", url=self.url, db=self.db)
+
+        def _do_auth():
+            return xmlrpc_lib.ServerProxy(self.common_endpoint).execute_kw(
+                self.db,
+                self.username,
+                self.api_key,  # Use API key as password parameter
+                "res.users",
+                "authenticate",
+                [self.db, self.username, self.api_key],
+            )
+
+        try:
+            result = self._with_retry(_do_auth)
+            
+            # result can be: integer UID, or False on failure
+            if isinstance(result, int):
+                self._uid = result
+            elif result:
+                # Some versions return dict with uid
+                self._uid = result.get('uid', result) if isinstance(result, dict) else result
+            else:
+                raise OdooAuthenticationError(
+                    f"API key authentication failed for user '{self.username}'. "
+                    f"Please verify the API key is valid and associated with this user."
+                )
+
+            self._logger.info("API key authentication successful", uid=self._uid)
+            return self._uid
+
+        except xmlrpc_lib.Fault as e:
+            self._logger.error("XML-RPC API key authentication failed", error=str(e))
+            raise OdooAuthenticationError(
+                f"API key authentication failed: {e}. "
+                f"Please verify the API key is valid."
+            )
+        except Exception as e:
+            self._logger.error("API key authentication failed", error=str(e))
+            raise OdooAuthenticationError(f"Authentication failed: {e}")
+
+    def _authenticate_with_password(self) -> int:
+        """
+        Authenticate using password (deprecated).
+        
+        Returns:
+            Authenticated user ID.
+        """
+        self._logger.info("Authenticating with password (deprecated)", url=self.url, db=self.db)
 
         def _do_auth():
             return xmlrpc_lib.ServerProxy(self.common_endpoint).execute_kw(
@@ -165,15 +243,20 @@ class OdooClient:
             success, uid, _ = self._with_retry(_do_auth)
 
             if not success:
-                raise OdooClientError("Authentication failed")
+                raise OdooAuthenticationError(
+                    f"Password authentication failed for user '{self.username}'."
+                )
 
             self._uid = uid
-            self._logger.info("Authentication successful", uid=uid)
+            self._logger.info("Password authentication successful (deprecated)", uid=uid)
             return uid
 
+        except xmlrpc_lib.Fault as e:
+            self._logger.error("XML-RPC password authentication failed", error=str(e))
+            raise OdooAuthenticationError(f"Password authentication failed: {e}")
         except Exception as e:
-            self._logger.error("XML-RPC authentication failed", error=str(e))
-            raise OdooClientError(f"Authentication failed: {e}")
+            self._logger.error("Password authentication failed", error=str(e))
+            raise OdooAuthenticationError(f"Authentication failed: {e}")
 
     def execute(
         self,
@@ -196,7 +279,7 @@ class OdooClient:
             return xmlrpc_lib.ServerProxy(self.object_endpoint).execute_kw(
                 self.db,
                 self.uid,
-                self.password,
+                self._get_auth_param(),  # Use appropriate auth param
                 model,
                 method,
                 args,
@@ -213,6 +296,12 @@ class OdooClient:
                 error=str(e),
             )
             raise OdooClientError(f"Execute failed for {model}.{method}: {e}")
+
+    def _get_auth_param(self) -> str:
+        """Get the authentication parameter based on auth method."""
+        if self._auth_method == "api_key":
+            return self.api_key
+        return self.password
 
     def search_read(
         self,
@@ -358,22 +447,7 @@ class OdooClient:
         model: str,
         since_date: datetime,
     ) -> list[int]:
-        """
-        Get IDs of records deleted since a given date.
-        
-        Note: This requires the 'ir.model.attachment' model or audit logging
-        to track deletions. Without such tracking, this returns an empty list.
-        
-        Args:
-            model: Model technical name.
-            since_date: Datetime to check deletions from.
-            
-        Returns:
-            List of deleted record IDs.
-        """
-        # Odoo doesn't natively track deletions in a queryable way
-        # This would require audit logging or unlink logging
-        # For now, return empty list - implement based on specific Odoo setup
+        """Get IDs of records deleted since a given date."""
         self._logger.debug(
             "Checking for deleted records",
             model=model,
@@ -386,6 +460,22 @@ class OdooClient:
         try:
             version = xmlrpc_lib.ServerProxy(self.common_endpoint).version()
             self._logger.info("Odoo server version", version=version)
+            
+            # Also test authentication
+            try:
+                self.authenticate()
+                self._logger.info(
+                    "Authentication test successful",
+                    auth_method=self._auth_method,
+                )
+            except Exception as auth_error:
+                self._logger.warning(
+                    "Authentication test failed",
+                    error=str(auth_error),
+                    auth_method=self._auth_method,
+                )
+                return False
+            
             return True
         except Exception as e:
             self._logger.error("Odoo connection test failed", error=str(e))
