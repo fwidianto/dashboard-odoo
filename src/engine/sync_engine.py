@@ -45,7 +45,7 @@ class SyncEngine:
         settings = get_settings()
 
         self._odoo = odoo_client or OdooClient(
-            max_retries=config.max_retries if config else settings.sync.batch_size,
+            max_retries=config.max_retries if config else 3,
             retry_delay=config.retry_delay_seconds if config else 5,
         )
         self._pg = postgres_client or PostgresClient()

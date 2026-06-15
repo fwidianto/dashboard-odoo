@@ -142,8 +142,7 @@ class TestOdooClientAuth:
     def test_client_initialization_password(self, mock_settings_password):
         """Test Odoo client initializes with password (deprecated)."""
         with patch('src.clients.odoo_client.get_settings', return_value=mock_settings_password):
-            with pytest.warns(DeprecationWarning):
-                client = OdooClient()
+            client = OdooClient()
             
             assert client.url == "http://localhost:8069"
             assert client.password == "deprecated_password"
@@ -170,7 +169,7 @@ class TestOdooClientAuth:
             
             with patch('xmlrpc.client.ServerProxy') as mock_proxy:
                 mock_server = MagicMock()
-                mock_server.execute_kw.return_value = 1  # UID returned
+                mock_server.authenticate.return_value = 1  # UID returned
                 mock_proxy.return_value = mock_server
                 
                 uid = client.authenticate()
@@ -181,12 +180,11 @@ class TestOdooClientAuth:
     def test_authenticate_password_success(self, mock_settings_password):
         """Test successful password authentication (deprecated)."""
         with patch('src.clients.odoo_client.get_settings', return_value=mock_settings_password):
-            with pytest.warns(DeprecationWarning):
-                client = OdooClient()
+            client = OdooClient()
             
             with patch('xmlrpc.client.ServerProxy') as mock_proxy:
                 mock_server = MagicMock()
-                mock_server.execute_kw.return_value = (True, 1, [])
+                mock_server.authenticate.return_value = 1  # UID returned
                 mock_proxy.return_value = mock_server
                 
                 uid = client.authenticate()
@@ -222,8 +220,7 @@ class TestOdooClientAuth:
     def test_get_auth_param_password(self, mock_settings_password):
         """Test _get_auth_param returns password."""
         with patch('src.clients.odoo_client.get_settings', return_value=mock_settings_password):
-            with pytest.warns(DeprecationWarning):
-                client = OdooClient()
+            client = OdooClient()
             
             assert client._get_auth_param() == "deprecated_password"
 

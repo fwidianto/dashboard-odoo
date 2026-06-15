@@ -5,10 +5,14 @@ the platform never writes to Odoo. All data flows only from Odoo to PostgreSQL.
 
 READ-ONLY MODE: This client will ONLY execute read operations against Odoo.
 Write operations (create, write, unlink, etc.) are explicitly blocked.
+
+Compatible with:
+- Odoo 17
+- Odoo 18
+- Odoo Online (SaaS)
 """
 
 import time
-import warnings
 from datetime import datetime
 from typing import Any, Optional
 import xmlrpc.client as xmlrpc_lib
@@ -21,8 +25,6 @@ from src.utils.settings import get_settings
 # =============================================================================
 # ALLOWED METHODS (Read-Only Operations Only)
 # =============================================================================
-# This is the authoritative list of methods that can be executed against Odoo.
-# ALL other methods are explicitly forbidden to ensure read-only operation.
 ALLOWED_METHODS = frozenset([
     "search",          # Search for record IDs
     "read",            # Read specific records by ID
@@ -38,31 +40,19 @@ FORBIDDEN_METHODS = frozenset([
     "unlink",          # Delete records
     "copy",            # Copy records
     "name_create",     # Create with name
-    "default_get",     # Get default values (safe but blocked for strict mode)
+    "default_get",     # Get default values
     "create_multi",    # Batch create
-    "write_multi",    # Batch update
+    "write_multi",     # Batch update
     "unlink_multi",    # Batch delete
     "action_archive",  # Archive records
-    "action_unarchive", # Unarchive records
+    "action_unarchive",# Unarchive records
     "toggle_active",   # Toggle active state
-    "button_archive",  # Archive button
-    "button_draft",    # Draft button
-    "button_cancel",   # Cancel button
-    "button_done",     # Done button
-    "button_confirm",  # Confirm button
-    "unlink",          # Delete
 ])
 
 
 class ReadOnlyViolation(Exception):
-    """
-    Exception raised when a forbidden method is attempted against Odoo.
-    
-    This exception indicates a security violation where code attempted
-    to execute a write operation against Odoo, which is strictly forbidden
-    in read-only mode.
-    """
-    
+    """Exception raised when a forbidden method is attempted against Odoo."""
+
     def __init__(self, method: str, model: str, message: Optional[str] = None):
         self.method = method
         self.model = model
@@ -90,14 +80,9 @@ class OdooClient:
     SECURITY FEATURES:
     - Strict method allowlist: Only read operations are permitted
     - All write operations are blocked and logged
-    - Audit logging for all method executions
     - API Key authentication (password auth deprecated)
     
-    The platform operates in READ-ONLY mode. Data flows ONLY from Odoo to PostgreSQL.
-    Odoo is treated as the source of truth.
-    
-    Allowed methods: search, read, search_read, search_count, fields_get
-    Forbidden methods: create, write, unlink, copy, and all other mutating methods
+    Compatible with Odoo 17, Odoo 18, and Odoo Online (SaaS).
     """
 
     def __init__(
@@ -120,8 +105,8 @@ class OdooClient:
             username: Username (defaults to settings).
             api_key: API key for authentication (preferred).
             password: Password for authentication (deprecated, fallback).
-            max_retries: Maximum retry attempts for API failures.
-            retry_delay: Delay between retry attempts in seconds.
+            max_retries: Maximum retry attempts for API failures (default: 3).
+            retry_delay: Delay between retry attempts in seconds (default: 5).
             read_only_mode: Override read-only mode (defaults to settings).
         """
         settings = get_settings()
@@ -129,10 +114,8 @@ class OdooClient:
         self.url = url or settings.odoo.url
         self.db = db or settings.odoo.db
         self.username = username or settings.odoo.username
-        self.api_version = settings.odoo.api_version
         
         # Authentication credentials
-        # Prefer API key if provided, otherwise use password
         if api_key:
             self.api_key = api_key
             self.password = None
@@ -142,7 +125,6 @@ class OdooClient:
             self.password = password
             self._auth_method = "password"
         else:
-            # Fall back to settings
             self.api_key = settings.odoo.api_key
             self.password = settings.odoo.password
             self._auth_method = settings.odoo.auth_method
@@ -155,23 +137,14 @@ class OdooClient:
         self._read_only_mode = read_only_mode if read_only_mode is not None else settings.sync.read_only_mode
         
         # XML-RPC endpoints
-        self.common_endpoint = urljoin(self.url, "/xmlrpc/2/common")
-        self.object_endpoint = urljoin(self.url, "/xmlrpc/2/object")
+        # /xmlrpc/2/common - Authentication (has authenticate() method)
+        # /xmlrpc/2/object - Model operations (has execute_kw() method)
+        self.common_endpoint = urljoin(self.url.rstrip('/'), "/xmlrpc/2/common")
+        self.object_endpoint = urljoin(self.url.rstrip('/'), "/xmlrpc/2/object")
 
         self._uid: Optional[int] = None
         self._logger = get_logger("odoo_client")
         
-        # Log authentication method at startup
-        if self._auth_method == "password":
-            warnings.warn(
-                "Using password authentication to Odoo. This is deprecated. "
-                "Please migrate to API key authentication. "
-                "See: https://www.odoo.com/documentation/17.0/developer/reference/external_api.html",
-                DeprecationWarning,
-                stacklevel=2
-            )
-        
-        # Log read-only mode
         self._logger.info(
             "Odoo client initialized in READ-ONLY mode",
             url=self.url,
@@ -200,13 +173,6 @@ class OdooClient:
     def _validate_method(self, method: str, model: str) -> None:
         """
         Validate that the method is allowed in read-only mode.
-        
-        Args:
-            method: The method name to validate.
-            model: The model being accessed.
-            
-        Raises:
-            ReadOnlyViolation: If the method is not in the allowlist.
         """
         if method not in ALLOWED_METHODS:
             self._logger.error(
@@ -217,54 +183,14 @@ class OdooClient:
                 user=self.username,
                 db=self.db,
             )
-            raise ReadOnlyViolation(method=method, model=model)
-
-    def _with_retry(self, func, *args, **kwargs):
-        """
-        Execute a function with retry logic.
-        
-        Args:
-            func: Function to execute.
-            *args: Positional arguments.
-            **kwargs: Keyword arguments.
-            
-        Returns:
-            Result of the function.
-        """
-        last_exception = None
-        current_delay = self.retry_delay
-        
-        for attempt in range(self.max_retries):
-            try:
-                return func(*args, **kwargs)
-            except (xmlrpc_lib.Fault, ConnectionError, TimeoutError) as e:
-                last_exception = e
-                if attempt < self.max_retries - 1:
-                    self._logger.warning(
-                        f"Attempt {attempt + 1}/{self.max_retries} failed: {e}. "
-                        f"Retrying in {current_delay}s...",
-                    )
-                    time.sleep(current_delay)
-                    current_delay *= 2  # Exponential backoff
-                else:
-                    self._logger.error(
-                        f"All {self.max_retries} attempts failed",
-                        error=str(e),
-                    )
-        
-        raise last_exception
+            raise ReadOnlyViolation(method, model)
 
     def authenticate(self) -> int:
         """
-        Authenticate with Odoo and get user ID.
-        
-        Uses API key authentication if available, falls back to password.
+        Authenticate with Odoo server.
         
         Returns:
             Authenticated user ID.
-            
-        Raises:
-            OdooAuthenticationError: If authentication fails.
         """
         self._logger.info(
             "Authenticating with Odoo",
@@ -280,7 +206,9 @@ class OdooClient:
 
     def _authenticate_with_api_key(self) -> int:
         """
-        Authenticate using API key.
+        Authenticate using API key via the common endpoint.
+        
+        Uses: common.authenticate(db, login, api_key)
         
         Returns:
             Authenticated user ID.
@@ -288,28 +216,25 @@ class OdooClient:
         self._logger.info("Authenticating with API key", url=self.url, db=self.db)
 
         def _do_auth():
-            return xmlrpc_lib.ServerProxy(self.common_endpoint).execute_kw(
+            # IMPORTANT: Use common.authenticate() not execute_kw!
+            common = xmlrpc_lib.ServerProxy(self.common_endpoint)
+            return common.authenticate(
                 self.db,
                 self.username,
                 self.api_key,
-                "res.users",
-                "authenticate",
-                [self.db, self.username, self.api_key],
             )
 
         try:
             result = self._with_retry(_do_auth)
-            
-            if isinstance(result, int):
-                self._uid = result
-            elif result:
-                self._uid = result.get('uid', result) if isinstance(result, dict) else result
-            else:
+
+            if not result:
                 raise OdooAuthenticationError(
                     f"API key authentication failed for user '{self.username}'. "
                     f"Please verify the API key is valid and associated with this user."
                 )
 
+            self._uid = result if isinstance(result, int) else result.get('uid', result)
+            
             self._logger.info(
                 "API key authentication successful",
                 uid=self._uid,
@@ -327,7 +252,9 @@ class OdooClient:
 
     def _authenticate_with_password(self) -> int:
         """
-        Authenticate using password (deprecated).
+        Authenticate using password via the common endpoint (DEPRECATED).
+        
+        Uses: common.authenticate(db, login, password)
         
         Returns:
             Authenticated user ID.
@@ -339,31 +266,31 @@ class OdooClient:
         )
 
         def _do_auth():
-            return xmlrpc_lib.ServerProxy(self.common_endpoint).execute_kw(
+            # IMPORTANT: Use common.authenticate() not execute_kw!
+            common = xmlrpc_lib.ServerProxy(self.common_endpoint)
+            return common.authenticate(
                 self.db,
                 self.username,
                 self.password,
-                "res.users",
-                "authenticate",
-                [self.db, self.username, self.password],
             )
 
         try:
-            success, uid, _ = self._with_retry(_do_auth)
+            result = self._with_retry(_do_auth)
 
-            if not success:
+            if not result:
                 raise OdooAuthenticationError(
                     f"Password authentication failed for user '{self.username}'."
                 )
 
-            self._uid = uid
+            self._uid = result if isinstance(result, int) else result.get('uid', result)
+            
             self._logger.warning(
                 "Password authentication successful (DEPRECATED)",
                 uid=self._uid,
                 user=self.username,
                 db=self.db,
             )
-            return uid
+            return self._uid
 
         except xmlrpc_lib.Fault as e:
             self._logger.error("XML-RPC password authentication failed", error=str(e))
@@ -372,18 +299,43 @@ class OdooClient:
             self._logger.error("Password authentication failed", error=str(e))
             raise OdooAuthenticationError(f"Authentication failed: {e}")
 
-    def execute(
-        self,
-        model: str,
-        method: str,
-        args: list,
-        kwargs: Optional[dict] = None,
-    ) -> Any:
+    def _with_retry(self, func):
         """
-        Execute a READ-ONLY method on an Odoo model.
+        Execute a function with retry logic.
         
-        This method enforces read-only mode by validating the method against
-        the allowed methods list. All write operations are blocked and logged.
+        Args:
+            func: Function to execute.
+            
+        Returns:
+            Result of the function call.
+        """
+        last_exception = None
+        
+        for attempt in range(self.max_retries):
+            try:
+                return func()
+            except Exception as e:
+                last_exception = e
+                if attempt < self.max_retries - 1:
+                    self._logger.warning(
+                        f"Attempt {attempt + 1}/{self.max_retries} failed: {e}. Retrying..."
+                    )
+                    time.sleep(self.retry_delay)
+        
+        self._logger.error(
+            f"All {self.max_retries} attempts failed",
+            error=str(last_exception),
+        )
+        raise last_exception
+
+    def execute(self, model: str, method: str, args: list, kwargs: Optional[dict] = None) -> Any:
+        """
+        Execute a READ-ONLY method on an Odoo model using execute_kw.
+        
+        IMPORTANT: execute_kw must be called on the OBJECT endpoint, not common!
+        
+        Correct pattern:
+            models.execute_kw(db, uid, password_or_api_key, model, method, args, kwargs)
         
         Args:
             model: Model technical name (e.g., 'res.partner').
@@ -405,15 +357,18 @@ class OdooClient:
         self._validate_method(method, model)
 
         self._logger.debug(
-            "Executing READ-ONLY Odoo method",
+            "Executing READ-ONLY Odoo method via execute_kw",
             model=model,
             method=method,
             user=self.username,
             db=self.db,
+            endpoint=self.object_endpoint,
         )
 
         def _do_execute():
-            return xmlrpc_lib.ServerProxy(self.object_endpoint).execute_kw(
+            # IMPORTANT: Use object endpoint with execute_kw!
+            models = xmlrpc_lib.ServerProxy(self.object_endpoint)
+            return models.execute_kw(
                 self.db,
                 self.uid,
                 self._get_auth_param(),
@@ -425,19 +380,16 @@ class OdooClient:
 
         try:
             result = self._with_retry(_do_execute)
-            
+
             # Audit log successful execution
             record_count = self._get_record_count(result)
             self._logger.info(
                 "Odoo READ operation completed",
                 model=model,
                 method=method,
-                user=self.username,
-                db=self.db,
-                url=self.url,
                 records_returned=record_count,
             )
-            
+
             return result
         except xmlrpc_lib.Fault as e:
             self._logger.error(
@@ -447,18 +399,26 @@ class OdooClient:
                 error=str(e),
             )
             raise OdooClientError(f"Execute failed for {model}.{method}: {e}")
-
-    def _get_record_count(self, result: Any) -> int:
-        """Get the number of records from a result."""
-        if isinstance(result, list):
-            return len(result)
-        return 0
+        except Exception as e:
+            self._logger.error(
+                "Odoo method execution failed",
+                model=model,
+                method=method,
+                error=str(e),
+            )
+            raise OdooClientError(f"Execute failed for {model}.{method}: {e}")
 
     def _get_auth_param(self) -> str:
         """Get the authentication parameter based on auth method."""
         if self._auth_method == "api_key":
             return self.api_key
         return self.password
+
+    def _get_record_count(self, result: Any) -> int:
+        """Get record count from execute_kw result."""
+        if isinstance(result, list):
+            return len(result)
+        return 0
 
     def search(
         self,
@@ -470,6 +430,8 @@ class OdooClient:
     ) -> list[int]:
         """
         Search for record IDs (READ-ONLY operation).
+        
+        Uses: execute_kw(model, 'search', [domain], kwargs)
 
         Args:
             model: Model technical name.
@@ -499,6 +461,8 @@ class OdooClient:
     ) -> list[dict]:
         """
         Read specific records by ID (READ-ONLY operation).
+        
+        Uses: execute_kw(model, 'read', [ids], kwargs)
 
         Args:
             model: Model technical name.
@@ -525,6 +489,8 @@ class OdooClient:
     ) -> list[dict]:
         """
         Search and read records from a model (READ-ONLY operation).
+        
+        Uses: execute_kw(model, 'search_read', [], kwargs)
 
         Args:
             model: Model technical name.
@@ -553,6 +519,8 @@ class OdooClient:
     def count(self, model: str, domain: list) -> int:
         """
         Count records matching a domain (READ-ONLY operation).
+        
+        Uses: execute_kw(model, 'search_count', [domain])
 
         Args:
             model: Model technical name.
@@ -566,6 +534,8 @@ class OdooClient:
     def get_model_fields(self, model: str) -> dict[str, dict]:
         """
         Get field definitions for a model (READ-ONLY operation).
+        
+        Uses: execute_kw(model, 'fields_get', [], kwargs)
 
         Args:
             model: Model technical name.
@@ -579,6 +549,8 @@ class OdooClient:
     def get_model_info(self, model: str) -> dict:
         """
         Get model information (READ-ONLY operation).
+        
+        Uses: execute_kw('ir.model', 'read', [[id]], kwargs)
 
         Args:
             model: Model technical name.
@@ -681,20 +653,22 @@ class OdooClient:
         """
         Test connection to Odoo server.
         
-        Also validates authentication and logs READ-ONLY mode warning.
+        Also validates authentication.
 
         Returns:
             True if connection and authentication successful.
         """
         try:
-            version = xmlrpc_lib.ServerProxy(self.common_endpoint).version()
+            # Test server connectivity
+            common = xmlrpc_lib.ServerProxy(self.common_endpoint)
+            version = common.version()
             self._logger.info(
                 "Odoo server version",
                 version=version,
                 url=self.url,
             )
             
-            # Also test authentication
+            # Test authentication
             try:
                 self.authenticate()
                 self._logger.info(
@@ -726,7 +700,6 @@ class OdooClient:
 # =============================================================================
 # METHOD CONSTANTS FOR EXTERNAL USE
 # =============================================================================
-# These constants can be imported and used to check allowed methods
 __all__ = [
     "ALLOWED_METHODS",
     "FORBIDDEN_METHODS",
