@@ -1,0 +1,192 @@
+# Odoo to PostgreSQL Synchronization Configuration
+# This file defines all Odoo models to synchronize and their field mappings
+
+models:
+  # Example: Res Partners (Contacts)
+  - odoo_model: res.partner
+    postgres_table: res_partner
+    description: "Synchronize Odoo contacts/partners"
+    fields:
+      - odoo_field: id
+        postgres_column: id
+        postgres_type: INTEGER
+        primary_key: true
+        nullable: false
+        
+      - odoo_field: name
+        postgres_column: name
+        postgres_type: VARCHAR(255)
+        nullable: true
+        
+      - odoo_field: email
+        postgres_column: email
+        postgres_type: VARCHAR(255)
+        nullable: true
+        
+      - odoo_field: phone
+        postgres_column: phone
+        postgres_type: VARCHAR(64)
+        nullable: true
+        
+      - odoo_field: active
+        postgres_column: active
+        postgres_type: BOOLEAN
+        nullable: true
+        default_value: true
+        
+      - odoo_field: write_date
+        postgres_column: write_date
+        postgres_type: TIMESTAMP
+        nullable: true
+        is_sync_date: true  # Used for incremental sync tracking
+
+  # Example: Product Products
+  - odoo_model: product.product
+    postgres_table: product_product
+    description: "Synchronize Odoo products"
+    fields:
+      - odoo_field: id
+        postgres_column: id
+        postgres_type: INTEGER
+        primary_key: true
+        nullable: false
+        
+      - odoo_field: name
+        postgres_column: name
+        postgres_type: VARCHAR(255)
+        nullable: true
+        
+      - odoo_field: default_code
+        postgres_column: default_code
+        postgres_type: VARCHAR(64)
+        nullable: true
+        
+      - odoo_field: list_price
+        postgres_column: list_price
+        postgres_type: NUMERIC(12, 2)
+        nullable: true
+        
+      - odoo_field: standard_price
+        postgres_column: standard_price
+        postgres_type: NUMERIC(12, 2)
+        nullable: true
+        
+      - odoo_field: qty_available
+        postgres_column: qty_available
+        postgres_type: NUMERIC(12, 2)
+        nullable: true
+        
+      - odoo_field: active
+        postgres_column: active
+        postgres_type: BOOLEAN
+        nullable: true
+        default_value: true
+        
+      - odoo_field: write_date
+        postgres_column: write_date
+        postgres_type: TIMESTAMP
+        nullable: true
+        is_sync_date: true
+
+  # Example: Sale Orders
+  - odoo_model: sale.order
+    postgres_table: sale_order
+    description: "Synchronize Odoo sale orders"
+    fields:
+      - odoo_field: id
+        postgres_column: id
+        postgres_type: INTEGER
+        primary_key: true
+        nullable: false
+        
+      - odoo_field: name
+        postgres_column: name
+        postgres_type: VARCHAR(64)
+        nullable: true
+        
+      - odoo_field: partner_id
+        postgres_column: partner_id
+        postgres_type: INTEGER
+        nullable: true
+        # Relational field - stores the ID only
+        
+      - odoo_field: date_order
+        postgres_column: date_order
+        postgres_type: TIMESTAMP
+        nullable: true
+        
+      - odoo_field: state
+        postgres_column: state
+        postgres_type: VARCHAR(32)
+        nullable: true
+        
+      - odoo_field: amount_total
+        postgres_column: amount_total
+        postgres_type: NUMERIC(12, 2)
+        nullable: true
+        
+      - odoo_field: write_date
+        postgres_column: write_date
+        postgres_type: TIMESTAMP
+        nullable: true
+        is_sync_date: true
+
+  # Example: Stock Moves
+  - odoo_model: stock.move
+    postgres_table: stock_move
+    description: "Synchronize Odoo stock moves"
+    fields:
+      - odoo_field: id
+        postgres_column: id
+        postgres_type: INTEGER
+        primary_key: true
+        nullable: false
+        
+      - odoo_field: name
+        postgres_column: name
+        postgres_type: VARCHAR(255)
+        nullable: true
+        
+      - odoo_field: product_id
+        postgres_column: product_id
+        postgres_type: INTEGER
+        nullable: true
+        
+      - odoo_field: product_qty
+        postgres_column: product_qty
+        postgres_type: NUMERIC(12, 2)
+        nullable: true
+        
+      - odoo_field: state
+        postgres_column: state
+        postgres_type: VARCHAR(32)
+        nullable: true
+        
+      - odoo_field: date
+        postgres_column: move_date
+        postgres_type: TIMESTAMP
+        nullable: true
+        
+      - odoo_field: write_date
+        postgres_column: write_date
+        postgres_type: TIMESTAMP
+        nullable: true
+        is_sync_date: true
+
+# Type Mappings Reference:
+# INTEGER     -> 32-bit integer
+# BIGINT      -> 64-bit integer
+# VARCHAR(n)  -> Variable length string (specify n)
+# TEXT        -> Unlimited text
+# BOOLEAN     -> True/False
+# NUMERIC(p,s)-> Decimal with precision p and scale s
+# TIMESTAMP   -> Date and time
+# DATE        -> Date only
+# JSONB       -> JSON data
+# UUID        -> UUID type
+
+# Adding new models:
+# 1. Add a new entry under 'models:' with odoo_model and postgres_table
+# 2. Define fields with odoo_field, postgres_column, and postgres_type
+# 3. Set primary_key: true for the primary key field
+# 4. Set is_sync_date: true on the write_date field for incremental sync
