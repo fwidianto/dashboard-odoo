@@ -1,6 +1,6 @@
 """Enhanced configuration models with advanced sync options."""
 
-from typing import Optional, Literal
+from typing import Optional, Literal, Union
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -12,7 +12,10 @@ class FieldConfig(BaseModel):
     postgres_type: str = Field(..., description="PostgreSQL data type")
     primary_key: bool = Field(default=False, description="Is this the primary key")
     nullable: bool = Field(default=True, description="Can the column be NULL")
-    default_value: Optional[str] = Field(default=None, description="Default value for column")
+    default_value: Optional[Union[str, bool, int, float]] = Field(
+        default=None, 
+        description="Default value for column (supports string, boolean, integer, float)"
+    )
     is_sync_date: bool = Field(default=False, description="Use this field for incremental sync")
     is_foreign_key: bool = Field(default=False, description="Is this a foreign key column")
     indexed: bool = Field(default=False, description="Create index on this column")
@@ -21,6 +24,46 @@ class FieldConfig(BaseModel):
         default="basic", description="Odoo field type for proper handling"
     )
     related_model: Optional[str] = Field(default=None, description="Related Odoo model for relational fields")
+
+    def get_typed_default_value(self) -> any:
+        """
+        Get the default value with the appropriate Python type.
+        
+        Returns the default_value as:
+        - bool if the value is 'true'/'false' (case insensitive)
+        - int if the value is a whole number
+        - float if the value is a decimal number
+        - str otherwise
+        - None if default_value is None
+        """
+        if self.default_value is None:
+            return None
+        
+        # If it's already a Python type (from YAML parsing), return as-is
+        if isinstance(self.default_value, (bool, int, float)):
+            return self.default_value
+        
+        # String value - try to parse into appropriate type
+        str_val = str(self.default_value).strip().lower()
+        
+        # Boolean
+        if str_val in ("true", "false"):
+            return str_val == "true"
+        
+        # Integer
+        try:
+            return int(self.default_value)
+        except (ValueError, TypeError):
+            pass
+        
+        # Float
+        try:
+            return float(self.default_value)
+        except (ValueError, TypeError):
+            pass
+        
+        # Return as string
+        return str(self.default_value)
 
 
 class ModelConfig(BaseModel):

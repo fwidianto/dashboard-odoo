@@ -179,7 +179,21 @@ models:
         is_sync_date: true
 ```
 
-### 4. Run Synchronization
+### 4. Validate Configuration
+
+Before syncing, validate your configuration:
+
+```bash
+python -m src.main --validate
+```
+
+This checks:
+- Environment variables are configured
+- Odoo connection is accessible
+- PostgreSQL connection is accessible
+- models.yaml is valid
+
+### 5. Run Synchronization
 
 ```bash
 # Full sync (all records)
@@ -190,9 +204,6 @@ python -m src.main --mode incremental
 
 # Sync specific models
 python -m src.main --models res.partner product.product
-
-# Validate configuration
-python -m src.main --validate
 
 # Check sync status
 python -m src.main --status

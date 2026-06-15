@@ -9,6 +9,7 @@ from src.engine.sync_engine import SyncEngine
 from src.utils.config_loader import get_config
 from src.utils.logging import get_logger, setup_logging
 from src.utils.settings import get_settings
+from src.utils.validation import validate, print_validation_result, Validator
 
 
 def parse_args():
@@ -61,10 +62,42 @@ def parse_args():
     return parser.parse_args()
 
 
+def run_validation() -> int:
+    """
+    Run comprehensive validation and print results.
+    
+    Returns:
+        Exit code (0 for success, 1 for validation failures).
+    """
+    logger = get_logger("validation")
+    
+    try:
+        result = validate()
+        print_validation_result(result)
+        
+        if not result.is_valid:
+            logger.error("Validation failed", error_count=len(result.errors))
+            return 1
+        
+        if result.warnings:
+            logger.warning("Validation passed with warnings", warning_count=len(result.warnings))
+        else:
+            logger.info("Validation passed")
+        
+        return 0
+        
+    except Exception as e:
+        logger.error("Validation error", error=str(e))
+        print(f"\n✗ Validation error: {e}")
+        print("  → Check your configuration and try again\n")
+        return 1
+
+
 def run_sync(
     mode: str,
     model_names: Optional[list[str]] = None,
     config_path: Optional[str] = None,
+    validate_only: bool = False,
 ) -> int:
     """
     Run the synchronization process.
@@ -73,6 +106,7 @@ def run_sync(
         mode: Sync mode ('full' or 'incremental').
         model_names: Optional list of specific models to sync.
         config_path: Optional path to configuration file.
+        validate_only: If True, only validate configuration.
 
     Returns:
         Exit code (0 for success, 1 for failure).
@@ -92,7 +126,7 @@ def run_sync(
         engine.initialize()
 
         # Run validation if requested
-        if args.validate:
+        if validate_only:
             logger.info("Validating configuration...")
             errors = engine.validate_configuration()
             if errors:
@@ -157,7 +191,7 @@ def run_sync(
         return 0
 
     except Exception as e:
-        logger.error("Synchronization failed", error=str(e))
+        logger.exception("Synchronization failed")
         print(f"\nError: {e}")
         return 1
 
@@ -201,7 +235,7 @@ def show_status() -> int:
         return 0
 
     except Exception as e:
-        logger.error("Failed to get status", error=str(e))
+        logger.exception("Failed to get status")
         print(f"\nError: {e}")
         return 1
 
@@ -234,7 +268,7 @@ def reset_sync_state(model_names: list[str]) -> int:
         return 0
 
     except Exception as e:
-        logger.error("Failed to reset state", error=str(e))
+        logger.exception("Failed to reset state")
         print(f"\nError: {e}")
         return 1
 
@@ -249,6 +283,10 @@ if __name__ == "__main__":
     )
 
     logger = get_logger("main")
+
+    # Handle validation command (uses new validation module)
+    if args.validate:
+        sys.exit(run_validation())
 
     # Handle status command
     if args.status:
@@ -270,6 +308,7 @@ if __name__ == "__main__":
         mode=mode,
         model_names=args.models,
         config_path=args.config,
+        validate_only=args.validate,
     )
 
     sys.exit(exit_code)

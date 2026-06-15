@@ -3,16 +3,14 @@
 import logging
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
 import structlog
-from structlog.types import Processor
 
 
 def setup_logging(
     log_level: str = "INFO",
     log_file: Optional[str] = None,
-    json_logs: bool = False,
 ) -> structlog.BoundLogger:
     """
     Configure structured logging for the application.
@@ -20,7 +18,6 @@ def setup_logging(
     Args:
         log_level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
         log_file: Optional path to log file.
-        json_logs: Whether to output logs in JSON format.
 
     Returns:
         Configured structlog logger.
@@ -28,37 +25,47 @@ def setup_logging(
     # Convert string level to logging constant
     numeric_level = getattr(logging, log_level.upper(), logging.INFO)
 
-    # Shared processors for both console and file handlers
-    shared_processors: list[Processor] = [
-        structlog.contextvars.merge_contextvars,
-        structlog.stdlib.add_log_level,
-        structlog.stdlib.add_logger_name,
-        structlog.stdlib.PositionalArgumentsFormatter(),
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.UnicodeDecoder(),
-    ]
-
-    if json_logs:
-        shared_processors.append(structlog.processors.JSONRenderer())
-    else:
-        shared_processors.append(
-            structlog.dev.ConsoleRenderer(colors=True, exception_formatter=structlog.dev.plain_traceback)
-        )
+    # Console renderer with colors
+    def console_render(logger: Any, method_name: str, event_dict: dict) -> str:
+        """Simple console renderer."""
+        timestamp = event_dict.pop("timestamp", "")
+        level = event_dict.pop("level", method_name.upper())
+        msg = event_dict.pop("event", "")
+        
+        parts = []
+        if timestamp:
+            parts.append(timestamp[:19])
+        parts.append(f"[{level:8}]")
+        parts.append(msg)
+        
+        # Add remaining fields
+        for key, value in event_dict.items():
+            if key not in ("logger", "exception"):
+                parts.append(f"{key}={value}")
+        
+        # Handle exception
+        exc = event_dict.get("exception")
+        if exc:
+            parts.append(f"\n{exc}")
+        
+        return " ".join(parts)
 
     # Configure structlog
     structlog.configure(
-        processors=shared_processors
-        + [
-            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        processors=[
+            structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S"),
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.PositionalArgumentsFormatter(),
+            console_render,
         ],
+        context_class=dict,
         logger_factory=structlog.stdlib.LoggerFactory(),
         wrapper_class=structlog.stdlib.BoundLogger,
         cache_logger_on_first_use=True,
     )
 
     # Configure standard logging
-    handlers = []
+    handlers: list[logging.Handler] = []
 
     # Console handler
     console_handler = logging.StreamHandler(sys.stdout)
@@ -82,15 +89,8 @@ def setup_logging(
         root_logger.removeHandler(handler)
     
     # Add new handlers
-    formatter = structlog.stdlib.ProcessorFormatter(
-        foreign_pre_chain=shared_processors,
-        processors=[
-            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-        ]
-        + (shared_processors if json_logs else []),
-    )
-    
     for handler in handlers:
+        formatter = logging.Formatter("%(message)s")
         handler.setFormatter(formatter)
         root_logger.addHandler(handler)
 
@@ -98,7 +98,7 @@ def setup_logging(
     return logger
 
 
-def get_logger(name: Optional[str] = None) -> structlog.BoundLogger:
+def get_logger(name: Optional[str] = None) -> structlog.stdlib.BoundLogger:
     """
     Get a logger instance.
 
