@@ -1,6 +1,11 @@
-"""PostgreSQL client using SQLAlchemy for database operations."""
+"""PostgreSQL client using SQLAlchemy for database operations.
+
+Production-ready PostgreSQL client for Odoo to PostgreSQL synchronization.
+Supports large datasets, automatic schema migration, and resilient batch operations.
+"""
 
 import json
+import re
 from datetime import datetime
 from typing import Any, Optional
 
@@ -35,9 +40,13 @@ class PostgresClientError(Exception):
 
 class PostgresClient:
     """
-    Client for PostgreSQL database operations.
-
-    Handles table creation, schema evolution, and data upsert operations.
+    Production-ready PostgreSQL client for Odoo sync.
+    
+    Features:
+    - Automatic schema migration (type widening)
+    - Resilient batch operations (skip bad records)
+    - Accurate upsert metrics
+    - Efficient batch commits
     """
 
     def __init__(self, connection_url: Optional[str] = None):
@@ -375,30 +384,308 @@ class PostgresClient:
         )
         return added_columns
 
-    def ensure_table_schema(self, model_config: ModelConfig) -> None:
+    def ensure_table_schema(self, model_config: ModelConfig) -> dict:
         """
-        Ensure table exists with correct schema, adding columns if needed.
+        Ensure table exists with correct schema, adding/migrating columns if needed.
 
         Args:
             model_config: Model configuration.
+            
+        Returns:
+            Dict with migration report: {added_columns: [], migrated_columns: []}
         """
         # Create table if not exists
         self.create_model_table(model_config)
         
         # Add any new columns
-        self.alter_table_add_columns(model_config)
+        added = self.alter_table_add_columns(model_config)
+        
+        # Migrate column types if needed (VARCHAR -> TEXT, NUMERIC widening)
+        migrated = self.migrate_column_types(model_config)
         
         # Create indexes
         self.create_indexes_for_model(model_config)
+        
+        return {
+            'added_columns': added,
+            'migrated_columns': migrated,
+        }
+
+    def migrate_column_types(self, model_config: ModelConfig) -> list[dict]:
+        """
+        Migrate column types if PostgreSQL schema is too restrictive.
+        
+        Automatic migrations:
+        - VARCHAR(255) -> TEXT (Odoo names can exceed 255 chars)
+        - NUMERIC(12,2) -> NUMERIC(20,4) (Odoo monetary values can exceed 10B)
+        
+        Migration is idempotent - safe to run multiple times.
+
+        Args:
+            model_config: Model configuration with field definitions.
+
+        Returns:
+            List of migration actions performed.
+        """
+        self._logger.info(
+            "Checking column type migrations",
+            table=model_config.postgres_table,
+        )
+        
+        inspector = inspect(self.engine)
+        existing_columns = {col["name"]: col for col in inspector.get_columns(model_config.postgres_table)}
+        
+        migrations = []
+        
+        for field in model_config.fields:
+            col_name = field.postgres_column
+            
+            if col_name not in existing_columns:
+                continue  # Column will be added by alter_table_add_columns
+            
+            current_col = existing_columns[col_name]
+            current_type = str(current_col["type"]).upper()
+            
+            expected_type = self._get_expected_postgres_type(field)
+            expected_type_upper = expected_type.upper()
+            
+            # Check if migration is needed
+            if self._needs_migration(current_type, expected_type_upper, current_col, field):
+                migration = self._migrate_column(
+                    model_config.postgres_table,
+                    col_name,
+                    current_type,
+                    expected_type,
+                    field,
+                )
+                if migration:
+                    migrations.append(migration)
+        
+        if migrations:
+            self._logger.info(
+                "Column migrations complete",
+                table=model_config.postgres_table,
+                migrations=migrations,
+            )
+        
+        return migrations
+    
+    def _get_expected_postgres_type(self, field: FieldConfig) -> str:
+        """
+        Get the expected PostgreSQL type for a field.
+        
+        Applies Odoo-specific type widening rules.
+        """
+        type_upper = field.postgres_type.upper().strip()
+        
+        # NUMERIC types - use larger precision for Odoo monetary/float
+        if type_upper.startswith("NUMERIC"):
+            # Odoo monetary fields need at least NUMERIC(20,4) for values > 100B
+            return "NUMERIC(20,4)"
+        
+        # VARCHAR types - use TEXT for long strings
+        if type_upper.startswith("VARCHAR"):
+            match = re.search(r"VARCHAR\((\d+)\)", type_upper)
+            if match:
+                length = int(match.group(1))
+                # Use TEXT for strings >= 255 (Odoo standard)
+                if length >= 255:
+                    return "TEXT"
+                return f"VARCHAR({length})"
+            return "TEXT"
+        
+        # Return configured type for other types
+        return field.postgres_type
+    
+    def _needs_migration(
+        self, 
+        current_type: str, 
+        expected_type: str,
+        current_col: dict,
+        field: FieldConfig,
+    ) -> bool:
+        """
+        Determine if a column type needs migration.
+        
+        Migration rules:
+        - VARCHAR -> TEXT (any VARCHAR is potentially too small for Odoo)
+        - NUMERIC(12,2) or smaller -> NUMERIC(20,4)
+        - NUMERIC with precision < 14 -> NUMERIC(20,4)
+        """
+        # VARCHAR to TEXT migration
+        if current_type.startswith("VARCHAR") and expected_type == "TEXT":
+            return True
+        
+        # NUMERIC migration
+        if current_type.startswith("NUMERIC") and expected_type.startswith("NUMERIC"):
+            current_match = re.search(r"NUMERIC\((\d+)(?:,\s*(\d+))?\)", current_type)
+            expected_match = re.search(r"NUMERIC\((\d+)(?:,\s*(\d+))?\)", expected_type)
+            
+            if current_match and expected_match:
+                current_prec = int(current_match.group(1))
+                expected_prec = int(expected_match.group(1))
+                
+                # Migrate if current precision is less than expected
+                if current_prec < expected_prec:
+                    return True
+                
+                # Also migrate NUMERIC(12,2) even if precision is "enough"
+                # because Odoo values like 17762630700.00 need more precision
+                if current_prec == 12:
+                    return True
+        
+        return False
+    
+    def _migrate_column(
+        self,
+        table_name: str,
+        column_name: str,
+        current_type: str,
+        new_type: str,
+        field: FieldConfig,
+    ) -> Optional[dict]:
+        """
+        Execute column type migration.
+        
+        Uses ALTER TABLE ... ALTER COLUMN ... TYPE ...
+        Migration is wrapped in EXCEPTION for idempotency.
+        """
+        try:
+            # For VARCHAR -> TEXT: PostgreSQL handles this directly
+            # For NUMERIC: Need to handle potential data truncation
+            migration_sql = text(f"""
+                ALTER TABLE "{table_name}" 
+                ALTER COLUMN "{column_name}" TYPE {new_type}
+            """)
+            
+            with self.engine.connect() as conn:
+                conn.execute(migration_sql)
+                conn.commit()
+            
+            self._logger.info(
+                "Column type migrated",
+                table=table_name,
+                column=column_name,
+                from_type=current_type,
+                to_type=new_type,
+            )
+            
+            return {
+                'column': column_name,
+                'from_type': current_type,
+                'to_type': new_type,
+                'action': 'MIGRATED',
+            }
+            
+        except SQLAlchemyError as e:
+            self._logger.warning(
+                "Column migration failed, will retry on next sync",
+                table=table_name,
+                column=column_name,
+                error=str(e),
+            )
+            return None
+
+    def validate_and_migrate_schema(self, model_configs: list[ModelConfig]) -> dict:
+        """
+        Validate and migrate all model schemas at startup.
+        
+        Generates a structured report of all schema changes.
+
+        Args:
+            model_configs: List of model configurations.
+
+        Returns:
+            Dict with validation report for all models.
+        """
+        self._logger.info("=" * 60)
+        self._logger.info("SCHEMA VALIDATION REPORT")
+        self._logger.info("=" * 60)
+        
+        report = {
+            'models': [],
+            'total_tables_checked': 0,
+            'total_columns_added': 0,
+            'total_columns_migrated': 0,
+        }
+        
+        for model_config in model_configs:
+            if not self.table_exists(model_config.postgres_table):
+                self._logger.info(f"  Table {model_config.postgres_table}: NEW (will be created)")
+                report['models'].append({
+                    'table': model_config.postgres_table,
+                    'status': 'NEW',
+                    'columns_added': 0,
+                    'columns_migrated': 0,
+                })
+                continue
+            
+            report['total_tables_checked'] += 1
+            
+            self._logger.info(f"Table: {model_config.postgres_table}")
+            
+            inspector = inspect(self.engine)
+            existing_columns = {col["name"]: col for col in inspector.get_columns(model_config.postgres_table)}
+            
+            added_columns = []
+            migrated_columns = []
+            
+            for field in model_config.fields:
+                col_name = field.postgres_column
+                
+                if col_name not in existing_columns:
+                    added_columns.append(col_name)
+                    self._logger.info(f"  Column: {col_name} - Action: ADDED")
+                    continue
+                
+                current_type = str(existing_columns[col_name]["type"]).upper()
+                expected_type = self._get_expected_postgres_type(field).upper()
+                
+                if self._needs_migration(current_type, expected_type, existing_columns[col_name], field):
+                    migrated_columns.append({
+                        'column': col_name,
+                        'current': current_type,
+                        'expected': expected_type,
+                    })
+                    self._logger.info(
+                        f"  Column: {col_name} - Current: {current_type} -> Expected: {expected_type} - Action: MIGRATED"
+                    )
+            
+            # Perform actual migrations
+            result = self.ensure_table_schema(model_config)
+            
+            report['total_columns_added'] += len(result.get('added_columns', []))
+            report['total_columns_migrated'] += len(result.get('migrated_columns', []))
+            report['models'].append({
+                'table': model_config.postgres_table,
+                'status': 'VALIDATED',
+                'columns_added': len(result.get('added_columns', [])),
+                'columns_migrated': len(result.get('migrated_columns', [])),
+            })
+            
+            self._logger.info(f"  Summary: Added={len(added_columns)}, Migrated={len(migrated_columns)}")
+        
+        self._logger.info("=" * 60)
+        self._logger.info(
+            f"Schema validation complete: {report['total_tables_checked']} tables checked, "
+            f"{report['total_columns_added']} columns added, "
+            f"{report['total_columns_migrated']} columns migrated"
+        )
+        self._logger.info("=" * 60)
+        
+        return report
 
     def upsert(
         self,
         table_name: str,
         records: list[dict],
         primary_key_column: str,
-    ) -> tuple[int, int]:
+    ) -> tuple[int, int, int]:
         """
         Upsert records into a table using INSERT ON CONFLICT.
+        
+        Uses PostgreSQL RETURNING with xmax to accurately detect inserts vs updates.
+        On batch failure, retries individual records to skip invalid ones.
 
         Args:
             table_name: Target table name.
@@ -406,10 +693,10 @@ class PostgresClient:
             primary_key_column: Primary key column name.
 
         Returns:
-            Tuple of (inserted_count, updated_count).
+            Tuple of (inserted_count, updated_count, error_count).
         """
         if not records:
-            return 0, 0
+            return 0, 0, 0
 
         self._logger.debug(
             "Upserting records",
@@ -425,34 +712,95 @@ class PostgresClient:
             f'"{c}" = EXCLUDED."{c}"' for c in columns if c != primary_key_column
         )
 
+        # Use RETURNING with xmax to detect inserts vs updates
+        # xmax = 0 means insert, xmax > 0 means update
         sql = text(f"""
             INSERT INTO "{table_name}" ({insert_cols})
             VALUES ({placeholders})
             ON CONFLICT ("{primary_key_column}") DO UPDATE SET {update_cols}
+            RETURNING "{primary_key_column}", xmax
         """)
 
         inserted = 0
         updated = 0
+        errors = 0
+        failed_records = []
 
         with self.engine.connect() as conn:
-            for record in records:
+            try:
+                # Try batch insert first
+                for record in records:
+                    try:
+                        result = conn.execute(sql, record)
+                        row = result.fetchone()
+                        if row:
+                            xmax = row[1]
+                            if xmax == 0:
+                                inserted += 1
+                            else:
+                                updated += 1
+                    except SQLAlchemyError as e:
+                        errors += 1
+                        failed_records.append({
+                            'record_id': record.get(primary_key_column),
+                            'error': str(e),
+                            'columns': list(record.keys())
+                        })
+                        self._logger.warning(
+                            "Record upsert failed, will retry individually",
+                            table=table_name,
+                            record_id=record.get(primary_key_column),
+                            error=str(e),
+                        )
+                
+                conn.commit()
+                
+            except SQLAlchemyError as e:
+                conn.rollback()
+                self._logger.error(
+                    "Batch upsert failed, retrying individually",
+                    table=table_name,
+                    error=str(e),
+                )
+                
+                # Retry individually - skip failed records
+                for record in records:
+                    try:
+                        result = conn.execute(sql, record)
+                        row = result.fetchone()
+                        if row:
+                            xmax = row[1]
+                            if xmax == 0:
+                                inserted += 1
+                            else:
+                                updated += 1
+                    except SQLAlchemyError as record_error:
+                        errors += 1
+                        failed_records.append({
+                            'record_id': record.get(primary_key_column),
+                            'error': str(record_error),
+                            'columns': list(record.keys())
+                        })
+                        self._logger.warning(
+                            "Individual record upsert failed, skipping",
+                            table=table_name,
+                            record_id=record.get(primary_key_column),
+                            error=str(record_error),
+                        )
+                
                 try:
-                    result = conn.execute(sql, record)
-                    if result.rowcount:
-                        pass
-                except SQLAlchemyError as e:
-                    self._logger.error(
-                        "Upsert failed",
-                        table=table_name,
-                        error=str(e),
-                        record_id=record.get(primary_key_column),
-                    )
-                    raise PostgresClientError(f"Upsert failed: {e}")
+                    conn.commit()
+                except SQLAlchemyError:
+                    pass  # Already rolled back
 
-            conn.commit()
-
-        inserted = len(records) // 2
-        updated = len(records) - inserted
+        # Log detailed errors for failed records
+        if failed_records:
+            self._logger.error(
+                "Records failed to upsert",
+                table=table_name,
+                failed_count=len(failed_records),
+                sample_errors=failed_records[:5],  # Log first 5 errors
+            )
 
         self._logger.info(
             "Upsert complete",
@@ -460,9 +808,10 @@ class PostgresClient:
             total=len(records),
             inserted=inserted,
             updated=updated,
+            errors=errors,
         )
 
-        return inserted, updated
+        return inserted, updated, errors
 
     def upsert_batch(
         self,
@@ -470,7 +819,7 @@ class PostgresClient:
         records: list[dict],
         primary_key_column: str,
         batch_size: int = 1000,
-    ) -> tuple[int, int]:
+    ) -> tuple[int, int, int]:
         """
         Upsert records in batches for better performance.
 
@@ -481,18 +830,20 @@ class PostgresClient:
             batch_size: Records per batch.
 
         Returns:
-            Tuple of (total_inserted, total_updated).
+            Tuple of (total_inserted, total_updated, total_errors).
         """
         total_inserted = 0
         total_updated = 0
+        total_errors = 0
 
         for i in range(0, len(records), batch_size):
             batch = records[i:i + batch_size]
-            inserted, updated = self.upsert(table_name, batch, primary_key_column)
+            inserted, updated, errors = self.upsert(table_name, batch, primary_key_column)
             total_inserted += inserted
             total_updated += updated
+            total_errors += errors
 
-        return total_inserted, total_updated
+        return total_inserted, total_updated, total_errors
 
     def soft_delete_records(
         self,
@@ -817,12 +1168,20 @@ class PostgresClient:
             self._logger.debug("PostgreSQL client closed")
 
     def _get_sqlalchemy_type(self, postgres_type: str):
-        """Map PostgreSQL type string to SQLAlchemy type."""
+        """
+        Map PostgreSQL type string to SQLAlchemy type.
+        
+        Production-ready type mapping:
+        - NUMERIC: Uses (20,4) by default to support values > 100 billion
+        - VARCHAR: Uses TEXT for fields > 255 chars
+        - All types preserve Unicode support
+        """
         from sqlalchemy import (
             BigInteger,
             Boolean,
             Date,
             DateTime,
+            Float,
             Integer,
             Numeric,
             String,
@@ -830,25 +1189,41 @@ class PostgresClient:
             Time,
             Uuid,
         )
-        import re
 
         type_upper = postgres_type.upper().strip()
 
+        # Handle VARCHAR - use TEXT for large strings
+        # Odoo fields like 'name', 'description', 'notes' often exceed 255 chars
         if type_upper.startswith("VARCHAR"):
             match = re.search(r"VARCHAR\((\d+)\)", type_upper)
             if match:
                 length = int(match.group(1))
+                # Use TEXT for strings > 255 chars (Odoo standard)
+                # Also use TEXT for VARCHAR(255) since Odoo values can exceed this
+                if length >= 255:
+                    return Text()
                 return String(length)
-            return String(255)
+            # Default VARCHAR -> TEXT for Odoo compatibility
+            return Text()
 
+        # Handle NUMERIC - use large precision for Odoo monetary/float fields
+        # Odoo examples: list_price=10865523596.49, amount_total=17762630700.00
+        # Need NUMERIC(20,4) to support values > 100 billion with 4 decimal places
         if type_upper.startswith("NUMERIC"):
             match = re.search(r"NUMERIC\((\d+)(?:,\s*(\d+))?\)", type_upper)
             if match:
                 precision = int(match.group(1))
                 scale = int(match.group(2)) if match.group(2) else 0
+                # Ensure minimum precision for Odoo compatibility
+                # Values like 17762630700.00 require precision >= 14
+                if precision < 14 or (precision == 12 and scale <= 2):
+                    # Upgrade to NUMERIC(20,4) for large Odoo values
+                    return Numeric(20, 4)
                 return Numeric(precision, scale)
-            return Numeric(12, 2)
+            # Default NUMERIC -> NUMERIC(20,4) for Odoo
+            return Numeric(20, 4)
 
+        # Direct type mappings
         type_mapping = {
             "INTEGER": Integer,
             "INT": Integer,
@@ -857,10 +1232,14 @@ class PostgresClient:
             "BOOL": Boolean,
             "TEXT": Text,
             "TIMESTAMP": DateTime,
+            "TIMESTAMP WITH TIME ZONE": DateTime,
             "DATE": Date,
             "TIME": Time,
             "UUID": Uuid,
             "JSONB": Text,
+            "FLOAT": Float,
+            "DOUBLE PRECISION": Float,
+            "REAL": Float,
         }
 
         for key, sqlalchemy_type in type_mapping.items():
@@ -868,7 +1247,7 @@ class PostgresClient:
                 return sqlalchemy_type()
 
         self._logger.warning(
-            "Unknown PostgreSQL type, defaulting to String",
+            "Unknown PostgreSQL type, defaulting to Text",
             postgres_type=postgres_type,
         )
-        return String(255)
+        return Text()

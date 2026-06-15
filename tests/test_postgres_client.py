@@ -5,6 +5,137 @@ from unittest.mock import MagicMock, patch
 from src.models.config import FieldConfig, ModelConfig
 
 
+class TestGetSqlAlchemyType:
+    """Test type mapping for Odoo fields."""
+
+    def test_numeric_upgraded_for_large_values(self):
+        """Test that NUMERIC(12,2) is upgraded to NUMERIC(20,4)."""
+        from src.clients.postgres_client import PostgresClient
+        
+        with patch('src.clients.postgres_client.get_settings') as mock_settings:
+            mock_settings.return_value = MagicMock()
+            mock_settings.return_value.postgres.connection_url = "postgresql://test:test@localhost/test"
+            
+            client = PostgresClient(connection_url="postgresql://test:test@localhost/test")
+            
+            # Test NUMERIC(12,2) -> should be upgraded
+            result = client._get_sqlalchemy_type("NUMERIC(12,2)")
+            assert str(result) == "NUMERIC(20, 4)", \
+                f"NUMERIC(12,2) should be upgraded to NUMERIC(20,4), got {result}"
+
+    def test_numeric_precision_preserved_for_large_config(self):
+        """Test that large NUMERIC precision is preserved."""
+        from src.clients.postgres_client import PostgresClient
+        
+        with patch('src.clients.postgres_client.get_settings') as mock_settings:
+            mock_settings.return_value = MagicMock()
+            mock_settings.return_value.postgres.connection_url = "postgresql://test:test@localhost/test"
+            
+            client = PostgresClient(connection_url="postgresql://test:test@localhost/test")
+            
+            # Test NUMERIC(20,4) -> should be kept
+            result = client._get_sqlalchemy_type("NUMERIC(20,4)")
+            assert str(result) == "NUMERIC(20, 4)", \
+                f"NUMERIC(20,4) should be preserved, got {result}"
+
+    def test_varchar_converted_to_text(self):
+        """Test that VARCHAR(255) is converted to TEXT."""
+        from src.clients.postgres_client import PostgresClient
+        
+        with patch('src.clients.postgres_client.get_settings') as mock_settings:
+            mock_settings.return_value = MagicMock()
+            mock_settings.return_value.postgres.connection_url = "postgresql://test:test@localhost/test"
+            
+            client = PostgresClient(connection_url="postgresql://test:test@localhost/test")
+            
+            # Test VARCHAR(255) -> TEXT
+            result = client._get_sqlalchemy_type("VARCHAR(255)")
+            assert "TEXT" in str(result).upper() or str(result) == "TEXT()", \
+                f"VARCHAR(255) should be converted to TEXT, got {result}"
+
+    def test_varchar_large_converted_to_text(self):
+        """Test that VARCHAR(1000) is converted to TEXT."""
+        from src.clients.postgres_client import PostgresClient
+        
+        with patch('src.clients.postgres_client.get_settings') as mock_settings:
+            mock_settings.return_value = MagicMock()
+            mock_settings.return_value.postgres.connection_url = "postgresql://test:test@localhost/test"
+            
+            client = PostgresClient(connection_url="postgresql://test:test@localhost/test")
+            
+            # Test VARCHAR(1000) -> TEXT
+            result = client._get_sqlalchemy_type("VARCHAR(1000)")
+            assert "TEXT" in str(result).upper() or str(result) == "TEXT()", \
+                f"VARCHAR(1000) should be converted to TEXT, got {result}"
+
+    def test_small_varchar_preserved(self):
+        """Test that small VARCHAR is preserved."""
+        from src.clients.postgres_client import PostgresClient
+        
+        with patch('src.clients.postgres_client.get_settings') as mock_settings:
+            mock_settings.return_value = MagicMock()
+            mock_settings.return_value.postgres.connection_url = "postgresql://test:test@localhost/test"
+            
+            client = PostgresClient(connection_url="postgresql://test:test@localhost/test")
+            
+            # Test VARCHAR(50) -> should be preserved as VARCHAR
+            result = client._get_sqlalchemy_type("VARCHAR(50)")
+            assert "VARCHAR" in str(result).upper() or "50" in str(result), \
+                f"VARCHAR(50) should be preserved, got {result}"
+
+
+class TestNeedsMigration:
+    """Test schema migration detection."""
+
+    def test_varchar_needs_migration_to_text(self):
+        """Test that VARCHAR needs migration to TEXT."""
+        from src.clients.postgres_client import PostgresClient
+        
+        with patch('src.clients.postgres_client.get_settings') as mock_settings:
+            mock_settings.return_value = MagicMock()
+            mock_settings.return_value.postgres.connection_url = "postgresql://test:test@localhost/test"
+            
+            client = PostgresClient(connection_url="postgresql://test:test@localhost/test")
+            
+            field = FieldConfig(odoo_field="name", postgres_column="name", postgres_type="VARCHAR(255)")
+            current_col = {"type": "VARCHAR(255)", "nullable": False}
+            
+            result = client._needs_migration("VARCHAR(255)", "TEXT", current_col, field)
+            assert result is True, "VARCHAR(255) should need migration to TEXT"
+
+    def test_numeric_12_needs_migration(self):
+        """Test that NUMERIC(12,2) needs migration."""
+        from src.clients.postgres_client import PostgresClient
+        
+        with patch('src.clients.postgres_client.get_settings') as mock_settings:
+            mock_settings.return_value = MagicMock()
+            mock_settings.return_value.postgres.connection_url = "postgresql://test:test@localhost/test"
+            
+            client = PostgresClient(connection_url="postgresql://test:test@localhost/test")
+            
+            field = FieldConfig(odoo_field="amount", postgres_column="amount_total", postgres_type="NUMERIC(12,2)")
+            current_col = {"type": "NUMERIC(12,2)", "nullable": False}
+            
+            result = client._needs_migration("NUMERIC(12,2)", "NUMERIC(20,4)", current_col, field)
+            assert result is True, "NUMERIC(12,2) should need migration to NUMERIC(20,4)"
+
+    def test_numeric_20_no_migration_needed(self):
+        """Test that NUMERIC(20,4) does not need migration."""
+        from src.clients.postgres_client import PostgresClient
+        
+        with patch('src.clients.postgres_client.get_settings') as mock_settings:
+            mock_settings.return_value = MagicMock()
+            mock_settings.return_value.postgres.connection_url = "postgresql://test:test@localhost/test"
+            
+            client = PostgresClient(connection_url="postgresql://test:test@localhost/test")
+            
+            field = FieldConfig(odoo_field="amount", postgres_column="amount_total", postgres_type="NUMERIC(20,4)")
+            current_col = {"type": "NUMERIC(20,4)", "nullable": False}
+            
+            result = client._needs_migration("NUMERIC(20,4)", "NUMERIC(20,4)", current_col, field)
+            assert result is False, "NUMERIC(20,4) should not need migration"
+
+
 class TestCreateModelTable:
     """Test table creation with primary key constraints."""
 
@@ -122,7 +253,9 @@ class TestUpsertWithPrimaryKey:
             
             # Mock engine
             mock_conn = MagicMock()
-            mock_conn.execute.return_value = MagicMock(rowcount=1)
+            mock_result = MagicMock()
+            mock_result.fetchone.return_value = (1, 0)  # id=1, xmax=0 (insert)
+            mock_conn.execute.return_value = mock_result
             client._engine = MagicMock()
             client._engine.connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
             client._engine.connect.return_value.__exit__ = MagicMock(return_value=False)
@@ -133,7 +266,7 @@ class TestUpsertWithPrimaryKey:
                 {"id": 2, "name": "Test2", "email": "test2@example.com"},
             ]
             
-            client.upsert("res_partner", records, "id")
+            inserted, updated, errors = client.upsert("res_partner", records, "id")
             
             # Verify the SQL contains ON CONFLICT
             call_args = mock_conn.execute.call_args_list[0]
@@ -143,6 +276,39 @@ class TestUpsertWithPrimaryKey:
                 f"SQL should contain ON CONFLICT (id), got: {sql_query}"
             assert 'DO UPDATE SET' in sql_query, \
                 "SQL should contain DO UPDATE SET clause"
+            assert 'RETURNING' in sql_query, \
+                "SQL should contain RETURNING for accurate metrics"
+    
+    def test_upsert_returns_error_count(self):
+        """Test that upsert returns error count."""
+        from src.clients.postgres_client import PostgresClient
+        
+        with patch('src.clients.postgres_client.get_settings') as mock_settings:
+            mock_settings.return_value = MagicMock()
+            mock_settings.return_value.postgres.connection_url = "postgresql://test:test@localhost/test"
+            
+            client = PostgresClient(connection_url="postgresql://test:test@localhost/test")
+            
+            # Mock engine
+            mock_conn = MagicMock()
+            mock_result = MagicMock()
+            mock_result.fetchone.return_value = (1, 0)  # id=1, xmax=0 (insert)
+            mock_conn.execute.return_value = mock_result
+            client._engine = MagicMock()
+            client._engine.connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
+            client._engine.connect.return_value.__exit__ = MagicMock(return_value=False)
+            
+            # Test upsert
+            records = [{"id": 1, "name": "Test"}]
+            
+            result = client.upsert("res_partner", records, "id")
+            
+            # Verify it returns 3 values
+            assert len(result) == 3, "upsert should return (inserted, updated, errors)"
+            inserted, updated, errors = result
+            assert isinstance(inserted, int)
+            assert isinstance(updated, int)
+            assert isinstance(errors, int)
 
 
 class TestModelConfigGetIndexedFields:
@@ -213,3 +379,39 @@ class TestModelConfigGetIndexedFields:
             "Indexed non-primary key field should be included"
         assert "id" not in indexed_names, \
             "Primary key should not be included even if it has indexed=True"
+
+
+class TestExpectedPostgresType:
+    """Test expected PostgreSQL type calculation for Odoo fields."""
+
+    def test_numeric_becomes_numeric_20_4(self):
+        """Test that NUMERIC types are expected as NUMERIC(20,4)."""
+        from src.clients.postgres_client import PostgresClient
+        
+        with patch('src.clients.postgres_client.get_settings') as mock_settings:
+            mock_settings.return_value = MagicMock()
+            mock_settings.return_value.postgres.connection_url = "postgresql://test:test@localhost/test"
+            
+            client = PostgresClient(connection_url="postgresql://test:test@localhost/test")
+            
+            field = FieldConfig(odoo_field="list_price", postgres_column="list_price", postgres_type="NUMERIC(12,2)")
+            result = client._get_expected_postgres_type(field)
+            
+            assert result == "NUMERIC(20,4)", \
+                f"NUMERIC should become NUMERIC(20,4), got {result}"
+
+    def test_varchar_255_becomes_text(self):
+        """Test that VARCHAR(255) is expected as TEXT."""
+        from src.clients.postgres_client import PostgresClient
+        
+        with patch('src.clients.postgres_client.get_settings') as mock_settings:
+            mock_settings.return_value = MagicMock()
+            mock_settings.return_value.postgres.connection_url = "postgresql://test:test@localhost/test"
+            
+            client = PostgresClient(connection_url="postgresql://test:test@localhost/test")
+            
+            field = FieldConfig(odoo_field="name", postgres_column="name", postgres_type="VARCHAR(255)")
+            result = client._get_expected_postgres_type(field)
+            
+            assert result == "TEXT", \
+                f"VARCHAR(255) should become TEXT, got {result}"

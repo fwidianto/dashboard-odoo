@@ -226,8 +226,8 @@ class SyncEngine:
                 if not transformed:
                     continue
 
-                # Upsert to PostgreSQL
-                inserted, updated = self._pg.upsert(
+                # Upsert to PostgreSQL (with error resilience - skips bad records)
+                inserted, updated, errors = self._pg.upsert(
                     table_name=model_config.postgres_table,
                     records=transformed,
                     primary_key_column=pk_field.postgres_column,
@@ -236,6 +236,13 @@ class SyncEngine:
                 records_synced += len(transformed)
                 result.records_inserted += inserted
                 result.records_updated += updated
+                
+                if errors > 0:
+                    self._logger.warning(
+                        "Some records failed to upsert",
+                        model=model_config.odoo_model,
+                        failed_count=errors,
+                    )
 
                 # Track last record for state update
                 if batch:
@@ -380,6 +387,11 @@ class SyncEngine:
             full_sync=full_sync,
             model_count=len(self.config.models),
         )
+        
+        # Validate and migrate all schemas at startup
+        models_to_sync = [m for m in self.config.models 
+                         if not model_names or m.odoo_model in model_names]
+        schema_report = self._pg.validate_and_migrate_schema(models_to_sync)
 
         results = []
         for model_config in self.config.models:
