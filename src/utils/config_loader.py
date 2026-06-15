@@ -1,4 +1,25 @@
-"""Configuration loader for YAML-based model definitions."""
+"""Configuration loader for YAML-based model definitions.
+
+Supports two formats:
+1. Simple format: Just list field names (recommended)
+   models:
+     - odoo_model: res.partner
+       postgres_table: res_partner
+       fields:
+         - id
+         - name
+         - email
+
+2. Verbose format: Full field definitions
+   models:
+     - odoo_model: res.partner
+       postgres_table: res_partner
+       fields:
+         - odoo_field: id
+           postgres_column: id
+           postgres_type: INTEGER
+           primary_key: true
+"""
 
 import os
 from pathlib import Path
@@ -11,7 +32,29 @@ from src.models.config import SyncConfig, ModelConfig, FieldConfig
 
 
 class ConfigLoader:
-    """Loads and validates configuration from YAML files."""
+    """Loads and validates configuration from YAML files.
+    
+    Supports both simple and verbose field formats.
+    """
+
+    # Default type mappings from Odoo field types to PostgreSQL
+    ODOO_TYPE_TO_POSTGRES = {
+        'integer': 'INTEGER',
+        'float': 'NUMERIC(20,4)',
+        'monetary': 'NUMERIC(20,4)',
+        'boolean': 'BOOLEAN',
+        'char': 'TEXT',
+        'text': 'TEXT',
+        'selection': 'VARCHAR(255)',
+        'date': 'DATE',
+        'datetime': 'TIMESTAMP',
+        'many2one': 'INTEGER',
+        'one2many': 'SKIP',  # Not synced directly
+        'many2many': 'SKIP',  # Not synced directly
+        'binary': 'BYTEA',
+        'html': 'TEXT',
+        'reference': 'VARCHAR(255)',
+    }
 
     def __init__(self, config_path: Optional[str] = None):
         """
@@ -57,6 +100,9 @@ class ConfigLoader:
 
         # Extract models
         models_data = raw_config.get("models", [])
+        
+        # Expand simple field formats (just field names) to full field definitions
+        models_data = self._expand_simple_fields(models_data)
 
         # Build configuration
         config_dict = {
@@ -66,6 +112,138 @@ class ConfigLoader:
 
         config = SyncConfig(**config_dict)
         self._validate_config(config)
+        
+        return config
+    
+    def _expand_simple_fields(self, models_data: list) -> list:
+        """
+        Expand simple field formats to full field definitions.
+        
+        Supports:
+        - Simple string: fields: [id, name, email]
+        - Dict with just odoo_field: fields: [{odoo_field: id}, {odoo_field: name}]
+        
+        For odoo_field only:
+        - postgres_column defaults to odoo_field name
+        - postgres_type defaults to TEXT (can be overridden)
+        - primary_key is auto-detected for 'id'
+        - other flags default to false
+        """
+        expanded_models = []
+        
+        for model_data in models_data:
+            model_data = model_data.copy()  # Don't mutate original
+            fields = model_data.get("fields", [])
+            
+            if not fields:
+                expanded_models.append(model_data)
+                continue
+            
+            # Check if fields are in simple format (strings or single-key dicts)
+            expanded_fields = []
+            for field in fields:
+                expanded = self._expand_single_field(field)
+                if expanded:
+                    expanded_fields.append(expanded)
+            
+            model_data["fields"] = expanded_fields
+            expanded_models.append(model_data)
+        
+        return expanded_models
+    
+    def _expand_single_field(self, field) -> Optional[dict]:
+        """
+        Expand a single field definition.
+        
+        Formats supported:
+        - String: "id" -> {odoo_field: id, postgres_column: id, ...}
+        - Dict with just odoo_field: {odoo_field: "id"} -> full field def
+        - Full dict: {odoo_field: "id", primary_key: true} -> unchanged
+        """
+        # String format: just field name
+        if isinstance(field, str):
+            field_name = field.strip()
+            if not field_name:
+                return None
+            
+            return self._create_field_config(field_name, field_name)
+        
+        # Dict format
+        if isinstance(field, dict):
+            # Full definition: has odoo_field AND postgres_type
+            if field.get("odoo_field") and field.get("postgres_type"):
+                return field
+            
+            # Partial or simple definition: expand it
+            odoo_field = field.get("odoo_field")
+            if odoo_field:
+                # Extract known keys to pass as overrides, excluding odoo_field
+                overrides = {k: v for k, v in field.items() if k != "odoo_field"}
+                postgres_column = overrides.pop("postgres_column", odoo_field)
+                return self._create_field_config(odoo_field, postgres_column, **overrides)
+            
+            return field
+        
+        return None
+    
+    def _create_field_config(
+        self, 
+        odoo_field: str, 
+        postgres_column: str,
+        **overrides
+    ) -> dict:
+        """
+        Create a full field configuration from a field name.
+        
+        Auto-detects:
+        - primary_key: True if field is 'id'
+        - is_sync_date: True if field is 'write_date' or 'create_date'
+        """
+        config = {
+            "odoo_field": odoo_field,
+            "postgres_column": postgres_column,
+            # postgres_type will be inferred from Odoo's fields_get() at runtime
+            # For now, use TEXT as safe default (schema migration will fix types)
+            "postgres_type": "TEXT",
+            "nullable": True,
+            "primary_key": False,
+            "indexed": False,
+            "is_sync_date": False,
+            "is_foreign_key": False,
+        }
+        
+        # Auto-detect primary key
+        if odoo_field == "id":
+            config["primary_key"] = True
+            config["nullable"] = False
+            config["indexed"] = True
+            config["postgres_type"] = "INTEGER"
+        
+        # Auto-detect sync date fields
+        if odoo_field in ("write_date", "create_date", "date"):
+            config["is_sync_date"] = True
+            config["indexed"] = True
+            config["postgres_type"] = "TIMESTAMP"
+        
+        # Auto-detect many2one fields (end with _id)
+        if odoo_field.endswith("_id") and odoo_field != "id":
+            config["is_foreign_key"] = True
+            config["indexed"] = True
+            config["field_type"] = "many2one"
+            # Extract related model from field name (e.g., partner_id -> res.partner)
+            config["postgres_type"] = "INTEGER"
+        
+        # Auto-detect boolean fields
+        if odoo_field in ("active", "is_active", "is_company"):
+            config["postgres_type"] = "BOOLEAN"
+        
+        # Apply any overrides from YAML
+        config.update(overrides)
+        
+        # Remove internal keys that shouldn't be in the config
+        config.pop("odoo_field", None)  # Keep for reference
+        # Actually keep it
+        config["odoo_field"] = odoo_field
         
         return config
 

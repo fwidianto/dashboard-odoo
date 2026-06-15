@@ -188,6 +188,130 @@ class TestConfigLoader:
         with pytest.raises(FileNotFoundError):
             loader.load()
 
+    def test_simple_string_fields(self):
+        """Test simple format with just field names as strings."""
+        config_data = {
+            "models": [
+                {
+                    "odoo_model": "res.partner",
+                    "postgres_table": "res_partner",
+                    "fields": ["id", "name", "email", "write_date"],
+                },
+            ],
+        }
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            yaml.dump(config_data, f)
+            temp_path = f.name
+        
+        try:
+            loader = ConfigLoader(temp_path)
+            config = loader.load()
+            
+            assert len(config.models) == 1
+            model = config.models[0]
+            assert model.odoo_model == "res.partner"
+            
+            # Check field expansion
+            field_names = [f.odoo_field for f in model.fields]
+            assert "id" in field_names
+            assert "name" in field_names
+            assert "email" in field_names
+            assert "write_date" in field_names
+            
+            # Check auto-detection
+            id_field = next(f for f in model.fields if f.odoo_field == "id")
+            assert id_field.primary_key is True
+            assert id_field.postgres_type == "INTEGER"
+            
+            write_field = next(f for f in model.fields if f.odoo_field == "write_date")
+            assert write_field.is_sync_date is True
+            assert write_field.postgres_type == "TIMESTAMP"
+            
+        finally:
+            os.unlink(temp_path)
+
+    def test_simple_dict_fields(self):
+        """Test simple format with dict containing odoo_field name."""
+        config_data = {
+            "models": [
+                {
+                    "odoo_model": "res.partner",
+                    "postgres_table": "res_partner",
+                    "fields": [
+                        {"odoo_field": "id"},
+                        {"odoo_field": "name"},
+                        {"odoo_field": "partner_id", "indexed": True},
+                    ],
+                },
+            ],
+        }
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            yaml.dump(config_data, f)
+            temp_path = f.name
+        
+        try:
+            loader = ConfigLoader(temp_path)
+            config = loader.load()
+            
+            model = config.models[0]
+            
+            # Check partner_id has correct auto-detections
+            partner_id_field = next(f for f in model.fields if f.odoo_field == "partner_id")
+            assert partner_id_field.is_foreign_key is True
+            assert partner_id_field.indexed is True
+            assert partner_id_field.postgres_type == "INTEGER"
+            
+        finally:
+            os.unlink(temp_path)
+
+    def test_mixed_format_fields(self):
+        """Test mixing simple and verbose field definitions."""
+        config_data = {
+            "models": [
+                {
+                    "odoo_model": "res.partner",
+                    "postgres_table": "res_partner",
+                    "fields": [
+                        "id",  # Simple string
+                        {"odoo_field": "name", "indexed": True},  # Simple dict with override
+                        {
+                            "odoo_field": "email",
+                            "postgres_column": "email_address",
+                            "postgres_type": "VARCHAR(255)",  # Full definition
+                        },
+                    ],
+                },
+            ],
+        }
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            yaml.dump(config_data, f)
+            temp_path = f.name
+        
+        try:
+            loader = ConfigLoader(temp_path)
+            config = loader.load()
+            
+            model = config.models[0]
+            
+            # id should be auto-detected as primary key
+            id_field = next(f for f in model.fields if f.odoo_field == "id")
+            assert id_field.primary_key is True
+            
+            # name should have indexed=True from override
+            name_field = next(f for f in model.fields if f.odoo_field == "name")
+            assert name_field.indexed is True
+            
+            # email should have custom column name and type from full definition
+            email_field = next(f for f in model.fields if f.odoo_field == "email")
+            assert email_field.postgres_column == "email_address"
+            assert email_field.postgres_type == "VARCHAR(255)"
+            
+        finally:
+            os.unlink(temp_path)
+
 
 class TestConfigModels:
     """Tests for configuration models."""

@@ -1,5 +1,5 @@
 # Odoo to PostgreSQL Synchronization Configuration
-# This file defines all Odoo models to synchronize and their field mappings
+# Supports simple format - just list Odoo field names!
 
 # Global settings
 default_batch_size: 1000
@@ -8,180 +8,70 @@ retry_delay_seconds: 5
 default_deletion_strategy: ignore  # Options: ignore, soft_delete, reconcile
 
 models:
-  # Example: Res Partners (Contacts)
+  # ============================================================
+  # SIMPLE FORMAT - Just list field names!
+  # ============================================================
+  # Auto-detects:
+  #   - id field → primary_key=True, type=INTEGER
+  #   - *_id fields → is_foreign_key=True, type=INTEGER
+  #   - write_date/create_date → is_sync_date=True, type=TIMESTAMP
+  #   - active/is_active → type=BOOLEAN
+  #   - other fields → type=TEXT (schema migration will fix types)
+  # ============================================================
+  
   - odoo_model: res.partner
     postgres_table: res_partner
-    description: "Synchronize Odoo contacts/partners"
-    deletion_strategy: soft_delete  # Records deleted in Odoo will be marked inactive
-    soft_delete_field: active
-    batch_size: 500  # Override default for this model
+    description: "Contacts/Partners"
     fields:
-      - odoo_field: id
-        postgres_column: id
-        postgres_type: INTEGER
-        primary_key: true
-        nullable: false
-        indexed: true  # Primary key index
-        
-      - odoo_field: name
-        postgres_column: name
-        postgres_type: VARCHAR(255)
-        nullable: true
-        indexed: true
-        
-      - odoo_field: email
-        postgres_column: email
-        postgres_type: VARCHAR(255)
-        nullable: true
-        
-      - odoo_field: phone
-        postgres_column: phone
-        postgres_type: VARCHAR(64)
-        nullable: true
-        
-      - odoo_field: active
-        postgres_column: active
-        postgres_type: BOOLEAN
-        nullable: true
-        default_value: true
-        indexed: true
-        
-      - odoo_field: partner_category_id
-        postgres_column: category_id
-        postgres_type: INTEGER
-        nullable: true
-        is_foreign_key: true
-        indexed: true
-        field_type: many2one
-        related_model: res.partner.category
-        
-      - odoo_field: write_date
-        postgres_column: write_date
-        postgres_type: TIMESTAMP
-        nullable: true
-        is_sync_date: true  # Used for incremental sync tracking
-        indexed: true
+      - id
+      - name
+      - active
+      - email
+      - phone
+      - partner_id  # Auto-detected as foreign key
+      - write_date   # Auto-detected as sync date
 
-  # Example: Product Products
   - odoo_model: product.product
     postgres_table: product_product
-    description: "Synchronize Odoo products"
-    deletion_strategy: ignore
+    description: "Products"
     fields:
-      - odoo_field: id
-        postgres_column: id
-        postgres_type: INTEGER
-        primary_key: true
-        nullable: false
-        indexed: true
-        
-      - odoo_field: name
-        postgres_column: name
-        postgres_type: VARCHAR(255)
-        nullable: true
-        indexed: true
-        
-      - odoo_field: default_code
-        postgres_column: default_code
-        postgres_type: VARCHAR(64)
-        nullable: true
-        indexed: true
-        
-      - odoo_field: list_price
-        postgres_column: list_price
-        postgres_type: NUMERIC(12, 2)
-        nullable: true
-        
-      - odoo_field: standard_price
-        postgres_column: standard_price
-        postgres_type: NUMERIC(12, 2)
-        nullable: true
-        
-      - odoo_field: qty_available
-        postgres_column: qty_available
-        postgres_type: NUMERIC(12, 2)
-        nullable: true
-        
-      - odoo_field: product_tmpl_id
-        postgres_column: template_id
-        postgres_type: INTEGER
-        nullable: true
-        is_foreign_key: true
-        indexed: true
-        field_type: many2one
-        related_model: product.template
-        
-      - odoo_field: active
-        postgres_column: active
-        postgres_type: BOOLEAN
-        nullable: true
-        default_value: true
-        indexed: true
-        
-      - odoo_field: write_date
-        postgres_column: write_date
-        postgres_type: TIMESTAMP
-        nullable: true
-        is_sync_date: true
-        indexed: true
+      - id
+      - name
+      - default_code
+      - active
+      - list_price
+      - standard_price
+      - qty_available
+      - product_tmpl_id
+      - write_date
 
-  # Example: Sale Orders
+  # ============================================================
+  # OVERRIDE FORMAT - Add specific options
+  # ============================================================
+  # Use dict format to override auto-detected values
+  
   - odoo_model: sale.order
     postgres_table: sale_order
-    description: "Synchronize Odoo sale orders"
-    deletion_strategy: ignore
+    description: "Sale Orders"
     fields:
-      - odoo_field: id
-        postgres_column: id
-        postgres_type: INTEGER
-        primary_key: true
-        nullable: false
+      - id
+      - name
+      - partner_id
+        indexed: true  # Add index for foreign key
+      - date_order
+      - state
         indexed: true
-        
-      - odoo_field: name
-        postgres_column: name
-        postgres_type: VARCHAR(64)
-        nullable: true
-        indexed: true
-        
-      - odoo_field: partner_id
-        postgres_column: partner_id
-        postgres_type: INTEGER
-        nullable: true
-        is_foreign_key: true
-        indexed: true
-        field_type: many2one
-        related_model: res.partner
-        
-      - odoo_field: date_order
-        postgres_column: date_order
-        postgres_type: TIMESTAMP
-        nullable: true
-        indexed: true
-        
-      - odoo_field: state
-        postgres_column: state
-        postgres_type: VARCHAR(32)
-        nullable: true
-        indexed: true
-        
-      - odoo_field: amount_total
-        postgres_column: amount_total
-        postgres_type: NUMERIC(12, 2)
-        nullable: true
-        
-      - odoo_field: write_date
-        postgres_column: write_date
-        postgres_type: TIMESTAMP
-        nullable: true
-        is_sync_date: true
-        indexed: true
+      - amount_total
+      - write_date
 
-  # Example: Stock Moves
+  # ============================================================
+  # VERBOSE FORMAT - Full control (backward compatible)
+  # ============================================================
+  # Use this when you need precise control over column names/types
+
   - odoo_model: stock.move
     postgres_table: stock_move
-    description: "Synchronize Odoo stock moves"
-    deletion_strategy: reconcile
+    description: "Stock Moves"
     fields:
       - odoo_field: id
         postgres_column: id
@@ -192,13 +82,11 @@ models:
         
       - odoo_field: name
         postgres_column: name
-        postgres_type: VARCHAR(255)
-        nullable: true
+        postgres_type: TEXT
         
       - odoo_field: product_id
         postgres_column: product_id
         postgres_type: INTEGER
-        nullable: true
         is_foreign_key: true
         indexed: true
         field_type: many2one
@@ -206,55 +94,39 @@ models:
         
       - odoo_field: product_qty
         postgres_column: product_qty
-        postgres_type: NUMERIC(12, 2)
-        nullable: true
+        postgres_type: NUMERIC(20,4)  # Large values for Odoo
         
       - odoo_field: state
         postgres_column: state
         postgres_type: VARCHAR(32)
-        nullable: true
         indexed: true
         
       - odoo_field: date
         postgres_column: move_date
         postgres_type: TIMESTAMP
-        nullable: true
         indexed: true
         
       - odoo_field: write_date
         postgres_column: write_date
         postgres_type: TIMESTAMP
-        nullable: true
         is_sync_date: true
         indexed: true
 
-# Type Mappings Reference:
-# INTEGER     -> 32-bit integer
-# BIGINT      -> 64-bit integer
-# VARCHAR(n)  -> Variable length string (specify n)
-# TEXT        -> Unlimited text
-# BOOLEAN     -> True/False
-# NUMERIC(p,s)-> Decimal with precision p and scale s
-# TIMESTAMP   -> Date and time
-# DATE        -> Date only
-# JSONB       -> JSON data
-# UUID        -> UUID type
+# ============================================================
+# Type Auto-Detection Reference
+# ============================================================
+# Field Name Pattern      → PostgreSQL Type
+# --------------------      --------------------
+# id                      → INTEGER (primary key)
+# *_id                    → INTEGER (foreign key)
+# active, is_active       → BOOLEAN
+# write_date, create_date → TIMESTAMP (sync date)
+# date                    → TIMESTAMP
+# name, email, etc.       → TEXT (VARCHAR 255+)
 
-# Field Types:
-# basic       -> Standard field (default)
-# many2one    -> Foreign key - stores only the ID
-# one2many    -> Skipped during sync (handled separately)
-# many2many   -> Skipped during sync (handled separately)
-
-# Deletion Strategies:
-# ignore       -> Do nothing with deleted records
-# soft_delete  -> Mark records as inactive (set active=false)
-# reconcile    -> Remove records from PostgreSQL
-
-# Adding new models:
-# 1. Add a new entry under 'models:' with odoo_model and postgres_table
-# 2. Define fields with odoo_field, postgres_column, and postgres_type
-# 3. Set primary_key: true for the primary key field
-# 4. Set is_sync_date: true on the write_date field for incremental sync
-# 5. Set field_type: many2one for foreign key fields
-# 6. Set indexed: true for fields that need database indexes
+# ============================================================
+# Deletion Strategies
+# ============================================================
+# ignore       → Do nothing with deleted records
+# soft_delete → Mark records as inactive (active=false)
+# reconcile   → Remove records from PostgreSQL
