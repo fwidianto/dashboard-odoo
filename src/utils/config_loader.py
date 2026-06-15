@@ -47,7 +47,24 @@ class ConfigLoader:
         if raw_config is None:
             raise ValueError("Configuration file is empty")
 
-        config = SyncConfig(**raw_config)
+        # Extract global settings
+        global_settings = {
+            "default_batch_size": raw_config.get("default_batch_size", 1000),
+            "max_retries": raw_config.get("max_retries", 3),
+            "retry_delay_seconds": raw_config.get("retry_delay_seconds", 5),
+            "default_deletion_strategy": raw_config.get("default_deletion_strategy", "ignore"),
+        }
+
+        # Extract models
+        models_data = raw_config.get("models", [])
+
+        # Build configuration
+        config_dict = {
+            **global_settings,
+            "models": models_data,
+        }
+
+        config = SyncConfig(**config_dict)
         self._validate_config(config)
         
         return config

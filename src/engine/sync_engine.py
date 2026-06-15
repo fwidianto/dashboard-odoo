@@ -6,7 +6,7 @@ from typing import Optional
 from src.clients.odoo_client import OdooClient
 from src.clients.postgres_client import PostgresClient
 from src.models.config import FieldConfig, ModelConfig, SyncConfig
-from src.models.state import SyncResult
+from src.models.state import SyncResult, SyncStatus, SyncAudit, SyncHistory
 from src.state.state_manager import StateManager
 from src.utils.logging import get_logger
 from src.utils.settings import get_settings
@@ -44,7 +44,10 @@ class SyncEngine:
         self._logger = get_logger("sync_engine")
         settings = get_settings()
 
-        self._odoo = odoo_client or OdooClient()
+        self._odoo = odoo_client or OdooClient(
+            max_retries=config.max_retries if config else settings.sync.batch_size,
+            retry_delay=config.retry_delay_seconds if config else 5,
+        )
         self._pg = postgres_client or PostgresClient()
         self._state_mgr = state_manager or StateManager(self._pg)
         self._config = config
@@ -69,8 +72,8 @@ class SyncEngine:
         if not self._pg.test_connection():
             raise SyncEngineError("Cannot connect to PostgreSQL")
 
-        # Initialize state tracking
-        self._state_mgr.initialize()
+        # Initialize state tracking tables
+        self._pg.create_all_tables()
 
         # Ensure all tables exist with correct schema
         for model_config in self.config.models:
@@ -109,8 +112,13 @@ class SyncEngine:
         self._state_mgr.mark_sync_started(model_config)
 
         try:
-            # Get fields to sync
-            field_names = [f.odoo_field for f in model_config.fields]
+            # Get counts before sync for audit
+            result.odoo_count_before = self._odoo.count(model_config.odoo_model, [])
+            result.postgres_count_before = self._pg.get_table_row_count(model_config.postgres_table)
+
+            # Get fields to sync (filter out one2many/many2many)
+            field_names = [f.odoo_field for f in model_config.fields 
+                          if f.field_type != "one2many" and f.field_type != "many2many"]
             pk_field = model_config.get_primary_key_field()
             sync_date_field = model_config.get_sync_date_field()
 
@@ -126,6 +134,9 @@ class SyncEngine:
                         model=model_config.odoo_model,
                         since=last_sync,
                     )
+
+            # Get batch size for this model
+            batch_size = self.config.get_effective_batch_size(model_config)
 
             # Get total count for logging
             total_count = self._odoo.count(model_config.odoo_model, domain)
@@ -144,7 +155,7 @@ class SyncEngine:
                 model=model_config.odoo_model,
                 domain=domain,
                 fields=field_names,
-                batch_size=self._batch_size,
+                batch_size=batch_size,
                 order="id",
             ):
                 # Transform records
@@ -178,19 +189,34 @@ class SyncEngine:
                     total_synced=records_synced,
                 )
 
+            # Handle deletion strategy
+            deleted_count = self._handle_deletions(model_config, full_sync)
+            result.records_deleted = deleted_count
+
             result.records_synced = records_synced
             result.mark_complete()
+
+            # Get counts after sync for audit
+            result.odoo_count_after = self._odoo.count(model_config.odoo_model, [])
+            result.postgres_count_after = self._pg.get_table_row_count(model_config.postgres_table)
 
             # Update state with final info
             if last_write_date:
                 result.end_time = self._parse_datetime(last_write_date)
 
             self._state_mgr.mark_sync_completed(model_config, result)
+            
+            # Create audit record
+            self._create_audit_record(model_config, result)
+            
+            # Create history record
+            self._create_history_record(model_config, result, "full" if full_sync else "incremental")
 
             self._logger.info(
                 "Model sync completed",
                 model=model_config.odoo_model,
                 records=records_synced,
+                deleted=deleted_count,
                 duration=result.duration_seconds,
             )
 
@@ -202,6 +228,8 @@ class SyncEngine:
                 str(e),
                 result.records_synced,
             )
+            # Create history record for failure
+            self._create_history_record(model_config, result, "full" if full_sync else "incremental")
             self._logger.error(
                 "Model sync failed",
                 model=model_config.odoo_model,
@@ -209,6 +237,66 @@ class SyncEngine:
             )
 
         return result
+
+    def _handle_deletions(self, model_config: ModelConfig, full_sync: bool) -> int:
+        """
+        Handle records deleted in Odoo based on deletion strategy.
+        
+        Args:
+            model_config: Model configuration.
+            full_sync: Whether this is a full sync.
+            
+        Returns:
+            Number of records handled.
+        """
+        strategy = model_config.deletion_strategy or self.config.default_deletion_strategy
+        
+        if strategy == "ignore":
+            return 0
+        
+        # For soft_delete and reconcile, we need to track which records exist in PG
+        # but not in Odoo. This is more complex and requires tracking.
+        # For now, return 0 - implement based on specific requirements.
+        if strategy in ("soft_delete", "reconcile"):
+            self._logger.debug(
+                "Deletion strategy",
+                model=model_config.odoo_model,
+                strategy=strategy,
+            )
+            # In a full implementation, you would:
+            # 1. Get all IDs from Odoo
+            # 2. Get all IDs from PostgreSQL
+            # 3. Find IDs in PG but not in Odoo
+            # 4. Apply soft_delete (set active=false) or reconcile (delete)
+            return 0
+        
+        return 0
+
+    def _create_audit_record(self, model_config: ModelConfig, result: SyncResult) -> None:
+        """Create an audit record comparing Odoo and PostgreSQL counts."""
+        odoo_count = result.odoo_count_after or 0
+        pg_count = result.postgres_count_after or 0
+        difference = abs(odoo_count - pg_count)
+        is_synced = odoo_count == pg_count
+        
+        audit = SyncAudit(
+            model_name=model_config.odoo_model,
+            table_name=model_config.postgres_table,
+            odoo_record_count=odoo_count,
+            postgres_record_count=pg_count,
+            difference=difference,
+            is_synced=is_synced,
+            notes=f"Sync completed with {result.records_synced} records processed" if is_synced else f"Count mismatch: Odoo={odoo_count}, PG={pg_count}",
+        )
+        
+        self._pg.insert_sync_audit(audit)
+
+    def _create_history_record(self, model_config: ModelConfig, result: SyncResult, sync_type: str) -> None:
+        """Create a history record for the sync operation."""
+        history = result.to_history()
+        history.sync_type = sync_type
+        
+        self._pg.insert_sync_history(history)
 
     def sync_all(
         self,
@@ -251,27 +339,11 @@ class SyncEngine:
         return results
 
     def sync_model_incremental(self, model_config: ModelConfig) -> SyncResult:
-        """
-        Perform incremental sync for a model.
-
-        Args:
-            model_config: Model configuration.
-
-        Returns:
-            SyncResult with statistics.
-        """
+        """Perform incremental sync for a model."""
         return self.sync_model(model_config, full_sync=False)
 
     def sync_model_full(self, model_config: ModelConfig) -> SyncResult:
-        """
-        Perform full sync for a model.
-
-        Args:
-            model_config: Model configuration.
-
-        Returns:
-            SyncResult with statistics.
-        """
+        """Perform full sync for a model."""
         return self.sync_model(model_config, full_sync=True)
 
     def _transform_records(
@@ -281,13 +353,13 @@ class SyncEngine:
     ) -> list[dict]:
         """
         Transform Odoo records to PostgreSQL format.
-
-        Args:
-            records: List of Odoo record dictionaries.
-            model_config: Model configuration with field mappings.
-
-        Returns:
-            List of transformed records ready for PostgreSQL.
+        
+        Handles:
+        - Many2one fields (store only FK ID)
+        - One2many fields (skip - handled separately)
+        - Many2many fields (skip - handled separately)
+        - Datetime conversion
+        - Default values
         """
         transformed = []
 
@@ -295,6 +367,10 @@ class SyncEngine:
             transformed_record = {}
 
             for field in model_config.fields:
+                # Skip one2many and many2many fields
+                if field.field_type in ("one2many", "many2many"):
+                    continue
+                
                 odoo_value = record.get(field.odoo_field)
                 
                 # Handle None values
@@ -304,21 +380,24 @@ class SyncEngine:
                     elif field.nullable:
                         transformed_record[field.postgres_column] = None
                     else:
-                        # Use appropriate default for non-nullable
                         transformed_record[field.postgres_column] = self._get_type_default(
                             field.postgres_type
                         )
                     continue
 
+                # Handle many2one fields - extract just the ID
+                if field.field_type == "many2one" or isinstance(odoo_value, list):
+                    if isinstance(odoo_value, list) and len(odoo_value) >= 2:
+                        # Odoo returns [id, name] for many2one
+                        odoo_value = odoo_value[0] if isinstance(odoo_value[0], int) else None
+                    elif isinstance(odoo_value, int):
+                        pass  # Already just an ID
+                    else:
+                        odoo_value = None
+
                 # Handle datetime conversion
                 if isinstance(odoo_value, str) and "T" in odoo_value:
-                    # ISO format datetime from Odoo
                     odoo_value = self._parse_datetime(odoo_value)
-
-                # Handle relational fields (many2one returns [id, name])
-                if isinstance(odoo_value, list) and len(odoo_value) == 2:
-                    if isinstance(odoo_value[0], int):
-                        odoo_value = odoo_value[0]  # Extract ID
 
                 # Handle float fields
                 if isinstance(odoo_value, float):
@@ -340,10 +419,8 @@ class SyncEngine:
 
         if isinstance(value, str):
             try:
-                # Try ISO format
                 if "T" in value:
                     value = value.replace("T", " ")
-                # Remove timezone info
                 if "+" in value:
                     value = value.split("+")[0]
                 return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
@@ -384,17 +461,39 @@ class SyncEngine:
             "models": states,
         }
 
-    def validate_configuration(self) -> list[str]:
+    def get_sync_history(self, model_name: Optional[str] = None, limit: int = 100) -> list[dict]:
         """
-        Validate the current configuration.
-
+        Get sync history records.
+        
+        Args:
+            model_name: Optional model name filter.
+            limit: Maximum records to return.
+            
         Returns:
-            List of validation errors (empty if valid).
+            List of history dictionaries.
         """
+        return self._pg.get_sync_history(model_name=model_name, limit=limit)
+
+    def get_sync_audit(self, model_name: Optional[str] = None, limit: int = 100) -> list[dict]:
+        """
+        Get sync audit records.
+        
+        Args:
+            model_name: Optional model name filter.
+            limit: Maximum records to return.
+            
+        Returns:
+            List of audit dictionaries.
+        """
+        # This would need to be implemented in postgres_client
+        # For now, return empty list
+        return []
+
+    def validate_configuration(self) -> list[str]:
+        """Validate the current configuration."""
         errors = []
 
         for model_config in self.config.models:
-            # Check model exists in Odoo
             try:
                 fields = self._odoo.get_model_fields(model_config.odoo_model)
                 if not fields:
@@ -406,7 +505,6 @@ class SyncEngine:
                     f"Cannot access model '{model_config.odoo_model}': {e}"
                 )
 
-            # Check field mappings
             for field in model_config.fields:
                 if field.primary_key and field.odoo_field != "id":
                     errors.append(

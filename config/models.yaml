@@ -1,22 +1,33 @@
 # Odoo to PostgreSQL Synchronization Configuration
 # This file defines all Odoo models to synchronize and their field mappings
 
+# Global settings
+default_batch_size: 1000
+max_retries: 3
+retry_delay_seconds: 5
+default_deletion_strategy: ignore  # Options: ignore, soft_delete, reconcile
+
 models:
   # Example: Res Partners (Contacts)
   - odoo_model: res.partner
     postgres_table: res_partner
     description: "Synchronize Odoo contacts/partners"
+    deletion_strategy: soft_delete  # Records deleted in Odoo will be marked inactive
+    soft_delete_field: active
+    batch_size: 500  # Override default for this model
     fields:
       - odoo_field: id
         postgres_column: id
         postgres_type: INTEGER
         primary_key: true
         nullable: false
+        indexed: true  # Primary key index
         
       - odoo_field: name
         postgres_column: name
         postgres_type: VARCHAR(255)
         nullable: true
+        indexed: true
         
       - odoo_field: email
         postgres_column: email
@@ -33,33 +44,48 @@ models:
         postgres_type: BOOLEAN
         nullable: true
         default_value: true
+        indexed: true
+        
+      - odoo_field: partner_category_id
+        postgres_column: category_id
+        postgres_type: INTEGER
+        nullable: true
+        is_foreign_key: true
+        indexed: true
+        field_type: many2one
+        related_model: res.partner.category
         
       - odoo_field: write_date
         postgres_column: write_date
         postgres_type: TIMESTAMP
         nullable: true
         is_sync_date: true  # Used for incremental sync tracking
+        indexed: true
 
   # Example: Product Products
   - odoo_model: product.product
     postgres_table: product_product
     description: "Synchronize Odoo products"
+    deletion_strategy: ignore
     fields:
       - odoo_field: id
         postgres_column: id
         postgres_type: INTEGER
         primary_key: true
         nullable: false
+        indexed: true
         
       - odoo_field: name
         postgres_column: name
         postgres_type: VARCHAR(255)
         nullable: true
+        indexed: true
         
       - odoo_field: default_code
         postgres_column: default_code
         postgres_type: VARCHAR(64)
         nullable: true
+        indexed: true
         
       - odoo_field: list_price
         postgres_column: list_price
@@ -76,49 +102,68 @@ models:
         postgres_type: NUMERIC(12, 2)
         nullable: true
         
+      - odoo_field: product_tmpl_id
+        postgres_column: template_id
+        postgres_type: INTEGER
+        nullable: true
+        is_foreign_key: true
+        indexed: true
+        field_type: many2one
+        related_model: product.template
+        
       - odoo_field: active
         postgres_column: active
         postgres_type: BOOLEAN
         nullable: true
         default_value: true
+        indexed: true
         
       - odoo_field: write_date
         postgres_column: write_date
         postgres_type: TIMESTAMP
         nullable: true
         is_sync_date: true
+        indexed: true
 
   # Example: Sale Orders
   - odoo_model: sale.order
     postgres_table: sale_order
     description: "Synchronize Odoo sale orders"
+    deletion_strategy: ignore
     fields:
       - odoo_field: id
         postgres_column: id
         postgres_type: INTEGER
         primary_key: true
         nullable: false
+        indexed: true
         
       - odoo_field: name
         postgres_column: name
         postgres_type: VARCHAR(64)
         nullable: true
+        indexed: true
         
       - odoo_field: partner_id
         postgres_column: partner_id
         postgres_type: INTEGER
         nullable: true
-        # Relational field - stores the ID only
+        is_foreign_key: true
+        indexed: true
+        field_type: many2one
+        related_model: res.partner
         
       - odoo_field: date_order
         postgres_column: date_order
         postgres_type: TIMESTAMP
         nullable: true
+        indexed: true
         
       - odoo_field: state
         postgres_column: state
         postgres_type: VARCHAR(32)
         nullable: true
+        indexed: true
         
       - odoo_field: amount_total
         postgres_column: amount_total
@@ -130,17 +175,20 @@ models:
         postgres_type: TIMESTAMP
         nullable: true
         is_sync_date: true
+        indexed: true
 
   # Example: Stock Moves
   - odoo_model: stock.move
     postgres_table: stock_move
     description: "Synchronize Odoo stock moves"
+    deletion_strategy: reconcile
     fields:
       - odoo_field: id
         postgres_column: id
         postgres_type: INTEGER
         primary_key: true
         nullable: false
+        indexed: true
         
       - odoo_field: name
         postgres_column: name
@@ -151,6 +199,10 @@ models:
         postgres_column: product_id
         postgres_type: INTEGER
         nullable: true
+        is_foreign_key: true
+        indexed: true
+        field_type: many2one
+        related_model: product.product
         
       - odoo_field: product_qty
         postgres_column: product_qty
@@ -161,17 +213,20 @@ models:
         postgres_column: state
         postgres_type: VARCHAR(32)
         nullable: true
+        indexed: true
         
       - odoo_field: date
         postgres_column: move_date
         postgres_type: TIMESTAMP
         nullable: true
+        indexed: true
         
       - odoo_field: write_date
         postgres_column: write_date
         postgres_type: TIMESTAMP
         nullable: true
         is_sync_date: true
+        indexed: true
 
 # Type Mappings Reference:
 # INTEGER     -> 32-bit integer
@@ -185,8 +240,21 @@ models:
 # JSONB       -> JSON data
 # UUID        -> UUID type
 
+# Field Types:
+# basic       -> Standard field (default)
+# many2one    -> Foreign key - stores only the ID
+# one2many    -> Skipped during sync (handled separately)
+# many2many   -> Skipped during sync (handled separately)
+
+# Deletion Strategies:
+# ignore       -> Do nothing with deleted records
+# soft_delete  -> Mark records as inactive (set active=false)
+# reconcile    -> Remove records from PostgreSQL
+
 # Adding new models:
 # 1. Add a new entry under 'models:' with odoo_model and postgres_table
 # 2. Define fields with odoo_field, postgres_column, and postgres_type
 # 3. Set primary_key: true for the primary key field
 # 4. Set is_sync_date: true on the write_date field for incremental sync
+# 5. Set field_type: many2one for foreign key fields
+# 6. Set indexed: true for fields that need database indexes

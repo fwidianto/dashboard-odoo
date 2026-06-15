@@ -1,5 +1,6 @@
 """PostgreSQL client using SQLAlchemy for database operations."""
 
+import json
 from datetime import datetime
 from typing import Any, Optional
 
@@ -7,15 +8,21 @@ from sqlalchemy import (
     Column,
     DateTime,
     Integer,
+    BigInteger,
+    Text,
     MetaData,
     Table,
     text,
     inspect,
+    Index,
+    Boolean,
+    Numeric,
 )
 from sqlalchemy.engine import Engine, Connection
 from sqlalchemy.exc import SQLAlchemyError
 
 from src.models.config import FieldConfig, ModelConfig
+from src.models.state import SyncAudit, SyncHistory, SyncStatus
 from src.utils.logging import get_logger
 from src.utils.settings import get_settings
 
@@ -64,30 +71,88 @@ class PostgresClient:
         return self.engine.connect()
 
     def create_sync_state_table(self) -> None:
-        """
-        Create the sync_state table if it doesn't exist.
-
-        This table tracks synchronization state for each model.
-        """
+        """Create the sync_state table if it doesn't exist."""
         self._logger.info("Ensuring sync_state table exists")
 
         sync_state = Table(
             "sync_state",
             self._metadata,
             Column("id", Integer, primary_key=True, autoincrement=True),
-            Column("model_name", text, nullable=False, unique=True),
-            Column("table_name", text, nullable=False),
+            Column("model_name", Text, nullable=False, unique=True),
+            Column("table_name", Text, nullable=False),
             Column("last_sync_date", DateTime, nullable=True),
             Column("last_sync_id", Integer, nullable=True),
             Column("record_count", Integer, default=0),
-            Column("status", text, default="pending"),
-            Column("error_message", text, nullable=True),
+            Column("status", Text, default="pending"),
+            Column("error_message", Text, nullable=True),
             Column("created_at", DateTime, default=datetime.utcnow),
             Column("updated_at", DateTime, default=datetime.utcnow, onupdate=datetime.utcnow),
         )
 
         sync_state.create(self.engine, checkfirst=True)
         self._logger.info("sync_state table ready")
+
+    def create_sync_audit_table(self) -> None:
+        """Create the sync_audit table for comparing Odoo and PostgreSQL counts."""
+        self._logger.info("Ensuring sync_audit table exists")
+
+        sync_audit = Table(
+            "sync_audit",
+            self._metadata,
+            Column("id", Integer, primary_key=True, autoincrement=True),
+            Column("model_name", Text, nullable=False),
+            Column("table_name", Text, nullable=False),
+            Column("odoo_record_count", Integer, default=0),
+            Column("postgres_record_count", Integer, default=0),
+            Column("difference", Integer, default=0),
+            Column("is_synced", Boolean, default=True),
+            Column("audit_date", DateTime, default=datetime.utcnow),
+            Column("notes", Text, nullable=True),
+            Index("idx_sync_audit_model_name", "model_name"),
+            Index("idx_sync_audit_audit_date", "audit_date"),
+        )
+
+        sync_audit.create(self.engine, checkfirst=True)
+        self._logger.info("sync_audit table ready")
+
+    def create_sync_history_table(self) -> None:
+        """Create the sync_history table for tracking sync operations."""
+        self._logger.info("Ensuring sync_history table exists")
+
+        sync_history = Table(
+            "sync_history",
+            self._metadata,
+            Column("id", Integer, primary_key=True, autoincrement=True),
+            Column("model_name", Text, nullable=False),
+            Column("table_name", Text, nullable=False),
+            Column("sync_type", Text, nullable=False),
+            Column("status", Text, nullable=False),
+            Column("started_at", DateTime, nullable=False),
+            Column("completed_at", DateTime, nullable=True),
+            Column("duration_seconds", Numeric(10, 2), nullable=True),
+            Column("records_processed", Integer, default=0),
+            Column("records_inserted", Integer, default=0),
+            Column("records_updated", Integer, default=0),
+            Column("records_deleted", Integer, default=0),
+            Column("errors", Text, nullable=True),  # JSON array of errors
+            Column("error_count", Integer, default=0),
+            Column("odoo_count_before", Integer, nullable=True),
+            Column("odoo_count_after", Integer, nullable=True),
+            Column("postgres_count_before", Integer, nullable=True),
+            Column("postgres_count_after", Integer, nullable=True),
+            Index("idx_sync_history_model_name", "model_name"),
+            Index("idx_sync_history_started_at", "started_at"),
+            Index("idx_sync_history_status", "status"),
+        )
+
+        sync_history.create(self.engine, checkfirst=True)
+        self._logger.info("sync_history table ready")
+
+    def create_all_tables(self) -> None:
+        """Create all required sync tables."""
+        self.create_sync_state_table()
+        self.create_sync_audit_table()
+        self.create_sync_history_table()
 
     def create_model_table(self, model_config: ModelConfig) -> None:
         """
@@ -104,6 +169,7 @@ class PostgresClient:
 
         columns = []
         pk_columns = []
+        indexes = []
 
         for field in model_config.fields:
             col_args = {
@@ -124,12 +190,22 @@ class PostgresClient:
             if field.primary_key:
                 pk_columns.append(column)
 
+            # Create indexes for indexed fields, primary keys, sync dates, and foreign keys
+            if field.indexed or field.primary_key or field.is_sync_date or field.is_foreign_key:
+                indexes.append(
+                    Index(
+                        f"idx_{model_config.postgres_table}_{field.postgres_column}",
+                        field.postgres_column,
+                    )
+                )
+
         # Create table
         table = Table(
             model_config.postgres_table,
             self._metadata,
             *columns,
             primary_key=tuple(pk_columns) if pk_columns else False,
+            *indexes,
         )
 
         table.create(self.engine, checkfirst=True)
@@ -137,6 +213,45 @@ class PostgresClient:
             "Table ready",
             table=model_config.postgres_table,
         )
+
+    def create_indexes_for_model(self, model_config: ModelConfig) -> list[str]:
+        """
+        Create additional indexes for a model based on configuration.
+
+        Args:
+            model_config: Model configuration.
+
+        Returns:
+            List of index names created.
+        """
+        created_indexes = []
+        
+        for field in model_config.get_indexed_fields():
+            index_name = f"idx_{model_config.postgres_table}_{field.postgres_column}"
+            
+            # Check if index already exists
+            inspector = inspect(self.engine)
+            existing_indexes = [idx["name"] for idx in inspector.get_indexes(model_config.postgres_table)]
+            
+            if index_name not in existing_indexes:
+                try:
+                    sql = text(f"""
+                        CREATE INDEX IF NOT EXISTS "{index_name}" 
+                        ON "{model_config.postgres_table}" ("{field.postgres_column}")
+                    """)
+                    with self.engine.connect() as conn:
+                        conn.execute(sql)
+                        conn.commit()
+                    created_indexes.append(index_name)
+                    self._logger.info("Created index", index=index_name)
+                except Exception as e:
+                    self._logger.warning(
+                        "Failed to create index",
+                        index=index_name,
+                        error=str(e),
+                    )
+        
+        return created_indexes
 
     def alter_table_add_columns(self, model_config: ModelConfig) -> list[str]:
         """
@@ -205,6 +320,9 @@ class PostgresClient:
         
         # Add any new columns
         self.alter_table_add_columns(model_config)
+        
+        # Create indexes
+        self.create_indexes_for_model(model_config)
 
     def upsert(
         self,
@@ -254,9 +372,6 @@ class PostgresClient:
                 try:
                     result = conn.execute(sql, record)
                     if result.rowcount:
-                        # Check if this was an insert or update
-                        # In PostgreSQL, rowcount is 1 for both insert and update
-                        # We need to check the database to determine
                         pass
                 except SQLAlchemyError as e:
                     self._logger.error(
@@ -269,9 +384,7 @@ class PostgresClient:
 
             conn.commit()
 
-        # Estimate inserted vs updated (PostgreSQL doesn't give exact counts)
-        # For accuracy, we would need RETURNING clause with exclusion
-        inserted = len(records) // 2  # Rough estimate
+        inserted = len(records) // 2
         updated = len(records) - inserted
 
         self._logger.info(
@@ -314,16 +427,67 @@ class PostgresClient:
 
         return total_inserted, total_updated
 
-    def get_sync_state(self, model_name: str) -> Optional[dict]:
+    def soft_delete_records(
+        self,
+        table_name: str,
+        ids: list[int],
+        soft_delete_field: str = "active",
+    ) -> int:
         """
-        Get sync state for a model.
+        Soft delete records by setting a flag field.
 
         Args:
-            model_name: Odoo model technical name.
+            table_name: Target table name.
+            ids: List of record IDs to soft delete.
+            soft_delete_field: Field name to update (default: 'active').
 
         Returns:
-            Sync state dictionary or None if not found.
+            Number of records soft deleted.
         """
+        if not ids:
+            return 0
+
+        sql = text(f'''
+            UPDATE "{table_name}" 
+            SET "{soft_delete_field}" = false 
+            WHERE id = ANY(:ids)
+        ''')
+
+        with self.engine.connect() as conn:
+            result = conn.execute(sql, {"ids": ids})
+            conn.commit()
+            return result.rowcount
+
+    def hard_delete_records(
+        self,
+        table_name: str,
+        ids: list[int],
+    ) -> int:
+        """
+        Hard delete records from a table.
+
+        Args:
+            table_name: Target table name.
+            ids: List of record IDs to delete.
+
+        Returns:
+            Number of records deleted.
+        """
+        if not ids:
+            return 0
+
+        sql = text(f'''
+            DELETE FROM "{table_name}" 
+            WHERE id = ANY(:ids)
+        ''')
+
+        with self.engine.connect() as conn:
+            result = conn.execute(sql, {"ids": ids})
+            conn.commit()
+            return result.rowcount
+
+    def get_sync_state(self, model_name: str) -> Optional[dict]:
+        """Get sync state for a model."""
         sql = text("""
             SELECT model_name, table_name, last_sync_date, last_sync_id,
                    record_count, status, error_message, created_at, updated_at
@@ -359,18 +523,7 @@ class PostgresClient:
         status: str = "completed",
         error_message: Optional[str] = None,
     ) -> None:
-        """
-        Update or insert sync state for a model.
-
-        Args:
-            model_name: Odoo model technical name.
-            table_name: PostgreSQL table name.
-            last_sync_date: Last successful sync timestamp.
-            last_sync_id: Last synced record ID.
-            record_count: Total records synced.
-            status: Sync status.
-            error_message: Error message if failed.
-        """
+        """Update or insert sync state for a model."""
         sql = text("""
             INSERT INTO sync_state (model_name, table_name, last_sync_date, 
                                     last_sync_id, record_count, status, error_message, 
@@ -405,41 +558,182 @@ class PostgresClient:
             record_count=record_count,
         )
 
-    def get_table_row_count(self, table_name: str) -> int:
+    def insert_sync_audit(self, audit: SyncAudit) -> int:
         """
-        Get the number of rows in a table.
+        Insert a sync audit record.
 
         Args:
-            table_name: Table name.
+            audit: SyncAudit object.
 
         Returns:
-            Row count.
+            Inserted audit ID.
         """
+        sql = text("""
+            INSERT INTO sync_audit 
+            (model_name, table_name, odoo_record_count, postgres_record_count, 
+             difference, is_synced, audit_date, notes)
+            VALUES (:model_name, :table_name, :odoo_record_count, :postgres_record_count,
+                    :difference, :is_synced, :audit_date, :notes)
+            RETURNING id
+        """)
+
+        with self.engine.connect() as conn:
+            result = conn.execute(sql, {
+                "model_name": audit.model_name,
+                "table_name": audit.table_name,
+                "odoo_record_count": audit.odoo_record_count,
+                "postgres_record_count": audit.postgres_record_count,
+                "difference": audit.difference,
+                "is_synced": audit.is_synced,
+                "audit_date": audit.audit_date,
+                "notes": audit.notes,
+            })
+            conn.commit()
+            return result.scalar()
+
+    def insert_sync_history(self, history: SyncHistory) -> int:
+        """
+        Insert a sync history record.
+
+        Args:
+            history: SyncHistory object.
+
+        Returns:
+            Inserted history ID.
+        """
+        sql = text("""
+            INSERT INTO sync_history 
+            (model_name, table_name, sync_type, status, started_at, completed_at,
+             duration_seconds, records_processed, records_inserted, records_updated,
+             records_deleted, errors, error_count, odoo_count_before, odoo_count_after,
+             postgres_count_before, postgres_count_after)
+            VALUES (:model_name, :table_name, :sync_type, :status, :started_at, :completed_at,
+                    :duration_seconds, :records_processed, :records_inserted, :records_updated,
+                    :records_deleted, :errors, :error_count, :odoo_count_before, :odoo_count_after,
+                    :postgres_count_before, :postgres_count_after)
+            RETURNING id
+        """)
+
+        with self.engine.connect() as conn:
+            result = conn.execute(sql, {
+                "model_name": history.model_name,
+                "table_name": history.table_name,
+                "sync_type": history.sync_type,
+                "status": history.status if isinstance(history.status, str) else history.status.value,
+                "started_at": history.started_at,
+                "completed_at": history.completed_at,
+                "duration_seconds": history.duration_seconds,
+                "records_processed": history.records_processed,
+                "records_inserted": history.records_inserted,
+                "records_updated": history.records_updated,
+                "records_deleted": history.records_deleted,
+                "errors": json.dumps(history.errors),
+                "error_count": history.error_count,
+                "odoo_count_before": history.odoo_count_before,
+                "odoo_count_after": history.odoo_count_after,
+                "postgres_count_before": history.postgres_count_before,
+                "postgres_count_after": history.postgres_count_after,
+            })
+            conn.commit()
+            return result.scalar()
+
+    def get_sync_history(
+        self,
+        model_name: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        """
+        Get sync history records.
+
+        Args:
+            model_name: Optional model name filter.
+            limit: Maximum records to return.
+
+        Returns:
+            List of history dictionaries.
+        """
+        sql = """
+            SELECT id, model_name, table_name, sync_type, status, started_at, 
+                   completed_at, duration_seconds, records_processed, records_inserted,
+                   records_updated, records_deleted, errors, error_count,
+                   odoo_count_before, odoo_count_after, postgres_count_before, postgres_count_after
+            FROM sync_history
+        """
+        params = {"limit": limit}
+        
+        if model_name:
+            sql += " WHERE model_name = :model_name"
+            params["model_name"] = model_name
+        
+        sql += " ORDER BY started_at DESC LIMIT :limit"
+
+        with self.engine.connect() as conn:
+            result = conn.execute(text(sql), params)
+            rows = result.fetchall()
+
+        return [
+            {
+                "id": row[0],
+                "model_name": row[1],
+                "table_name": row[2],
+                "sync_type": row[3],
+                "status": row[4],
+                "started_at": row[5],
+                "completed_at": row[6],
+                "duration_seconds": row[7],
+                "records_processed": row[8],
+                "records_inserted": row[9],
+                "records_updated": row[10],
+                "records_deleted": row[11],
+                "errors": json.loads(row[12]) if row[12] else [],
+                "error_count": row[13],
+                "odoo_count_before": row[14],
+                "odoo_count_after": row[15],
+                "postgres_count_before": row[16],
+                "postgres_count_after": row[17],
+            }
+            for row in rows
+        ]
+
+    def get_table_row_count(self, table_name: str) -> int:
+        """Get the number of rows in a table."""
         sql = text(f'SELECT COUNT(*) FROM "{table_name}"')
         with self.engine.connect() as conn:
             result = conn.execute(sql)
             return result.scalar() or 0
 
-    def table_exists(self, table_name: str) -> bool:
+    def get_table_row_count_conditional(
+        self,
+        table_name: str,
+        condition_column: str,
+        condition_value: Any,
+    ) -> int:
         """
-        Check if a table exists.
+        Get row count with a condition.
 
         Args:
             table_name: Table name.
+            condition_column: Column to filter on.
+            condition_value: Value to match.
 
         Returns:
-            True if table exists.
+            Row count.
         """
+        sql = text(f'''
+            SELECT COUNT(*) FROM "{table_name}" 
+            WHERE "{condition_column}" = :value
+        ''')
+        with self.engine.connect() as conn:
+            result = conn.execute(sql, {"value": condition_value})
+            return result.scalar() or 0
+
+    def table_exists(self, table_name: str) -> bool:
+        """Check if a table exists."""
         inspector = inspect(self.engine)
         return table_name in inspector.get_table_names()
 
     def test_connection(self) -> bool:
-        """
-        Test database connection.
-
-        Returns:
-            True if connection successful.
-        """
+        """Test database connection."""
         try:
             with self.engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
@@ -456,15 +750,7 @@ class PostgresClient:
             self._logger.debug("PostgreSQL client closed")
 
     def _get_sqlalchemy_type(self, postgres_type: str):
-        """
-        Map PostgreSQL type string to SQLAlchemy type.
-
-        Args:
-            postgres_type: PostgreSQL type string (e.g., 'VARCHAR(255)').
-
-        Returns:
-            SQLAlchemy Column type.
-        """
+        """Map PostgreSQL type string to SQLAlchemy type."""
         from sqlalchemy import (
             BigInteger,
             Boolean,
@@ -481,13 +767,12 @@ class PostgresClient:
 
         type_upper = postgres_type.upper().strip()
 
-        # Handle types with parameters
         if type_upper.startswith("VARCHAR"):
             match = re.search(r"VARCHAR\((\d+)\)", type_upper)
             if match:
                 length = int(match.group(1))
                 return String(length)
-            return String(255)  # Default length
+            return String(255)
 
         if type_upper.startswith("NUMERIC"):
             match = re.search(r"NUMERIC\((\d+)(?:,\s*(\d+))?\)", type_upper)
@@ -497,7 +782,6 @@ class PostgresClient:
                 return Numeric(precision, scale)
             return Numeric(12, 2)
 
-        # Simple types
         type_mapping = {
             "INTEGER": Integer,
             "INT": Integer,
@@ -509,14 +793,13 @@ class PostgresClient:
             "DATE": Date,
             "TIME": Time,
             "UUID": Uuid,
-            "JSONB": Text,  # Store as text, let app handle JSON
+            "JSONB": Text,
         }
 
         for key, sqlalchemy_type in type_mapping.items():
             if type_upper == key:
                 return sqlalchemy_type()
 
-        # Default to String
         self._logger.warning(
             "Unknown PostgreSQL type, defaulting to String",
             postgres_type=postgres_type,

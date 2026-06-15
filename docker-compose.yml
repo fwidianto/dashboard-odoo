@@ -1,0 +1,101 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: odoo-sync-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sync_db}
+      POSTGRES_USER: ${POSTGRES_USER:-sync_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sync_password}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sync_user} -d ${POSTGRES_DB:-sync_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - odoo-sync-network
+
+  # Odoo Sync Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: odoo-sync-app
+    environment:
+      # Odoo Configuration
+      ODOO_URL: ${ODOO_URL:-http://host.docker.internal:8069}
+      ODOO_DB: ${ODOO_DB:-odoo_db}
+      ODOO_USERNAME: ${ODOO_USERNAME:-admin}
+      ODOO_PASSWORD: ${ODOO_PASSWORD:-admin}
+      ODOO_API_VERSION: ${ODOO_API_VERSION:-17}
+      
+      # PostgreSQL Configuration
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-sync_db}
+      POSTGRES_USER: ${POSTGRES_USER:-sync_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sync_password}
+      
+      # Sync Configuration
+      SYNC_BATCH_SIZE: ${SYNC_BATCH_SIZE:-1000}
+      SYNC_MODE: ${SYNC_MODE:-incremental}
+      SCHEDULE_INTERVAL_MINUTES: ${SCHEDULE_INTERVAL_MINUTES:-15}
+      
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      
+      # API Configuration
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - odoo-sync-network
+
+  # Optional: Odoo Server (for testing)
+  odoo:
+    image: odoo:17
+    container_name: odoo-server
+    depends_on:
+      - postgres
+    environment:
+      HOST: postgres
+      PORT: 5432
+      USER: ${POSTGRES_USER:-sync_user}
+      PASSWORD: ${POSTGRES_PASSWORD:-sync_password}
+      DATABASE: ${ODOO_DB:-odoo_db}
+    ports:
+      - "${ODOO_PORT:-8069}:8069"
+    volumes:
+      - odoo_data:/var/lib/odoo
+      - ./config:/mnt/extra-addons
+    restart: unless-stopped
+    networks:
+      - odoo-sync-network
+
+volumes:
+  postgres_data:
+    driver: local
+  odoo_data:
+    driver: local
+
+networks:
+  odoo-sync-network:
+    driver: bridge
