@@ -225,9 +225,11 @@ class ValidatedModelConfig:
         return [f for f in self._valid_fields if f.is_foreign_key]
     
     def get_indexed_fields(self) -> list[FieldConfig]:
-        """Get all fields that should be indexed."""
+        """Get all fields that should be indexed (excluding primary keys)."""
+        # Primary keys have their own constraint/index and don't need separate indexes
+        # Even if primary_key field has indexed=True, we don't create a separate index
         return [f for f in self._valid_fields 
-                if f.indexed or f.is_sync_date or f.primary_key or f.is_foreign_key]
+                if (f.indexed and not f.primary_key) or f.is_sync_date or f.is_foreign_key]
 
     def deletion_strategy(self) -> str:
         """Get the deletion strategy."""

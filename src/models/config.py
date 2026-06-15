@@ -115,7 +115,9 @@ class ModelConfig(BaseModel):
     def get_indexed_fields(self) -> list[FieldConfig]:
         """Get all fields that should be indexed (excluding primary keys)."""
         # Primary keys have their own constraint/index and don't need separate indexes
-        return [f for f in self.fields if f.indexed or f.is_sync_date or f.is_foreign_key]
+        # Even if primary_key field has indexed=True, we don't create a separate index
+        return [f for f in self.fields 
+                if (f.indexed and not f.primary_key) or f.is_sync_date or f.is_foreign_key]
 
 
 class SyncConfig(BaseModel):
