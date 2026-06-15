@@ -475,6 +475,15 @@ class SyncEngine:
                     else:
                         odoo_value = None
 
+                # Handle False/True for integer fields (Odoo sometimes returns False instead of null)
+                if odoo_value is False:
+                    if field.postgres_type.upper().startswith(('INT', 'NUMERIC', 'DECIMAL')):
+                        odoo_value = None  # Convert False to NULL for numeric fields
+                    elif field.postgres_type.upper() == 'BOOLEAN':
+                        odoo_value = False  # Keep False for boolean fields
+                    else:
+                        odoo_value = None  # Convert False to NULL for other fields
+
                 # Handle datetime conversion
                 if isinstance(odoo_value, str) and "T" in odoo_value:
                     odoo_value = self._parse_datetime(odoo_value)
