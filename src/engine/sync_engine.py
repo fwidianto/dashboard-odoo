@@ -10,6 +10,7 @@ from src.models.state import SyncResult, SyncStatus, SyncAudit, SyncHistory
 from src.state.state_manager import StateManager
 from src.utils.logging import get_logger
 from src.utils.settings import get_settings
+from src.utils.config_loader import ValidatedModelConfig
 
 
 class SyncEngineError(Exception):
@@ -52,6 +53,7 @@ class SyncEngine:
         self._state_mgr = state_manager or StateManager(self._pg)
         self._config = config
         self._batch_size = settings.sync.batch_size
+        self._validated_models: dict[str, ValidatedModelConfig] = {}
 
     @property
     def config(self) -> SyncConfig:
@@ -60,6 +62,41 @@ class SyncEngine:
             from src.utils.config_loader import get_config
             self._config = get_config()
         return self._config
+
+    def _get_validated_model(self, model_config: ModelConfig) -> ValidatedModelConfig:
+        """
+        Get validated model config, fetching Odoo fields if needed.
+        
+        This caches validated models to avoid repeated fields_get() calls.
+        """
+        if model_config.odoo_model not in self._validated_models:
+            try:
+                # Fetch actual Odoo fields
+                odoo_fields = self._odoo.get_model_fields(model_config.odoo_model)
+                
+                # Create validated config (skips invalid fields with warnings)
+                validated = ValidatedModelConfig(model_config, odoo_fields)
+                self._validated_models[model_config.odoo_model] = validated
+                
+                # Log skipped fields
+                if validated.skipped_fields:
+                    self._logger.warning(
+                        f"Model '{model_config.odoo_model}': Skipped invalid fields: {validated.skipped_fields}",
+                        model=model_config.odoo_model,
+                        skipped_fields=validated.skipped_fields,
+                        valid_fields=[f.odoo_field for f in validated.fields],
+                    )
+                
+            except Exception as e:
+                self._logger.error(
+                    f"Failed to validate fields for model '{model_config.odoo_model}'. Using all configured fields.",
+                    model=model_config.odoo_model,
+                    error=str(e),
+                )
+                # Return original config if validation fails
+                self._validated_models[model_config.odoo_model] = model_config
+        
+        return self._validated_models[model_config.odoo_model]
 
     def initialize(self) -> None:
         """Initialize the sync engine and infrastructure."""
@@ -75,9 +112,22 @@ class SyncEngine:
         # Initialize state tracking tables
         self._pg.create_all_tables()
 
-        # Ensure all tables exist with correct schema
+        # Validate all models against Odoo and create tables
         for model_config in self.config.models:
-            self._pg.ensure_table_schema(model_config)
+            # Get validated model (validates fields against Odoo)
+            validated = self._get_validated_model(model_config)
+            
+            # Check if we still have a valid primary key after validation
+            if not validated.has_valid_primary_key:
+                self._logger.error(
+                    f"Model '{model_config.odoo_model}' has no valid primary key after field validation. "
+                    f"Original field 'id' may not exist in Odoo.",
+                    model=model_config.odoo_model,
+                )
+                continue
+            
+            # Create table with validated fields
+            self._pg.ensure_table_schema(validated)
 
         self._logger.info("Sync engine initialized", models=len(self.config.models))
 
@@ -112,15 +162,27 @@ class SyncEngine:
         self._state_mgr.mark_sync_started(model_config)
 
         try:
+            # Get validated model (skips invalid fields with warnings)
+            validated = self._get_validated_model(model_config)
+            
+            # Check if we have valid fields after validation
+            if not validated.has_valid_primary_key:
+                result.errors.append(
+                    f"Model '{model_config.odoo_model}' has no valid primary key. "
+                    f"Cannot sync."
+                )
+                result.mark_complete()
+                return result
+            
             # Get counts before sync for audit
             result.odoo_count_before = self._odoo.count(model_config.odoo_model, [])
             result.postgres_count_before = self._pg.get_table_row_count(model_config.postgres_table)
 
-            # Get fields to sync (filter out one2many/many2many)
-            field_names = [f.odoo_field for f in model_config.fields 
+            # Get fields to sync from validated config (one2many/many2many already filtered)
+            field_names = [f.odoo_field for f in validated.fields 
                           if f.field_type != "one2many" and f.field_type != "many2many"]
-            pk_field = model_config.get_primary_key_field()
-            sync_date_field = model_config.get_sync_date_field()
+            pk_field = validated.get_primary_key_field()
+            sync_date_field = validated.get_sync_date_field()
 
             # Determine domain filter
             domain = []
@@ -158,8 +220,8 @@ class SyncEngine:
                 batch_size=batch_size,
                 order="id",
             ):
-                # Transform records
-                transformed = self._transform_records(batch, model_config)
+                # Transform records using validated config (skips invalid fields)
+                transformed = self._transform_records(batch, validated)
 
                 if not transformed:
                     continue
@@ -360,15 +422,21 @@ class SyncEngine:
         - Many2many fields (skip - handled separately)
         - Datetime conversion
         - Default values
+        - Invalid fields are automatically skipped
         """
         transformed = []
-
+        valid_field_names = {f.odoo_field for f in model_config.fields}
+        
         for record in records:
             transformed_record = {}
-
+            
             for field in model_config.fields:
                 # Skip one2many and many2many fields
                 if field.field_type in ("one2many", "many2many"):
+                    continue
+                
+                # Skip if field not in record (field was filtered out)
+                if field.odoo_field not in record:
                     continue
                 
                 odoo_value = record.get(field.odoo_field)
