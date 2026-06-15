@@ -264,8 +264,9 @@ class ConfigLoader:
         3. Generate field configs from Odoo's field definitions
         
         Supports:
+        - Shorthand string: - purchase.order (just model name as string)
         - Empty fields: fields: [] or fields: null
-        - No fields key at all
+        - No fields key at all: - odoo_model: purchase.order
         """
         from src.clients.odoo_client import OdooClient
         from src.utils.settings import get_settings
@@ -275,7 +276,11 @@ class ConfigLoader:
         expanded_models = []
         
         for model_data in models_data:
-            model_data = model_data.copy()
+            # Handle shorthand: just a string model name "- purchase.order"
+            if isinstance(model_data, str):
+                model_data = {'odoo_model': model_data}
+            else:
+                model_data = model_data.copy()
             
             # Check if fields need to be auto-detected
             if 'fields' not in model_data or not model_data['fields']:
