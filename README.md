@@ -4,6 +4,7 @@ A production-ready, metadata-driven synchronization platform that bridges Odoo E
 
 ## Features
 
+- **STRICT READ-ONLY MODE**: Platform NEVER modifies Odoo data
 - **Metadata-Driven Architecture**: Configure Odoo models and fields via YAML - no code changes needed
 - **API Key Authentication**: Secure authentication using Odoo API keys (password auth deprecated)
 - **Incremental Synchronization**: Uses `write_date` for efficient delta syncs
@@ -54,6 +55,61 @@ odoo_postgres_sync/
 ├── alembic.ini             # Alembic configuration
 └── README.md
 ```
+
+## Read-Only Odoo Architecture
+
+This platform is designed to operate in **STRICT READ-ONLY MODE**. This is a fundamental architectural decision that ensures:
+
+### Core Principles
+
+| Principle | Description |
+|-----------|-------------|
+| **Odoo is Source of Truth** | Odoo remains the master system for all data |
+| **One-Way Data Flow** | Data flows ONLY from Odoo → PostgreSQL |
+| **No Odoo Modifications** | The platform NEVER creates, updates, or deletes Odoo data |
+| **PostgreSQL for Analytics** | PostgreSQL is the destination for analytics, reporting, and AI features |
+
+### Why Read-Only?
+
+1. **Safety**: Eliminates risk of accidental data corruption in Odoo
+2. **Performance**: Odoo doesn't carry the load of analytics queries
+3. **Security**: Reduces attack surface - compromised platform can't modify Odoo
+4. **Reliability**: Odoo ERP remains stable and performant
+
+### API Method Restrictions
+
+The platform uses a **strict allowlist** of Odoo API methods:
+
+| Allowed Methods | Description |
+|----------------|-------------|
+| `search` | Search for record IDs |
+| `read` | Read specific records by ID |
+| `search_read` | Combined search and read |
+| `search_count` | Count matching records |
+| `fields_get` | Get field definitions |
+
+**All write operations are blocked:**
+- ❌ `create` - Creating records
+- ❌ `write` - Updating records  
+- ❌ `unlink` - Deleting records
+- ❌ `copy` - Copying records
+- ❌ Any other mutating method
+
+### Dashboard and AI Features
+
+Dashboard and AI features built on top of this platform **MUST**:
+- ✅ Query PostgreSQL only (never Odoo directly)
+- ✅ Use the synchronized data for all analytics
+- ✅ Build reporting views in PostgreSQL
+
+This ensures Odoo remains unaffected by any analytics workloads.
+
+### Security Features
+
+- **ReadOnlyViolation Exception**: Blocked methods raise a security exception
+- **Startup Validation**: Logs warning when password auth is used
+- **Audit Logging**: All Odoo operations are logged with user, database, and method
+- **READ_ONLY_MODE Flag**: Defaults to `true`, cannot be disabled without explicit override
 
 ## Quick Start
 

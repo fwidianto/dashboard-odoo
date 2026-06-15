@@ -1,5 +1,6 @@
 """Application settings using Pydantic settings management."""
 
+import os
 from functools import lru_cache
 from typing import Literal, Optional
 import warnings
@@ -93,6 +94,14 @@ class SyncSettings(BaseSettings):
     schedule_interval_minutes: int = Field(
         default=15, description="Schedule interval in minutes"
     )
+    
+    # READ-ONLY MODE - Critical security setting
+    # When True: Platform ONLY reads from Odoo, never writes
+    # When False: Raises error unless ALLOW_UNSAFE_ODOO_WRITES is set
+    read_only_mode: bool = Field(
+        default=True,
+        description="STRICT READ-ONLY MODE: Platform never modifies Odoo data"
+    )
 
 
 class LoggingSettings(BaseSettings):
@@ -127,3 +136,41 @@ def get_settings() -> Settings:
         Settings: Application settings instance.
     """
     return Settings()
+
+
+def validate_read_only_mode() -> None:
+    """
+    Validate that READ_ONLY_MODE is enforced.
+    
+    This function should be called at application startup to ensure
+    the platform operates in strict read-only mode.
+    
+    Raises:
+        RuntimeError: If READ_ONLY_MODE is disabled without explicit override.
+    """
+    settings = get_settings()
+    
+    if not settings.sync.read_only_mode:
+        # Check for explicit override
+        allow_unsafe = os.environ.get("ALLOW_UNSAFE_ODOO_WRITES", "").lower()
+        
+        if allow_unsafe != "true":
+            raise RuntimeError(
+                "CRITICAL: READ_ONLY_MODE is disabled! "
+                "The Odoo sync platform is designed to operate in READ-ONLY mode. "
+                "Setting READ_ONLY_MODE=false is STRONGLY DISCOURAGED. "
+                "Odoo should NEVER be modified by this platform. "
+                "Data flows: Odoo → PostgreSQL only. "
+                "If you MUST disable this (for development only), set ALLOW_UNSAFE_ODOO_WRITES=true "
+                "and understand the security implications."
+            )
+        
+        # If explicitly allowed, log critical warning
+        import structlog
+        logger = structlog.get_logger("security")
+        logger.critical(
+            "READ_ONLY_MODE DISABLED - SECURITY RISK",
+            warning="Odoo write operations are enabled!",
+            danger="This should ONLY be used in development environments.",
+            advise="Set READ_ONLY_MODE=true and remove ALLOW_UNSAFE_ODOO_WRITES for production.",
+        )

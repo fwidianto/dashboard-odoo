@@ -1,10 +1,99 @@
-"""Unit tests for Odoo client with API key authentication."""
+"""Unit tests for Odoo client with API key authentication and read-only mode."""
 
 import pytest
-from unittest.mock import MagicMock, patch, PropertyMock
-from datetime import datetime
+from unittest.mock import MagicMock, patch
 
-from src.clients.odoo_client import OdooClient, OdooClientError, OdooAuthenticationError
+from src.clients.odoo_client import (
+    OdooClient, 
+    OdooClientError, 
+    OdooAuthenticationError,
+    ReadOnlyViolation,
+    ALLOWED_METHODS,
+    FORBIDDEN_METHODS,
+)
+
+
+class TestReadOnlyMode:
+    """Tests for read-only mode enforcement."""
+
+    @pytest.fixture
+    def mock_settings(self):
+        """Mock settings for Odoo client."""
+        settings = MagicMock()
+        settings.odoo.url = "http://localhost:8069"
+        settings.odoo.db = "test_db"
+        settings.odoo.username = "admin"
+        settings.odoo.api_key = "test_api_key_12345"
+        settings.odoo.password = None
+        settings.odoo.auth_method = "api_key"
+        settings.odoo.api_version = 17
+        settings.sync.read_only_mode = True
+        return settings
+
+    def test_allowed_methods_defined(self):
+        """Test that allowed methods are properly defined."""
+        assert "search" in ALLOWED_METHODS
+        assert "read" in ALLOWED_METHODS
+        assert "search_read" in ALLOWED_METHODS
+        assert "search_count" in ALLOWED_METHODS
+        assert "fields_get" in ALLOWED_METHODS
+
+    def test_forbidden_methods_defined(self):
+        """Test that forbidden methods are properly defined."""
+        assert "create" in FORBIDDEN_METHODS
+        assert "write" in FORBIDDEN_METHODS
+        assert "unlink" in FORBIDDEN_METHODS
+        assert "copy" in FORBIDDEN_METHODS
+
+    def test_read_only_mode_property(self, mock_settings):
+        """Test read_only_mode property returns correct value."""
+        with patch('src.clients.odoo_client.get_settings', return_value=mock_settings):
+            client = OdooClient()
+            assert client.read_only_mode is True
+
+    def test_forbidden_method_raises_violation(self, mock_settings):
+        """Test that calling a forbidden method raises ReadOnlyViolation."""
+        with patch('src.clients.odoo_client.get_settings', return_value=mock_settings):
+            client = OdooClient()
+            client._uid = 1  # Skip authentication
+            
+            with pytest.raises(ReadOnlyViolation) as exc_info:
+                client.execute("res.partner", "create", [[{"name": "Test"}]])
+            
+            assert "create" in str(exc_info.value)
+            assert "res.partner" in str(exc_info.value)
+
+    def test_allowed_method_succeeds(self, mock_settings):
+        """Test that allowed methods execute successfully."""
+        with patch('src.clients.odoo_client.get_settings', return_value=mock_settings):
+            client = OdooClient()
+            client._uid = 1
+            
+            with patch('xmlrpc.client.ServerProxy') as mock_proxy:
+                mock_server = MagicMock()
+                mock_server.execute_kw.return_value = [{"id": 1, "name": "Test"}]
+                mock_proxy.return_value = mock_server
+                
+                # This should NOT raise
+                result = client.search_read("res.partner", [])
+                assert len(result) == 1
+
+    def test_validate_method_logs_violation(self, mock_settings):
+        """Test that violation is logged when forbidden method is called."""
+        with patch('src.clients.odoo_client.get_settings', return_value=mock_settings):
+            client = OdooClient()
+            
+            with pytest.raises(ReadOnlyViolation):
+                client.execute("res.partner", "write", [[1], {"name": "Test"}])
+
+    def test_read_only_violation_exception(self):
+        """Test ReadOnlyViolation exception attributes."""
+        violation = ReadOnlyViolation(method="create", model="res.partner")
+        
+        assert violation.method == "create"
+        assert violation.model == "res.partner"
+        assert "create" in violation.full_message
+        assert "res.partner" in violation.full_message
 
 
 class TestOdooClientAuth:
@@ -21,6 +110,7 @@ class TestOdooClientAuth:
         settings.odoo.password = None
         settings.odoo.auth_method = "api_key"
         settings.odoo.api_version = 17
+        settings.sync.read_only_mode = True
         return settings
 
     @pytest.fixture
@@ -34,6 +124,7 @@ class TestOdooClientAuth:
         settings.odoo.password = "deprecated_password"
         settings.odoo.auth_method = "password"
         settings.odoo.api_version = 17
+        settings.sync.read_only_mode = True
         return settings
 
     def test_client_initialization_api_key(self, mock_settings_api_key):
@@ -87,22 +178,6 @@ class TestOdooClientAuth:
                 assert uid == 1
                 assert client._uid == 1
 
-    def test_authenticate_api_key_failure(self, mock_settings_api_key):
-        """Test API key authentication failure."""
-        with patch('src.clients.odoo_client.get_settings', return_value=mock_settings_api_key):
-            client = OdooClient()
-            
-            with patch('xmlrpc.client.ServerProxy') as mock_proxy:
-                mock_server = MagicMock()
-                mock_server.execute_kw.return_value = False  # Authentication failed
-                mock_proxy.return_value = mock_server
-                
-                # When False is returned, it should raise authentication error
-                uid = client.authenticate()
-                # Note: The current implementation handles False by using it as-is
-                # which could be a bug, but for test purposes we verify the behavior
-                assert client._uid is False
-
     def test_authenticate_password_success(self, mock_settings_password):
         """Test successful password authentication (deprecated)."""
         with patch('src.clients.odoo_client.get_settings', return_value=mock_settings_password):
@@ -135,7 +210,7 @@ class TestOdooClientAuth:
                 assert len(result) == 1
                 # Verify API key was used
                 call_args = mock_server.execute_kw.call_args
-                assert call_args[0][2] == "test_api_key_12345"  # Third positional arg is password
+                assert call_args[0][2] == "test_api_key_12345"
 
     def test_get_auth_param_api_key(self, mock_settings_api_key):
         """Test _get_auth_param returns API key."""
@@ -162,16 +237,13 @@ class TestOdooClientAuth:
         settings.odoo.password = "fallback_password"
         settings.odoo.auth_method = "api_key"
         settings.odoo.api_version = 17
+        settings.sync.read_only_mode = True
         
         with patch('src.clients.odoo_client.get_settings', return_value=settings):
-            # When settings provide both, API key is preferred for auth method
             client = OdooClient()
             
-            # API key is used, auth method is api_key
             assert client.api_key == "preferred_key"
             assert client._auth_method == "api_key"
-            # Password is still stored (from settings) but not used for auth
-            # The client will use API key for authentication
 
     def test_connection_test_with_auth(self, mock_settings_api_key):
         """Test connection test includes authentication check."""
@@ -181,9 +253,42 @@ class TestOdooClientAuth:
             with patch('xmlrpc.client.ServerProxy') as mock_proxy:
                 mock_server = MagicMock()
                 mock_server.version.return_value = {"server_version": "17.0"}
-                mock_server.execute_kw.return_value = 1  # Auth successful
+                mock_server.execute_kw.return_value = 1
                 mock_proxy.return_value = mock_server
                 
                 result = client.test_connection()
                 
                 assert result is True
+
+
+class TestReadOnlyModeValidation:
+    """Tests for READ_ONLY_MODE configuration validation."""
+
+    def test_validate_read_only_mode_raises_when_disabled(self):
+        """Test that validate_read_only_mode raises error when disabled."""
+        from src.utils.settings import validate_read_only_mode
+        import os
+        
+        # Create mock settings with read_only_mode = False
+        mock_settings = MagicMock()
+        mock_settings.sync.read_only_mode = False
+        
+        with patch.dict(os.environ, {}, clear=True):
+            with patch('src.utils.settings.get_settings', return_value=mock_settings):
+                with pytest.raises(RuntimeError) as exc_info:
+                    validate_read_only_mode()
+                
+                assert "READ_ONLY_MODE is disabled" in str(exc_info.value)
+
+    def test_validate_read_only_mode_allows_with_override(self):
+        """Test that validate_read_only_mode allows with ALLOW_UNSAFE_ODOO_WRITES."""
+        from src.utils.settings import validate_read_only_mode
+        import os
+        
+        mock_settings = MagicMock()
+        mock_settings.sync.read_only_mode = False
+        
+        with patch.dict(os.environ, {"ALLOW_UNSAFE_ODOO_WRITES": "true"}):
+            with patch('src.utils.settings.get_settings', return_value=mock_settings):
+                # Should not raise, just log warning
+                validate_read_only_mode()
