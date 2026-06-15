@@ -373,10 +373,12 @@ class PostgresClient:
         with self.engine.connect() as conn:
             for field in new_columns:
                 col_type = self._get_sqlalchemy_type(field.postgres_type)
-                nullable_str = "" if field.nullable else "NOT NULL"
-                default_str = f"DEFAULT {field.default_value}" if field.default_value else ""
+                # Always add as NULL first to avoid NotNullViolation on existing rows
+                # We'll handle constraints after populating data
+                nullable_str = ""  # Always nullable when adding to existing table
+                default_str = ""
                 
-                sql = f'ALTER TABLE "{model_config.postgres_table}" ADD COLUMN "{field.postgres_column}" {col_type.compile(self.engine.dialect)} {nullable_str} {default_str}'.strip()
+                sql = f'ALTER TABLE "{model_config.postgres_table}" ADD COLUMN "{field.postgres_column}" {col_type.compile(self.engine.dialect)} {nullable_str}'.strip()
                 
                 self._logger.info(
                     "Adding column",
@@ -387,6 +389,17 @@ class PostgresClient:
                 
                 conn.execute(text(sql))
                 added_columns.append(field.postgres_column)
+                
+                # If field has a default value and is NOT NULL, update existing rows
+                if field.default_value is not None and not field.nullable:
+                    default_sql = f'UPDATE "{model_config.postgres_table}" SET "{field.postgres_column}" = %s WHERE "{field.postgres_column}" IS NULL'
+                    conn.execute(text(default_sql), (field.default_value,))
+                    self._logger.info(
+                        "Populated null values with default",
+                        table=model_config.postgres_table,
+                        column=field.postgres_column,
+                        default=field.default_value,
+                    )
             
             conn.commit()
 
