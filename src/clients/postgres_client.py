@@ -2,6 +2,12 @@
 
 Production-ready PostgreSQL client for Odoo to PostgreSQL synchronization.
 Supports large datasets, automatic schema migration, and resilient batch operations.
+
+PostgreSQL Identifier Hardening:
+- All schema identifiers (tables, columns, indexes, constraints) are validated
+- Identifier length is capped at 63 characters (PostgreSQL limit)
+- Deterministic hashing ensures stable, collision-safe names
+- Reserved keywords are avoided
 """
 
 import json
@@ -28,6 +34,15 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from src.models.config import FieldConfig, ModelConfig
 from src.models.state import SyncAudit, SyncHistory, SyncStatus
+from src.utils.identifier import (
+    generate_safe_identifier,
+    generate_index_name,
+    generate_primary_key_name,
+    validate_identifier,
+    validate_schema_identifiers,
+    IdentifierGenerator,
+    MAX_IDENTIFIER_LENGTH,
+)
 from src.utils.logging import get_logger
 from src.utils.settings import get_settings
 
@@ -187,8 +202,15 @@ class PostgresClient:
             model=model_config.odoo_model,
         )
 
+        # Validate table name
+        valid, error = validate_identifier(model_config.postgres_table)
+        if not valid:
+            raise PostgresClientError(
+                f"Invalid table name '{model_config.postgres_table}': {error}"
+            )
+
         columns = []
-        indexes = []
+        index_names = []  # Track for validation
 
         for field in model_config.fields:
             col_args = {
@@ -210,24 +232,33 @@ class PostgresClient:
             column = Column(**col_args)
             columns.append(column)
 
-            # Create indexes for indexed fields (EXCLUDING primary keys - they have PK constraint)
-            # Primary key columns don't need separate indexes
-            if field.indexed and not field.primary_key:
-                indexes.append(
-                    Index(
-                        f"idx_{model_config.postgres_table}_{field.postgres_column}",
-                        field.postgres_column,
-                    )
-                )
+            # Track column names for validation
+            index_names.append(field.postgres_column)
+
+        # Validate all identifiers before creating table
+        # For indexes, we generate names but create them separately in create_indexes_for_model
+        errors = validate_schema_identifiers(
+            table_name=model_config.postgres_table,
+            column_names=index_names,
+            index_names=[],  # Will be validated in create_indexes_for_model
+            constraint_names=[],
+        )
+        if errors:
+            self._logger.warning(
+                "Identifier validation warnings for table '%s': %s",
+                model_config.postgres_table,
+                errors,
+            )
 
         # Create table with extend_existing=True for idempotency
         # Also do NOT pass primary_key parameter to Table() - use Column.primary_key=True
+        # NOTE: Indexes are created separately in create_indexes_for_model to ensure
+        # safe identifier generation with proper length limits
         table = Table(
             model_config.postgres_table,
             self._metadata,
             extend_existing=True,  # Idempotency safeguard
             *columns,
-            *indexes,
         )
 
         table.create(self.engine, checkfirst=True)
@@ -245,6 +276,7 @@ class PostgresClient:
         Ensure the primary key constraint exists on the configured primary key column.
         
         This handles migration for existing tables that were created without PK constraints.
+        Uses centralized identifier generation for safe constraint naming.
         """
         pk_field = None
         for field in model_config.fields:
@@ -275,12 +307,27 @@ class PostgresClient:
                     column=pk_column,
                 )
                 
+                # Generate safe primary key constraint name
+                pk_constraint_name = generate_primary_key_name(table_name)
+                
+                # Validate the generated constraint name
+                valid, error = validate_identifier(pk_constraint_name)
+                if not valid:
+                    self._logger.error(
+                        "Generated PK constraint name exceeds limit: %s",
+                        error,
+                        table=table_name,
+                    )
+                    raise PostgresClientError(
+                        f"Cannot generate safe PK constraint name for table '{table_name}': {error}"
+                    )
+                
                 # PostgreSQL doesn't support ADD PRIMARY KEY IF NOT EXISTS directly,
                 # so we use a block that silently succeeds if it already exists
                 sql = text(f"""
                     DO $$
                     BEGIN
-                        ALTER TABLE "{table_name}" ADD CONSTRAINT "{table_name}_pkey" 
+                        ALTER TABLE "{table_name}" ADD CONSTRAINT "{pk_constraint_name}" 
                         PRIMARY KEY ("{pk_column}");
                     EXCEPTION
                         WHEN duplicate_object THEN NULL;
@@ -295,7 +342,10 @@ class PostgresClient:
                     "Primary key constraint added",
                     table=table_name,
                     column=pk_column,
+                    constraint_name=pk_constraint_name,
                 )
+        except PostgresClientError:
+            raise
         except Exception as e:
             self._logger.error(
                 "Failed to ensure primary key constraint",
@@ -306,6 +356,9 @@ class PostgresClient:
     def create_indexes_for_model(self, model_config: ModelConfig) -> list[str]:
         """
         Create additional indexes for a model based on configuration.
+        
+        Uses centralized identifier generation to ensure all index names
+        are within PostgreSQL's 63-character limit.
 
         Args:
             model_config: Model configuration.
@@ -315,16 +368,15 @@ class PostgresClient:
         """
         created_indexes = []
         
+        # Use identifier generator for consistent naming
+        id_generator = IdentifierGenerator()
+        
         for field in model_config.get_indexed_fields():
-            # Truncate index name to PostgreSQL's 63 character limit
-            base_name = f"idx_{model_config.postgres_table}_{field.postgres_column}"
-            if len(base_name) > 63:
-                suffix = str(abs(hash(field.postgres_column)))[-8:]
-                max_table_len = 63 - 1 - len(suffix)
-                truncated_table = model_config.postgres_table[:max_table_len]
-                index_name = f"idx_{truncated_table}_{suffix}"
-            else:
-                index_name = base_name
+            # Use centralized identifier generation
+            index_name = id_generator.generate_index(
+                table_name=model_config.postgres_table,
+                column_name=field.postgres_column,
+            )
             
             # Check if index already exists
             inspector = inspect(self.engine)
@@ -340,13 +392,28 @@ class PostgresClient:
                         conn.execute(sql)
                         conn.commit()
                     created_indexes.append(index_name)
-                    self._logger.info("Created index", index=index_name)
+                    self._logger.info(
+                        "Created index",
+                        index=index_name,
+                        table=model_config.postgres_table,
+                        column=field.postgres_column,
+                    )
                 except Exception as e:
                     self._logger.warning(
                         "Failed to create index",
                         index=index_name,
+                        table=model_config.postgres_table,
+                        column=field.postgres_column,
                         error=str(e),
                     )
+        
+        # Check for any identifier collisions within this model
+        if id_generator.has_collisions():
+            self._logger.warning(
+                "Index identifier collisions detected for table '%s': %s",
+                model_config.postgres_table,
+                id_generator.get_duplicates(),
+            )
         
         return created_indexes
 

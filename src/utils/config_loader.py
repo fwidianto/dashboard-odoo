@@ -32,6 +32,13 @@ The platform automatically:
 - Creates tables with correct schema
 - Adds new columns when Odoo adds fields
 - Migrates column types when needed
+
+POSTGRESQL IDENTIFIER HARDENING:
+================================
+All generated table and column names are validated and sanitized to ensure:
+- PostgreSQL identifier limits (63 chars max) are respected
+- Reserved keywords are avoided
+- Deterministic naming with collision-safe hashes when truncation is needed
 """
 
 import os
@@ -42,6 +49,12 @@ import yaml
 from pydantic import ValidationError
 
 from src.models.config import SyncConfig, ModelConfig, FieldConfig
+from src.utils.identifier import (
+    generate_table_name as _generate_table_name,
+    generate_column_name as _generate_column_name,
+    validate_identifier,
+    MAX_IDENTIFIER_LENGTH,
+)
 
 
 # Fields to always skip during sync
@@ -450,12 +463,37 @@ class ConfigLoader:
         """
         Convert Odoo model name to PostgreSQL table name.
         
+        Uses centralized identifier generation to ensure PostgreSQL compliance:
+        - Replaces dots with underscores
+        - Sanitizes invalid characters
+        - Validates length (max 63 chars)
+        
         Examples:
             res.partner -> res_partner
             sale.order -> sale_order
             product.product -> product_product
+            x.studio.custom.field.model.name -> x_studio_custom_field_model_name
+        
+        Note: For very long model names, this may truncate the name.
+        The centralized identifier module handles collision safety.
         """
-        return model_name.replace('.', '_').replace('-', '_')
+        # Use centralized table name generation
+        table_name = _generate_table_name(model_name)
+        
+        # Validate the generated table name
+        valid, error = validate_identifier(table_name)
+        if not valid:
+            # This shouldn't happen with proper sanitization, but log warning
+            from src.utils.logging import get_logger
+            logger = get_logger("config_loader")
+            logger.warning(
+                "Generated table name '%s' for model '%s' may have issues: %s",
+                table_name,
+                model_name,
+                error,
+            )
+        
+        return table_name
     
     def _expand_simple_fields(self, models_data: list) -> list:
         """
@@ -643,8 +681,9 @@ class ConfigLoader:
                     model_data['fields'] = fields
                     
                     # Auto-generate table name if not specified
+                    # Uses centralized identifier generation for PostgreSQL compliance
                     if 'postgres_table' not in model_data:
-                        model_data['postgres_table'] = odoo_model.replace('.', '_')
+                        model_data['postgres_table'] = _generate_table_name(odoo_model)
                     
                     logger.info(
                         "Auto-detected fields",
@@ -688,6 +727,10 @@ class ConfigLoader:
         """
         Create a field config from Odoo field definition.
         
+        Uses centralized identifier generation to ensure PostgreSQL compliance:
+        - Validates column names against identifier limits
+        - Sanitizes field names for safe PostgreSQL column names
+        
         Args:
             field_name: Field technical name
             field_def: Field definition from fields_get()
@@ -701,7 +744,7 @@ class ConfigLoader:
         if odoo_type in ('one2many', 'many2many'):
             return None
         
-        # Skip binary by default
+        # Skip binary by default (can be large objects)
         if odoo_type == 'binary':
             return None
         
@@ -712,9 +755,14 @@ class ConfigLoader:
         # Map Odoo type to PostgreSQL
         pg_type = self._map_odoo_type_to_postgres(odoo_type)
         
+        # Use centralized column name generation for safe PostgreSQL identifiers
+        # This ensures field names like "x_studio_approval_request_receipt_location"
+        # are properly sanitized and validated
+        postgres_column = _generate_column_name(field_name)
+        
         config = {
             'odoo_field': field_name,
-            'postgres_column': field_name,
+            'postgres_column': postgres_column,
             'postgres_type': pg_type,
             'nullable': not field_def.get('required', False),
         }
@@ -774,6 +822,13 @@ class ConfigLoader:
         model_names = set()
 
         for model in config.models:
+            # Validate table name
+            valid, error = validate_identifier(model.postgres_table)
+            if not valid:
+                raise ValueError(
+                    f"Table name '{model.postgres_table}' for model '{model.odoo_model}': {error}"
+                )
+            
             # Check for duplicate table names
             if model.postgres_table in table_names:
                 raise ValueError(
@@ -796,9 +851,17 @@ class ConfigLoader:
                     f"found {pk_count}"
                 )
 
-            # Check for duplicate column names
+            # Check for duplicate column names and validate identifiers
             column_names = set()
             for field in model.fields:
+                # Validate column name
+                valid, error = validate_identifier(field.postgres_column)
+                if not valid:
+                    raise ValueError(
+                        f"Column name '{field.postgres_column}' in model "
+                        f"'{model.odoo_model}': {error}"
+                    )
+                
                 if field.postgres_column in column_names:
                     raise ValueError(
                         f"Duplicate column name '{field.postgres_column}' in model "

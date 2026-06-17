@@ -422,6 +422,182 @@ models:
 
 ---
 
+## Production Hardening
+
+This section documents production-readiness features for running against production databases.
+
+### PostgreSQL Identifier Limits
+
+PostgreSQL restricts identifier names to **63 characters maximum**. The platform automatically handles this through centralized identifier generation:
+
+#### Identifier Generation Strategy
+
+The platform uses a deterministic hash-based strategy to ensure:
+
+- **Maximum 63 characters** for all identifiers
+- **Collision-safe** hash suffixes
+- **Deterministic output** (same input always produces same output)
+- **Readable prefixes** for debugging
+
+```python
+from src.utils.identifier import generate_safe_identifier
+
+# Example: Long field that would exceed 63 chars
+field = "x_studio_approval_request_receipt_location"
+table = "purchase_order_line"
+
+# Generates safe identifier with hash suffix
+index_name = generate_safe_identifier("idx", table, field)
+# Result: 'idx_purchase_order_line_x_studio_appr_a1b2c3d4'
+```
+
+#### Available Functions
+
+| Function | Purpose |
+|----------|---------|
+| `generate_safe_identifier()` | Main function for custom identifiers |
+| `generate_table_name()` | Generate safe table names |
+| `generate_column_name()` | Generate safe column names |
+| `generate_index_name()` | Generate safe index names |
+| `generate_primary_key_name()` | Generate safe PK constraint names |
+| `generate_foreign_key_name()` | Generate safe FK constraint names |
+| `validate_identifier()` | Validate any identifier |
+
+#### Identifier Format
+
+```
+{prefix}_{table}_{column}_{hash}
+```
+
+Where:
+- `prefix`: Type identifier (idx, fk, uq, ck, seq)
+- `table`: Truncated table name
+- `column`: Truncated column name
+- `hash`: 8-character deterministic hash
+
+### Schema Evolution Strategy
+
+The platform handles schema evolution automatically:
+
+| Scenario | Action |
+|----------|--------|
+| New field added to Odoo | Column automatically created |
+| VARCHAR too small | Migrated to TEXT |
+| NUMERIC precision too low | Migrated to NUMERIC(20,4) |
+| Field renamed in Odoo | New column created (old remains) |
+| Field deleted in Odoo | Column retained (no data loss) |
+
+### Custom Odoo Field Handling
+
+#### x_studio Fields
+
+All `x_studio_*` custom fields are automatically handled:
+
+- **Long field names**: Truncated with hash suffix
+- **Special characters**: Sanitized to underscores
+- **Index generation**: Collision-safe with deterministic hashes
+
+Example:
+```
+Odoo field: x_studio_approval_request_receipt_location
+Generated column: x_studio_approval_request_receipt_location
+Generated index: idx_purchase_order_line_x_studio_appr_a1b2c3d4
+```
+
+#### Nested Custom Fields
+
+Very long field names are handled with truncation:
+
+```
+Original: x_studio_custom_very_long_field_name_that_exceeds_limit
+Truncated: x_studio_custom_very_long_field_name_t_a1b2c3d4
+```
+
+### Type Safety
+
+#### Numeric Fields (MONETARY/FLOAT)
+
+Odoo monetary fields can hold values exceeding 100 billion:
+
+| Odoo Type | PostgreSQL Type | Precision |
+|-----------|----------------|-----------|
+| monetary | NUMERIC(20,4) | Up to 100 trillion |
+| float | NUMERIC(20,4) | Up to 100 trillion |
+
+#### Text Fields
+
+All VARCHAR fields are mapped to TEXT to avoid truncation:
+
+| Odoo Type | PostgreSQL Type | Notes |
+|-----------|----------------|-------|
+| char | TEXT | No 255 char limit |
+| text | TEXT | No limit |
+| html | TEXT | Preserves formatting |
+| selection | VARCHAR(255) | Limited to known values |
+
+#### Many2one Fields
+
+Foreign keys are stored as INTEGER:
+
+```python
+# Odoo: partner_id = fields.Many2one('res.partner')
+# PostgreSQL: partner_id INTEGER  -- Just the ID, not the related record
+```
+
+#### Binary Fields
+
+Binary fields are skipped by default (can store large objects):
+
+```
+Odoo: image_1920 = fields.Binary()
+PostgreSQL: (skipped by default)
+```
+
+To sync binary fields, configure exclusions explicitly in YAML.
+
+### Schema Validation
+
+Before creating any schema objects, the platform validates:
+
+1. **Identifier Length**: All names ≤ 63 characters
+2. **Identifier Format**: Valid PostgreSQL characters only
+3. **Reserved Keywords**: Avoids PostgreSQL reserved words
+4. **Duplicates**: No duplicate table/column/index names
+
+Failed validation results in actionable error messages:
+
+```
+ERROR: Identifier 'idx_purchase_order_line_x_studio_approval_request_receipt_location'
+exceeds maximum length of 63 characters
+
+HINT: Generated safe identifier: 'idx_purchase_order_line_x_studio_appr_a1b2c3d4'
+```
+
+### Running Tests
+
+```bash
+# Identifier generation tests
+python -m pytest tests/test_identifier_generation.py -v
+
+# Schema stress tests (100+ models, 1000+ fields)
+python -m pytest tests/test_schema_stress.py -v
+
+# Full test suite
+python -m pytest tests/ -v
+```
+
+### Production Checklist
+
+Before deploying to production:
+
+- [ ] Run identifier tests: `pytest tests/test_identifier_generation.py`
+- [ ] Run stress tests: `pytest tests/test_schema_stress.py`
+- [ ] Test with production Odoo database (field discovery)
+- [ ] Verify all custom fields generate valid identifiers
+- [ ] Check PostgreSQL logs for identifier warnings
+
+---
+
 ## License
 
 MIT License - See LICENSE file.
