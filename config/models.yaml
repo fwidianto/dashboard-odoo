@@ -129,14 +129,10 @@ legacy_models:
       - id
       - name
       - product_id
-        indexed: true
       - product_qty
       - state
-        indexed: true
       - date
-        indexed: true
       - write_date
-        is_sync_date: true
 
 # =============================================================================
 # FIELD TYPE MAPPING (Auto-applied)
