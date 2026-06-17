@@ -82,38 +82,29 @@ models:
 # All fields are STILL auto-detected from Odoo - just add options you need.
 
 models_with_options:
-  # Example: Custom table name
-  - odoo_model: sale.order
-    postgres_table: my_sale_orders
-    description: "Custom sale orders table"
+  # Example: Custom table name (uncomment to use)
+  # - odoo_model: some.model
+  #   postgres_table: custom_table_name
+  #   description: "Custom description"
 
-  # Example: Soft delete for partners
-  - odoo_model: res.partner
-    postgres_table: res_partner
-    deletion_strategy: soft_delete
-    soft_delete_field: active
-    description: "Partners with soft delete"
+  # Example: Soft delete (uncomment to use)
+  # - odoo_model: res.partner
+  #   deletion_strategy: soft_delete
+  #   soft_delete_field: active
 
-  # Example: Exclude specific fields
-  - odoo_model: product.product
-    postgres_table: product_product
-    exclusions:
-      - image_1920      # Skip large binary field
-      - image_1024      # Skip large binary field
-    description: "Products without images"
+  # Example: Exclude large fields (uncomment to use)
+  # - odoo_model: product.product
+  #   exclusions:
+  #     - image_1920
+  #     - image_1024
 
-  # Example: Include only specific fields
-  - odoo_model: stock.move
-    postgres_table: stock_move_basic
-    inclusions:
-      - id
-      - name
-      - product_id
-      - product_qty
-      - state
-      - date
-      - write_date
-    description: "Basic stock move fields only"
+  # Example: Include only specific fields (uncomment to use)
+  # - odoo_model: stock.move
+  #   inclusions:
+  #     - id
+  #     - name
+  #     - product_id
+  #     - write_date
 
 # =============================================================================
 # LEGACY FORMAT (Still Supported)
@@ -122,17 +113,13 @@ models_with_options:
 # Even in legacy format, fields are validated against Odoo's actual schema.
 
 legacy_models:
-  - odoo_model: stock.move
-    postgres_table: stock_move
-    description: "Stock Moves with custom configuration"
-    fields:
-      - id
-      - name
-      - product_id
-      - product_qty
-      - state
-      - date
-      - write_date
+  # Example (uncomment to use):
+  # - odoo_model: some.model
+  #   postgres_table: custom_table
+  #   fields:
+  #     - id
+  #     - name
+  #     - write_date
 
 # =============================================================================
 # FIELD TYPE MAPPING (Auto-applied)
