@@ -587,24 +587,19 @@ class PostgresClient:
         """
         Get the expected PostgreSQL type for a field.
         
-        Applies Odoo-specific type widening rules.
+        Applies Odoo-specific type widening rules:
+        - All VARCHAR types -> TEXT (Odoo strings exceed 255 chars regularly)
+        - All NUMERIC types -> NUMERIC(30,10) (handles values like 17762630700.00)
         """
         type_upper = field.postgres_type.upper().strip()
         
-        # NUMERIC types - use larger precision for Odoo monetary/float
+        # NUMERIC types - use 30,10 precision for Odoo monetary/float
+        # Examples: 17762630700.00, 10865523596.49
         if type_upper.startswith("NUMERIC"):
-            # Odoo monetary fields need at least NUMERIC(20,4) for values > 100B
-            return "NUMERIC(20,4)"
+            return "NUMERIC(30,10)"
         
-        # VARCHAR types - use TEXT for long strings
+        # VARCHAR types - always use TEXT for Odoo strings
         if type_upper.startswith("VARCHAR"):
-            match = re.search(r"VARCHAR\((\d+)\)", type_upper)
-            if match:
-                length = int(match.group(1))
-                # Use TEXT for strings >= 255 (Odoo standard)
-                if length >= 255:
-                    return "TEXT"
-                return f"VARCHAR({length})"
             return "TEXT"
         
         # Return configured type for other types
@@ -621,30 +616,20 @@ class PostgresClient:
         Determine if a column type needs migration.
         
         Migration rules:
-        - VARCHAR -> TEXT (any VARCHAR is potentially too small for Odoo)
-        - NUMERIC(12,2) or smaller -> NUMERIC(20,4)
-        - NUMERIC with precision < 14 -> NUMERIC(20,4)
+        - VARCHAR -> TEXT (any VARCHAR is too small for Odoo)
+        - NUMERIC -> NUMERIC(30,10) (Odoo values like 17762630700.00 exceed older limits)
         """
         # VARCHAR to TEXT migration
         if current_type.startswith("VARCHAR") and expected_type == "TEXT":
             return True
         
-        # NUMERIC migration
+        # NUMERIC migration to NUMERIC(30,10)
         if current_type.startswith("NUMERIC") and expected_type.startswith("NUMERIC"):
-            current_match = re.search(r"NUMERIC\((\d+)(?:,\s*(\d+))?\)", current_type)
-            expected_match = re.search(r"NUMERIC\((\d+)(?:,\s*(\d+))?\)", expected_type)
-            
-            if current_match and expected_match:
+            current_match = re.search(r"NUMERIC\((\d+)(?:,.*)?\)", current_type)
+            if current_match:
                 current_prec = int(current_match.group(1))
-                expected_prec = int(expected_match.group(1))
-                
-                # Migrate if current precision is less than expected
-                if current_prec < expected_prec:
-                    return True
-                
-                # Also migrate NUMERIC(12,2) even if precision is "enough"
-                # because Odoo values like 17762630700.00 need more precision
-                if current_prec == 12:
+                # Migrate any NUMERIC with precision < 30
+                if current_prec < 30:
                     return True
         
         return False

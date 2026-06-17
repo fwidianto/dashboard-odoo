@@ -77,24 +77,50 @@ class ConfigLoader:
     """
 
     # Odoo field type to PostgreSQL type mapping
+    # Updated to handle Odoo's actual data requirements:
+    # - Using BIGINT for all integers (never INTEGER, avoids overflow)
+    # - Using NUMERIC(30,10) for float/monetary (handles values like 17762630700.00)
+    # - Using TEXT for all text types (Odoo fields regularly exceed VARCHAR limits)
+    # - Storing relational fields as JSONB instead of skipping them
     ODOO_TYPE_TO_POSTGRES = {
-        'integer': 'INTEGER',
+        # Integer types - always use BIGINT for safety
+        'integer': 'BIGINT',
         'bigint': 'BIGINT',
-        'float': 'NUMERIC(20,4)',
-        'monetary': 'NUMERIC(20,4)',
+        
+        # Numeric types - using 30,10 precision for Odoo monetary values
+        # Examples requiring large precision:
+        # - 17762630700.00 (requires NUMERIC(14,8))
+        # - 10865523596.49 (requires NUMERIC(14,8))
+        'float': 'NUMERIC(30,10)',
+        'monetary': 'NUMERIC(30,10)',
+        
+        # Boolean
         'boolean': 'BOOLEAN',
+        
+        # Text types - never use VARCHAR
+        # Odoo fields regularly exceed 255 chars (names, descriptions, etc.)
         'char': 'TEXT',
         'text': 'TEXT',
-        'selection': 'VARCHAR(255)',
+        'html': 'TEXT',
+        'selection': 'TEXT',  # selections can be long text values
+        'reference': 'TEXT',  # reference stores "model,id" strings
+        
+        # Date/Time
         'date': 'DATE',
         'datetime': 'TIMESTAMP',
-        'many2one': 'INTEGER',
-        'binary': 'BYTEA',
-        'html': 'TEXT',
-        'reference': 'VARCHAR(255)',
-        # Relational fields are skipped, not mapped
-        'one2many': 'SKIP',
-        'many2many': 'SKIP',
+        
+        # Relational types - store as JSONB
+        # many2one: Store related record ID (INTEGER -> BIGINT)
+        'many2one': 'BIGINT',
+        # one2many/many2many: Store array of IDs as JSONB
+        'one2many': 'JSONB',
+        'many2many': 'JSONB',
+        
+        # Binary - store as TEXT (base64 encoded)
+        'binary': 'TEXT',
+        
+        # Unknown type - default to TEXT for safety
+        'unknown': 'TEXT',
     }
 
     def __init__(self, config_path: Optional[str] = None):
