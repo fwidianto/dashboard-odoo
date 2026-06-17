@@ -190,8 +190,8 @@ class TestBatchErrorSummary:
                 value_preview=f"Very long value {i}",
             )
         
-        # Should only have 5 samples
-        assert len(summary.sample_records[ErrorCategory.DATA_TOO_LONG]) == 5
+        # Should only have MAX_SAMPLE_RECORDS (10) samples
+        assert len(summary.sample_records[ErrorCategory.DATA_TOO_LONG]) == 10
 
 
 class TestSyncErrorReport:

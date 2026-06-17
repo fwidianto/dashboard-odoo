@@ -8,6 +8,7 @@ from src.clients.postgres_client import PostgresClient, DetailedError
 from src.models.config import FieldConfig, ModelConfig, SyncConfig
 from src.models.state import SyncResult, SyncStatus, SyncAudit, SyncHistory
 from src.reporting.error_reporter import ErrorReporter
+from src.reporting.schema_recommender import SchemaRecommender
 from src.state.state_manager import StateManager
 from src.utils.logging import get_logger
 from src.utils.settings import get_settings
@@ -34,6 +35,7 @@ class SyncEngine:
         state_manager: Optional[StateManager] = None,
         config: Optional[SyncConfig] = None,
         error_reporter: Optional[ErrorReporter] = None,
+        schema_recommender: Optional[SchemaRecommender] = None,
     ):
         """
         Initialize the sync engine.
@@ -44,6 +46,7 @@ class SyncEngine:
             state_manager: State manager instance (created if None).
             config: Sync configuration (loaded if None).
             error_reporter: Error reporter instance (created if None).
+            schema_recommender: Schema recommender instance (created if None).
         """
         self._logger = get_logger("sync_engine")
         settings = get_settings()
@@ -58,7 +61,8 @@ class SyncEngine:
         self._batch_size = settings.sync.batch_size
         self._validated_models: dict[str, ValidatedModelConfig] = {}
         self._error_reporter = error_reporter or ErrorReporter()
-        self._reports_dir = "reports/errors"
+        self._schema_recommender = schema_recommender or SchemaRecommender()
+        self._reports_dir = "reports"
 
     @property
     def config(self) -> SyncConfig:
@@ -167,7 +171,10 @@ class SyncEngine:
         self._state_mgr.mark_sync_started(model_config)
         
         # Start error reporting batch for this model
-        self._error_reporter.start_batch(model_config.odoo_model)
+        self._error_reporter.start_batch(
+            model=model_config.odoo_model,
+            table_name=model_config.postgres_table,
+        )
 
         try:
             # Get validated model (skips invalid fields with warnings)
@@ -191,6 +198,13 @@ class SyncEngine:
                           if f.field_type != "one2many" and f.field_type != "many2many"]
             pk_field = validated.get_primary_key_field()
             sync_date_field = validated.get_sync_date_field()
+            
+            # Create field type mapping for data profiling
+            field_type_map = {
+                f.postgres_column: f.postgres_type 
+                for f in validated.fields 
+                if f.field_type not in ("one2many", "many2many")
+            }
 
             # Determine domain filter
             domain = []
@@ -232,6 +246,13 @@ class SyncEngine:
                     value=error.value_preview,
                 )
 
+            
+            # Profile data for each record
+            def profile_callback(record: dict) -> None:
+                """Profile data values for schema recommendations."""
+                for col, value in record.items():
+                    col_type = field_type_map.get(col, "TEXT")
+                    self._error_reporter.profile_data(col, col_type, value)
             for batch in self._odoo.read_batched(
                 model=model_config.odoo_model,
                 domain=domain,
@@ -244,6 +265,10 @@ class SyncEngine:
 
                 if not transformed:
                     continue
+                
+                # Profile data for schema analysis
+                for record in transformed:
+                    profile_callback(record)
 
                 # Upsert to PostgreSQL (with error resilience - skips bad records)
                 inserted, updated, errors = self._pg.upsert(
@@ -444,9 +469,12 @@ class SyncEngine:
             failed=len(results) - successful,
         )
         
-        # Export error reports and print final summary
+        # Generate schema recommendations
+        self._generate_schema_recommendations()
+
+        # Export all reports
         if self._error_reporter.has_errors():
-            csv_path, json_path = self._error_reporter.export()
+            paths = self._error_reporter.export_all()
             self._logger.info(
                 "Error reports exported",
                 csv_path=csv_path,
@@ -658,3 +686,16 @@ class SyncEngine:
     def get_error_reporter(self) -> ErrorReporter:
         """Get the error reporter instance."""
         return self._error_reporter
+    
+    def _generate_schema_recommendations(self) -> None:
+        """Generate schema recommendations from collected error data."""
+        for model_name, summary in self._error_reporter.get_sync_report().models.items():
+            self._schema_recommender.add_batch_summary(summary)
+        
+        # Export recommendations
+        self._schema_recommender.export()
+        self._schema_recommender.print_recommendations()
+    
+    def get_schema_recommender(self) -> SchemaRecommender:
+        """Get the schema recommender instance."""
+        return self._schema_recommender
