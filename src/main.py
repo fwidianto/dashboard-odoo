@@ -185,10 +185,18 @@ def run_sync(
             print("\nFailures:")
             for f in failures:
                 print(f"  - {f.model_name}: {', '.join(f.errors)}")
-            return 1
+        
+        # Print detailed error summary from error reporter
+        error_reporter = engine.get_error_reporter()
+        if error_reporter.has_errors():
+            print("\n" + "=" * 60)
+            print("DETAILED ERROR ANALYSIS")
+            print("=" * 60)
+            # This will print the comprehensive error report
+            error_reporter.print_summary()
 
         print("=" * 60)
-        return 0
+        return 0 if not failures else 1
 
     except Exception as e:
         logger.exception("Synchronization failed")

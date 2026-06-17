@@ -4,9 +4,10 @@ from datetime import datetime
 from typing import Optional
 
 from src.clients.odoo_client import OdooClient
-from src.clients.postgres_client import PostgresClient
+from src.clients.postgres_client import PostgresClient, DetailedError
 from src.models.config import FieldConfig, ModelConfig, SyncConfig
 from src.models.state import SyncResult, SyncStatus, SyncAudit, SyncHistory
+from src.reporting.error_reporter import ErrorReporter
 from src.state.state_manager import StateManager
 from src.utils.logging import get_logger
 from src.utils.settings import get_settings
@@ -32,6 +33,7 @@ class SyncEngine:
         postgres_client: Optional[PostgresClient] = None,
         state_manager: Optional[StateManager] = None,
         config: Optional[SyncConfig] = None,
+        error_reporter: Optional[ErrorReporter] = None,
     ):
         """
         Initialize the sync engine.
@@ -41,6 +43,7 @@ class SyncEngine:
             postgres_client: PostgreSQL client instance (created if None).
             state_manager: State manager instance (created if None).
             config: Sync configuration (loaded if None).
+            error_reporter: Error reporter instance (created if None).
         """
         self._logger = get_logger("sync_engine")
         settings = get_settings()
@@ -54,6 +57,8 @@ class SyncEngine:
         self._config = config
         self._batch_size = settings.sync.batch_size
         self._validated_models: dict[str, ValidatedModelConfig] = {}
+        self._error_reporter = error_reporter or ErrorReporter()
+        self._reports_dir = "reports/errors"
 
     @property
     def config(self) -> SyncConfig:
@@ -160,6 +165,9 @@ class SyncEngine:
 
         # Mark sync as started
         self._state_mgr.mark_sync_started(model_config)
+        
+        # Start error reporting batch for this model
+        self._error_reporter.start_batch(model_config.odoo_model)
 
         try:
             # Get validated model (skips invalid fields with warnings)
@@ -212,6 +220,17 @@ class SyncEngine:
             records_synced = 0
             last_write_date = None
             last_id = None
+            
+            # Define error callback for this model
+            def error_callback(error: DetailedError) -> None:
+                """Record error to the error reporter."""
+                self._error_reporter.record_error(
+                    error_category=error.error_category,
+                    record_id=error.record_id,
+                    error_message=error.error_message,
+                    column_name=error.column_name,
+                    value=error.value_preview,
+                )
 
             for batch in self._odoo.read_batched(
                 model=model_config.odoo_model,
@@ -231,11 +250,16 @@ class SyncEngine:
                     table_name=model_config.postgres_table,
                     records=transformed,
                     primary_key_column=pk_field.postgres_column,
+                    error_callback=error_callback,
                 )
 
                 records_synced += len(transformed)
                 result.records_inserted += inserted
                 result.records_updated += updated
+                
+                # Record successful records to error reporter
+                successful_count = inserted + updated
+                self._error_reporter.record_success(successful_count)
                 
                 if errors > 0:
                     self._logger.warning(
@@ -304,6 +328,16 @@ class SyncEngine:
                 model=model_config.odoo_model,
                 error=str(e),
             )
+        
+        # End batch and print summary
+        self._error_reporter.end_batch()
+        self._error_reporter.print_batch_summary()
+        
+        # Record batch errors to result
+        batch_summary = self._error_reporter.get_batch_summary()
+        if batch_summary and batch_summary.errors_by_category:
+            for cat, count in batch_summary.errors_by_category.items():
+                result.add_error(f"{cat.value}: {count} records")
 
         return result
 
@@ -409,6 +443,18 @@ class SyncEngine:
             successful=successful,
             failed=len(results) - successful,
         )
+        
+        # Export error reports and print final summary
+        if self._error_reporter.has_errors():
+            csv_path, json_path = self._error_reporter.export()
+            self._logger.info(
+                "Error reports exported",
+                csv_path=csv_path,
+                json_path=json_path,
+            )
+        
+        # Print final sync health report
+        self._error_reporter.print_summary()
 
         return results
 
@@ -608,3 +654,7 @@ class SyncEngine:
         self._odoo.close()
         self._pg.close()
         self._logger.debug("Sync engine closed")
+    
+    def get_error_reporter(self) -> ErrorReporter:
+        """Get the error reporter instance."""
+        return self._error_reporter

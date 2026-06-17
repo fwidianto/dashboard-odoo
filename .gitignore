@@ -165,3 +165,6 @@ htmlcov/
 # Coverage
 .coverage
 coverage/
+
+# Error reports (generated at runtime)
+reports/

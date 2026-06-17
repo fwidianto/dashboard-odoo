@@ -12,8 +12,9 @@ PostgreSQL Identifier Hardening:
 
 import json
 import re
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from sqlalchemy import (
     Column,
@@ -34,6 +35,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from src.models.config import FieldConfig, ModelConfig
 from src.models.state import SyncAudit, SyncHistory, SyncStatus
+from src.reporting.error_enums import ErrorCategory
 from src.utils.identifier import (
     generate_safe_identifier,
     generate_index_name,
@@ -45,6 +47,16 @@ from src.utils.identifier import (
 )
 from src.utils.logging import get_logger
 from src.utils.settings import get_settings
+
+
+@dataclass
+class DetailedError:
+    """Detailed error information for a failed record."""
+    record_id: Optional[int]
+    error_message: str
+    error_category: ErrorCategory
+    column_name: Optional[str] = None
+    value_preview: Optional[str] = None
 
 
 class PostgresClientError(Exception):
@@ -781,6 +793,7 @@ class PostgresClient:
         table_name: str,
         records: list[dict],
         primary_key_column: str,
+        error_callback: Optional[Callable[["DetailedError"], None]] = None,
     ) -> tuple[int, int, int]:
         """
         Upsert records into a table using INSERT ON CONFLICT.
@@ -792,6 +805,8 @@ class PostgresClient:
             table_name: Target table name.
             records: List of record dictionaries.
             primary_key_column: Primary key column name.
+            error_callback: Optional callback to receive detailed error information.
+                This allows the caller to aggregate and classify errors.
 
         Returns:
             Tuple of (inserted_count, updated_count, error_count).
@@ -822,10 +837,43 @@ class PostgresClient:
             RETURNING "{primary_key_column}", xmax
         """)
 
+        def process_error(record: dict, error_msg: str) -> None:
+            """Process an error record with detailed information."""
+            record_id = record.get(primary_key_column)
+            error_category = ErrorCategory.classify_from_message(error_msg)
+            
+            # Extract column name from error message if possible
+            column_name = self._extract_column_from_error(error_msg, columns)
+            
+            # Get value preview for problematic column
+            value_preview = None
+            if column_name and column_name in record:
+                value = record[column_name]
+                if value is not None:
+                    value_preview = str(value)[:200]
+            
+            # Call error callback if provided
+            if error_callback:
+                detailed_error = DetailedError(
+                    record_id=record_id,
+                    error_message=error_msg,
+                    error_category=error_category,
+                    column_name=column_name,
+                    value_preview=value_preview,
+                )
+                error_callback(detailed_error)
+            
+            self._logger.warning(
+                "Record upsert failed, skipping",
+                table=table_name,
+                record_id=record_id,
+                error_category=error_category.value,
+                error=str(error_msg),
+            )
+
         inserted = 0
         updated = 0
         errors = 0
-        failed_records = []
 
         with self.engine.connect() as conn:
             try:
@@ -842,17 +890,7 @@ class PostgresClient:
                                 updated += 1
                     except SQLAlchemyError as e:
                         errors += 1
-                        failed_records.append({
-                            'record_id': record.get(primary_key_column),
-                            'error': str(e),
-                            'columns': list(record.keys())
-                        })
-                        self._logger.warning(
-                            "Record upsert failed, will retry individually",
-                            table=table_name,
-                            record_id=record.get(primary_key_column),
-                            error=str(e),
-                        )
+                        process_error(record, str(e))
                 
                 conn.commit()
                 
@@ -877,31 +915,12 @@ class PostgresClient:
                                 updated += 1
                     except SQLAlchemyError as record_error:
                         errors += 1
-                        failed_records.append({
-                            'record_id': record.get(primary_key_column),
-                            'error': str(record_error),
-                            'columns': list(record.keys())
-                        })
-                        self._logger.warning(
-                            "Individual record upsert failed, skipping",
-                            table=table_name,
-                            record_id=record.get(primary_key_column),
-                            error=str(record_error),
-                        )
+                        process_error(record, str(record_error))
                 
                 try:
                     conn.commit()
                 except SQLAlchemyError:
                     pass  # Already rolled back
-
-        # Log detailed errors for failed records
-        if failed_records:
-            self._logger.error(
-                "Records failed to upsert",
-                table=table_name,
-                failed_count=len(failed_records),
-                sample_errors=failed_records[:5],  # Log first 5 errors
-            )
 
         self._logger.info(
             "Upsert complete",
@@ -913,6 +932,51 @@ class PostgresClient:
         )
 
         return inserted, updated, errors
+    
+    def _extract_column_from_error(self, error_message: str, available_columns: list[str]) -> Optional[str]:
+        """
+        Extract column name from PostgreSQL error message.
+        
+        PostgreSQL error messages often contain the column name, e.g.:
+        - "null value in column \"name\" violates not-null constraint"
+        - "value too long for type character varying(255)"
+        - "column \"invalid_col\" does not exist"
+        
+        Args:
+            error_message: The error message from PostgreSQL.
+            available_columns: List of columns in the target table.
+            
+        Returns:
+            The column name if found, None otherwise.
+        """
+        msg_lower = error_message.lower()
+        
+        # Try to find column name in quotes
+        import re
+        quoted_match = re.search(r'"(\w+)"', error_message)
+        if quoted_match:
+            potential_col = quoted_match.group(1)
+            if potential_col in available_columns:
+                return potential_col
+        
+        # For "value too long" errors, try to infer which column
+        if "too long" in msg_lower or "varchar" in msg_lower or "character varying" in msg_lower:
+            # Try to find column name mentioned in error
+            col_match = re.search(r'column\s+"(\w+)"', msg_lower)
+            if col_match:
+                return col_match.group(1)
+            # Try to find it in context
+            for col in available_columns:
+                if col.lower() in msg_lower:
+                    return col
+        
+        # For NULL constraint violations
+        if "null" in msg_lower and "column" in msg_lower:
+            col_match = re.search(r'column\s+"(\w+)"', msg_lower)
+            if col_match:
+                return col_match.group(1)
+        
+        return None
 
     def upsert_batch(
         self,
@@ -920,6 +984,7 @@ class PostgresClient:
         records: list[dict],
         primary_key_column: str,
         batch_size: int = 1000,
+        error_callback: Optional[Callable[["DetailedError"], None]] = None,
     ) -> tuple[int, int, int]:
         """
         Upsert records in batches for better performance.
@@ -929,6 +994,7 @@ class PostgresClient:
             records: List of record dictionaries.
             primary_key_column: Primary key column name.
             batch_size: Records per batch.
+            error_callback: Optional callback to receive detailed error information.
 
         Returns:
             Tuple of (total_inserted, total_updated, total_errors).
@@ -939,7 +1005,9 @@ class PostgresClient:
 
         for i in range(0, len(records), batch_size):
             batch = records[i:i + batch_size]
-            inserted, updated, errors = self.upsert(table_name, batch, primary_key_column)
+            inserted, updated, errors = self.upsert(
+                table_name, batch, primary_key_column, error_callback
+            )
             total_inserted += inserted
             total_updated += updated
             total_errors += errors
