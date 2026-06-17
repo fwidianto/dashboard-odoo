@@ -316,7 +316,15 @@ class PostgresClient:
         created_indexes = []
         
         for field in model_config.get_indexed_fields():
-            index_name = f"idx_{model_config.postgres_table}_{field.postgres_column}"
+            # Truncate index name to PostgreSQL's 63 character limit
+            base_name = f"idx_{model_config.postgres_table}_{field.postgres_column}"
+            if len(base_name) > 63:
+                suffix = str(abs(hash(field.postgres_column)))[-8:]
+                max_table_len = 63 - 1 - len(suffix)
+                truncated_table = model_config.postgres_table[:max_table_len]
+                index_name = f"idx_{truncated_table}_{suffix}"
+            else:
+                index_name = base_name
             
             # Check if index already exists
             inspector = inspect(self.engine)
