@@ -1,5 +1,15 @@
+# =============================================================================
 # Odoo to PostgreSQL Synchronization Configuration
-# Supports simple format - just list Odoo field names!
+# =============================================================================
+#
+# NEW MODEL-BASED ARCHITECTURE:
+# =============================
+# YAML now only contains model names. ALL fields are automatically
+# discovered from Odoo's fields_get() API at runtime.
+#
+# Simply add any Odoo model and it will be fully synchronized!
+#
+# =============================================================================
 
 # Global settings
 default_batch_size: 1000
@@ -8,125 +18,169 @@ retry_delay_seconds: 5
 default_deletion_strategy: ignore  # Options: ignore, soft_delete, reconcile
 
 models:
-  # ============================================================
-  # SIMPLE FORMAT - Just list field names!
-  # ============================================================
-  # Auto-detects:
-  #   - id field → primary_key=True, type=INTEGER
-  #   - *_id fields → is_foreign_key=True, type=INTEGER
-  #   - write_date/create_date → is_sync_date=True, type=TIMESTAMP
-  #   - active/is_active → type=BOOLEAN
-  #   - other fields → type=TEXT (schema migration will fix types)
-  # ============================================================
+  # ===========================================================================
+  # MODEL-ONLY FORMAT (Recommended)
+  # ===========================================================================
+  # Just list model names! All fields are auto-detected from Odoo.
+  # The table name is auto-generated from the model name (sale.order → sale_order)
+  #
+  # Auto-discovered for every field:
+  #   - id → PRIMARY KEY, INTEGER
+  #   - write_date, create_date → indexed, TIMESTAMP
+  #   - many2one fields (*_id) → INTEGER, indexed
+  #   - Odoo field types → PostgreSQL types
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # CORE MODELS
+  # ---------------------------------------------------------------------------
+  - res.partner                    # Contacts/Partners
+  - product.template               # Product Templates
+  - product.product                 # Product Variants
   
+  # ---------------------------------------------------------------------------
+  # SALES MODELS
+  # ---------------------------------------------------------------------------
+  - sale.order                     # Sale Orders
+  - sale.order.line               # Sale Order Lines
+  
+  # ---------------------------------------------------------------------------
+  # PURCHASE MODELS
+  # ---------------------------------------------------------------------------
+  - purchase.order                 # Purchase Orders
+  - purchase.order.line           # Purchase Order Lines
+  
+  # ---------------------------------------------------------------------------
+  # ACCOUNTING MODELS
+  # ---------------------------------------------------------------------------
+  - account.move                   # Journal Entries
+  - account.move.line             # Journal Entry Lines
+  - account.payment               # Payments
+  
+  # ---------------------------------------------------------------------------
+  # STOCK MODELS
+  # ---------------------------------------------------------------------------
+  - stock.move                     # Stock Moves
+  - stock.move.line               # Stock Move Lines
+  - stock.quant                   # Stock Quants
+  
+  # ---------------------------------------------------------------------------
+  # MANUFACTURING MODELS
+  # ---------------------------------------------------------------------------
+  - mrp.production                # Manufacturing Orders
+  
+  # ---------------------------------------------------------------------------
+  # APPROVAL MODELS
+  # ---------------------------------------------------------------------------
+  - approval.request              # Approval Requests
+  - approval.product.line         # Approval Product Lines
+
+# =============================================================================
+# MODEL WITH OPTIONS
+# =============================================================================
+# Use this format when you need custom table names or deletion strategies.
+# All fields are STILL auto-detected from Odoo - just add options you need.
+
+models_with_options:
+  # Example: Custom table name
+  - odoo_model: sale.order
+    postgres_table: my_sale_orders
+    description: "Custom sale orders table"
+
+  # Example: Soft delete for partners
   - odoo_model: res.partner
     postgres_table: res_partner
-    description: "Contacts/Partners"
-    fields:
-      - id
-      - name
-      - active
-      - email
-      - phone
-      - partner_id  # Auto-detected as foreign key
-      - write_date   # Auto-detected as sync date
+    deletion_strategy: soft_delete
+    soft_delete_field: active
+    description: "Partners with soft delete"
 
+  # Example: Exclude specific fields
   - odoo_model: product.product
     postgres_table: product_product
-    description: "Products"
-    fields:
-      - id
-      - name
-      - default_code
-      - active
-      - list_price
-      - standard_price
-      - qty_available
-      - product_tmpl_id
-      - write_date
+    exclusions:
+      - image_1920      # Skip large binary field
+      - image_1024      # Skip large binary field
+    description: "Products without images"
 
-  # ============================================================
-  # OVERRIDE FORMAT - Add specific options
-  # ============================================================
-  # Use dict format to override auto-detected values
-  
-  - odoo_model: sale.order
-    postgres_table: sale_order
-    description: "Sale Orders"
-    fields:
+  # Example: Include only specific fields
+  - odoo_model: stock.move
+    postgres_table: stock_move_basic
+    inclusions:
       - id
       - name
-      - partner_id
-        indexed: true  # Add index for foreign key
-      - date_order
+      - product_id
+      - product_qty
       - state
-        indexed: true
-      - amount_total
+      - date
       - write_date
+    description: "Basic stock move fields only"
 
-  # ============================================================
-  # VERBOSE FORMAT - Full control (backward compatible)
-  # ============================================================
-  # Use this when you need precise control over column names/types
+# =============================================================================
+# LEGACY FORMAT (Still Supported)
+# =============================================================================
+# If you need explicit field control, use the legacy format.
+# Even in legacy format, fields are validated against Odoo's actual schema.
 
+legacy_models:
   - odoo_model: stock.move
     postgres_table: stock_move
-    description: "Stock Moves"
+    description: "Stock Moves with custom configuration"
     fields:
-      - odoo_field: id
-        postgres_column: id
-        postgres_type: INTEGER
-        primary_key: true
-        nullable: false
+      - id
+      - name
+      - product_id
         indexed: true
-        
-      - odoo_field: name
-        postgres_column: name
-        postgres_type: TEXT
-        
-      - odoo_field: product_id
-        postgres_column: product_id
-        postgres_type: INTEGER
-        is_foreign_key: true
+      - product_qty
+      - state
         indexed: true
-        field_type: many2one
-        related_model: product.product
-        
-      - odoo_field: product_qty
-        postgres_column: product_qty
-        postgres_type: NUMERIC(20,4)  # Large values for Odoo
-        
-      - odoo_field: state
-        postgres_column: state
-        postgres_type: VARCHAR(32)
+      - date
         indexed: true
-        
-      - odoo_field: date
-        postgres_column: move_date
-        postgres_type: TIMESTAMP
-        indexed: true
-        
-      - odoo_field: write_date
-        postgres_column: write_date
-        postgres_type: TIMESTAMP
+      - write_date
         is_sync_date: true
-        indexed: true
 
-# ============================================================
-# Type Auto-Detection Reference
-# ============================================================
-# Field Name Pattern      → PostgreSQL Type
-# --------------------      --------------------
-# id                      → INTEGER (primary key)
-# *_id                    → INTEGER (foreign key)
-# active, is_active       → BOOLEAN
-# write_date, create_date → TIMESTAMP (sync date)
-# date                    → TIMESTAMP
-# name, email, etc.       → TEXT (VARCHAR 255+)
+# =============================================================================
+# FIELD TYPE MAPPING (Auto-applied)
+# =============================================================================
+# Odoo Type        → PostgreSQL Type      Notes
+# ---------------    -------------------   ------------------
+# integer          → INTEGER              Standard integers
+# bigint            → BIGINT               Large integers
+# float            → NUMERIC(20,4)        Float/monetary values
+# monetary          → NUMERIC(20,4)        Currency fields
+# boolean           → BOOLEAN              True/False fields
+# char              → TEXT                 Odoo char can be long
+# text              → TEXT                 Multi-line text
+# selection         → VARCHAR(64)          Dropdown values
+# date              → DATE                 Date fields
+# datetime          → TIMESTAMP             Date+time fields
+# many2one          → INTEGER              Related record ID
+# binary             → BYTEA                Binary data (skipped by default)
+# html               → TEXT                 HTML content
+# reference         → VARCHAR(255)         Dynamic references
+# one2many          → (SKIPPED)            Not stored directly
+# many2many         → (SKIPPED)            Not stored directly
 
-# ============================================================
-# Deletion Strategies
-# ============================================================
-# ignore       → Do nothing with deleted records
-# soft_delete → Mark records as inactive (active=false)
-# reconcile   → Remove records from PostgreSQL
+# =============================================================================
+# CUSTOM FIELDS (x_*)
+# =============================================================================
+# Custom fields are automatically detected and synced!
+# Just add the model to the list and all x_* fields will be included.
+#
+# Example: A custom field x_customer_type on res.partner will be:
+#   - Detected automatically
+#   - Added as x_customer_type TEXT column
+#   - Synced with all other fields
+
+# =============================================================================
+# DELETION STRATEGIES
+# =============================================================================
+# ignore       → Do nothing (default)
+#               Records deleted in Odoo remain in PostgreSQL
+#
+# soft_delete  → Set active=false
+#               Records are marked inactive, not deleted
+#               Requires soft_delete_field to be configured
+#
+# reconcile    → Delete from PostgreSQL
+#               Records deleted in Odoo are also deleted from PostgreSQL
+#               Use with caution!

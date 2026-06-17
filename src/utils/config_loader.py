@@ -1,11 +1,23 @@
 """Configuration loader for YAML-based model definitions.
 
-Supports three formats:
-1. Auto-detect format: Just model name (fetch all fields from Odoo)
-   models:
-     - odoo_model: purchase.order  # Auto-detects all fields!
+NEW MODEL-BASED ARCHITECTURE:
+=============================
+YAML now only contains model names. All field definitions are auto-generated
+from Odoo's fields_get() API.
 
-2. Simple format: Just list field names
+Supported YAML formats:
+1. MODEL-ONLY (Recommended): Just model names - everything is auto-detected
+   models:
+     - res.partner
+     - product.product
+
+2. MODEL WITH OPTIONS: Model name with optional table/customizations
+   models:
+     - odoo_model: sale.order
+       postgres_table: custom_sale_order  # Custom table name
+       deletion_strategy: soft_delete       # Optional settings
+
+3. LEGACY FORMAT (Still Supported): With explicit field definitions
    models:
      - odoo_model: res.partner
        postgres_table: res_partner
@@ -14,20 +26,17 @@ Supports three formats:
          - name
          - email
 
-3. Verbose format: Full field definitions
-   models:
-     - odoo_model: res.partner
-       postgres_table: res_partner
-       fields:
-         - odoo_field: id
-           postgres_column: id
-           postgres_type: INTEGER
-           primary_key: true
+The platform automatically:
+- Fetches ALL fields from Odoo using fields_get()
+- Maps Odoo field types to PostgreSQL types
+- Creates tables with correct schema
+- Adds new columns when Odoo adds fields
+- Migrates column types when needed
 """
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, List, Any
 
 import yaml
 from pydantic import ValidationError
@@ -35,15 +44,29 @@ from pydantic import ValidationError
 from src.models.config import SyncConfig, ModelConfig, FieldConfig
 
 
+# Fields to always skip during sync
+SYSTEM_FIELDS_TO_SKIP = frozenset([
+    '__last_update',  # Internal Odoo field
+])
+
+# Fields to always skip (stored as relations, not values)
+RELATIONAL_FIELDS = frozenset([
+    'one2many',
+    'many2many',
+])
+
+
 class ConfigLoader:
     """Loads and validates configuration from YAML files.
     
-    Supports both simple and verbose field formats.
+    Supports model-only configuration where all fields are auto-detected
+    from Odoo's fields_get() API.
     """
 
-    # Default type mappings from Odoo field types to PostgreSQL
+    # Odoo field type to PostgreSQL type mapping
     ODOO_TYPE_TO_POSTGRES = {
         'integer': 'INTEGER',
+        'bigint': 'BIGINT',
         'float': 'NUMERIC(20,4)',
         'monetary': 'NUMERIC(20,4)',
         'boolean': 'BOOLEAN',
@@ -53,11 +76,12 @@ class ConfigLoader:
         'date': 'DATE',
         'datetime': 'TIMESTAMP',
         'many2one': 'INTEGER',
-        'one2many': 'SKIP',  # Not synced directly
-        'many2many': 'SKIP',  # Not synced directly
         'binary': 'BYTEA',
         'html': 'TEXT',
         'reference': 'VARCHAR(255)',
+        # Relational fields are skipped, not mapped
+        'one2many': 'SKIP',
+        'many2many': 'SKIP',
     }
 
     def __init__(self, config_path: Optional[str] = None):
@@ -73,6 +97,15 @@ class ConfigLoader:
             config_path = project_root / "config" / "models.yaml"
         
         self.config_path = Path(config_path)
+        self._odoo_client = None
+
+    def _get_odoo_client(self):
+        """Get or create Odoo client for field discovery."""
+        if self._odoo_client is None:
+            from src.clients.odoo_client import OdooClient
+            self._odoo_client = OdooClient()
+            self._odoo_client.authenticate()
+        return self._odoo_client
 
     def load(self) -> SyncConfig:
         """
@@ -102,25 +135,327 @@ class ConfigLoader:
             "default_deletion_strategy": raw_config.get("default_deletion_strategy", "ignore"),
         }
 
-        # Extract models
-        models_data = raw_config.get("models", [])
+        # Extract models from all possible keys
+        # Support for multiple model sections in YAML
+        all_models_data = []
         
-        # Auto-detect fields from Odoo if no fields specified
-        models_data = self._auto_detect_fields_from_odoo(models_data)
+        # Standard models (string list)
+        if "models" in raw_config:
+            models = raw_config["models"]
+            if isinstance(models, list):
+                for m in models:
+                    if isinstance(m, str):
+                        all_models_data.append(m)
+                    elif isinstance(m, dict):
+                        all_models_data.append(m)
         
-        # Expand simple field formats (just field names) to full field definitions
-        models_data = self._expand_simple_fields(models_data)
+        # Models with options (list of dicts)
+        if "models_with_options" in raw_config:
+            models = raw_config["models_with_options"]
+            if isinstance(models, list):
+                all_models_data.extend(models)
+        
+        # Legacy models (list of dicts with fields)
+        if "legacy_models" in raw_config:
+            models = raw_config["legacy_models"]
+            if isinstance(models, list):
+                all_models_data.extend(models)
+        
+        # Process models - auto-detect fields from Odoo
+        processed_models = self._process_models(all_models_data)
 
         # Build configuration
         config_dict = {
             **global_settings,
-            "models": models_data,
+            "models": processed_models,
         }
 
         config = SyncConfig(**config_dict)
         self._validate_config(config)
         
         return config
+
+    def _process_models(self, models_data: List) -> List[Dict]:
+        """
+        Process model configurations, auto-detecting fields from Odoo.
+        
+        Handles three input formats:
+        1. String: "res.partner" -> Full model config
+        2. Dict with odoo_model: Model config with options
+        3. Dict with fields: Legacy format with explicit fields
+        """
+        processed = []
+        
+        for model_data in models_data:
+            if isinstance(model_data, str):
+                # Format 1: Just model name string
+                # "res.partner" -> {odoo_model: res.partner}
+                model_name = model_data.strip()
+                if model_name:
+                    processed.append(self._create_model_config(model_name))
+                    
+            elif isinstance(model_data, dict):
+                if 'fields' in model_data:
+                    # Format 3: Legacy format with explicit fields
+                    # Process legacy format but also allow field auto-detection
+                    processed.append(self._process_legacy_model(model_data))
+                else:
+                    # Format 2: Model with options (no explicit fields)
+                    odoo_model = model_data.get('odoo_model')
+                    if odoo_model:
+                        config = self._create_model_config(
+                            odoo_model,
+                            postgres_table=model_data.get('postgres_table'),
+                            description=model_data.get('description'),
+                            deletion_strategy=model_data.get('deletion_strategy'),
+                            batch_size=model_data.get('batch_size'),
+                            soft_delete_field=model_data.get('soft_delete_field'),
+                            exclusions=model_data.get('exclusions', []),
+                            inclusions=model_data.get('inclusions'),
+                        )
+                        processed.append(config)
+            else:
+                raise ValueError(f"Invalid model configuration: {model_data}")
+        
+        return processed
+
+    def _create_model_config(
+        self,
+        odoo_model: str,
+        postgres_table: Optional[str] = None,
+        description: Optional[str] = None,
+        deletion_strategy: Optional[str] = None,
+        batch_size: Optional[int] = None,
+        soft_delete_field: Optional[str] = None,
+        exclusions: Optional[List[str]] = None,
+        inclusions: Optional[List[str]] = None,
+    ) -> Dict:
+        """
+        Create a full model configuration by fetching fields from Odoo.
+        
+        This is the core of the model-based architecture - all fields are
+        automatically discovered from Odoo's fields_get() API.
+        """
+        from src.utils.logging import get_logger
+        logger = get_logger("config_loader")
+        
+        # Generate table name from model name if not provided
+        if postgres_table is None:
+            postgres_table = self._model_to_table_name(odoo_model)
+        
+        logger.info(f"Discovering fields for model: {odoo_model}")
+        
+        # Fetch all fields from Odoo
+        odoo_client = self._get_odoo_client()
+        odoo_fields = odoo_client.get_model_fields(odoo_model)
+        
+        logger.info(
+            f"Found {len(odoo_fields)} fields in Odoo for {odoo_model}",
+            field_count=len(odoo_fields),
+        )
+        
+        # Build field configurations
+        fields = []
+        exclusions_set = set(exclusions or [])
+        inclusions_set = set(inclusions) if inclusions else None
+        
+        for field_name, field_def in odoo_fields.items():
+            # Skip system fields
+            if field_name in SYSTEM_FIELDS_TO_SKIP:
+                continue
+            
+            # Skip if in exclusions list
+            if field_name in exclusions_set:
+                continue
+            
+            # If inclusions specified, skip if not in list
+            if inclusions_set is not None and field_name not in inclusions_set:
+                continue
+            
+            # Create field config from Odoo field definition
+            field_config = self._create_field_from_odoo(field_name, field_def)
+            if field_config:
+                fields.append(field_config)
+        
+        logger.info(
+            f"Generated {len(fields)} field configs for {odoo_model}",
+            synced_fields=len(fields),
+        )
+        
+        return {
+            'odoo_model': odoo_model,
+            'postgres_table': postgres_table,
+            'description': description or f"Auto-synced from {odoo_model}",
+            'fields': fields,
+            'deletion_strategy': deletion_strategy or 'ignore',
+            'batch_size': batch_size,
+            'soft_delete_field': soft_delete_field,
+        }
+
+    def _create_field_from_odoo(self, field_name: str, field_def: Dict) -> Optional[Dict]:
+        """
+        Create a field configuration from an Odoo field definition.
+        
+        Analyzes:
+        - Field type from Odoo
+        - Field name patterns for auto-detection
+        - Field attributes (required, indexed, etc.)
+        """
+        # Get field type
+        odoo_type = field_def.get('type', 'char')
+        
+        # Skip relational fields
+        if odoo_type in RELATIONAL_FIELDS:
+            return None
+        
+        # Map to PostgreSQL type
+        postgres_type = self.ODOO_TYPE_TO_POSTGRES.get(odoo_type, 'TEXT')
+        
+        # If SKIP, don't create field config
+        if postgres_type == 'SKIP':
+            return None
+        
+        # Build field configuration
+        config = {
+            'odoo_field': field_name,
+            'postgres_column': field_name,  # Use same name by default
+            'postgres_type': postgres_type,
+            'nullable': not field_def.get('required', False),
+            'field_type': odoo_type,
+        }
+        
+        # Auto-detect primary key
+        if field_name == 'id':
+            config['primary_key'] = True
+            config['nullable'] = False
+            config['indexed'] = True
+        
+        # Auto-detect sync date fields
+        elif field_name in ('write_date', 'create_date'):
+            config['is_sync_date'] = True
+            config['indexed'] = True
+        
+        # Auto-detect many2one (foreign key)
+        elif odoo_type == 'many2one':
+            config['is_foreign_key'] = True
+            config['indexed'] = True
+            config['related_model'] = field_def.get('relation')
+        
+        # Auto-detect active field for soft delete
+        elif field_name in ('active', 'is_active'):
+            config['field_type'] = 'boolean'
+        
+        # Handle selection fields
+        elif odoo_type == 'selection':
+            # Use VARCHAR for selection fields
+            config['postgres_type'] = 'VARCHAR(64)'
+        
+        # Handle indexed fields
+        if field_def.get('index'):
+            config['indexed'] = True
+        
+        # Handle default values
+        if 'default' in field_def:
+            default = field_def['default']
+            if default is not None:
+                config['default_value'] = default
+        
+        return config
+
+    def _process_legacy_model(self, model_data: Dict) -> Dict:
+        """
+        Process legacy model configuration with explicit fields.
+        
+        Still auto-generates field definitions but allows specifying
+        some fields explicitly for overrides.
+        """
+        from src.utils.logging import get_logger
+        logger = get_logger("config_loader")
+        
+        odoo_model = model_data.get('odoo_model')
+        
+        if not odoo_model:
+            raise ValueError("Legacy model config missing 'odoo_model'")
+        
+        logger.info(f"Processing legacy model config: {odoo_model}")
+        
+        # Create base config with auto-detected fields
+        config = self._create_model_config(
+            odoo_model,
+            postgres_table=model_data.get('postgres_table'),
+            description=model_data.get('description'),
+            deletion_strategy=model_data.get('deletion_strategy'),
+            batch_size=model_data.get('batch_size'),
+        )
+        
+        # If explicit fields specified, use them (for overrides)
+        # But still validate they exist in Odoo
+        if model_data.get('fields'):
+            explicit_fields = self._process_explicit_fields(
+                model_data['fields'],
+                config['fields']
+            )
+            config['fields'] = explicit_fields
+        
+        return config
+
+    def _process_explicit_fields(self, explicit_fields: List, auto_fields: List) -> List[Dict]:
+        """
+        Process explicit field definitions from legacy format.
+        
+        Merges explicit field configs with auto-detected ones,
+        allowing overrides while validating against Odoo schema.
+        """
+        from src.utils.logging import get_logger
+        logger = get_logger("config_loader")
+        
+        # Create lookup for auto-generated fields
+        auto_lookup = {f['odoo_field']: f for f in auto_fields}
+        
+        result = []
+        for field in explicit_fields:
+            if isinstance(field, str):
+                # Simple field name - use auto-detected config
+                field_name = field.strip()
+                if field_name in auto_lookup:
+                    result.append(auto_lookup[field_name])
+                else:
+                    logger.warning(f"Explicit field '{field_name}' not found in Odoo, skipping")
+            elif isinstance(field, dict):
+                # Full or partial field definition
+                field_name = field.get('odoo_field')
+                if not field_name:
+                    continue
+                
+                # Start with auto-detected config if exists
+                if field_name in auto_lookup:
+                    merged = {**auto_lookup[field_name], **field}
+                    result.append(merged)
+                else:
+                    # Use explicit config (will be validated later)
+                    result.append({
+                        'odoo_field': field_name,
+                        'postgres_column': field.get('postgres_column', field_name),
+                        'postgres_type': field.get('postgres_type', 'TEXT'),
+                        'nullable': field.get('nullable', True),
+                        'primary_key': field.get('primary_key', False),
+                        'indexed': field.get('indexed', False),
+                        'is_sync_date': field.get('is_sync_date', False),
+                        'is_foreign_key': field.get('is_foreign_key', False),
+                    })
+        
+        return result
+
+    def _model_to_table_name(self, model_name: str) -> str:
+        """
+        Convert Odoo model name to PostgreSQL table name.
+        
+        Examples:
+            res.partner -> res_partner
+            sale.order -> sale_order
+            product.product -> product_product
+        """
+        return model_name.replace('.', '_').replace('-', '_')
     
     def _expand_simple_fields(self, models_data: list) -> list:
         """

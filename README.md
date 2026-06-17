@@ -1,481 +1,427 @@
 # Odoo to PostgreSQL Synchronization Platform
 
-A production-ready, metadata-driven synchronization platform that bridges Odoo ERP with PostgreSQL databases. Built with Python 3.12, SQLAlchemy, and designed for extensibility.
+A production-ready, **model-based** synchronization platform that bridges Odoo ERP with PostgreSQL databases. Built with Python, SQLAlchemy, and designed for extensibility.
 
-## Features
+## 🎯 NEW: Model-Based Architecture
 
-- **STRICT READ-ONLY MODE**: Platform NEVER modifies Odoo data
-- **Metadata-Driven Architecture**: Configure Odoo models and fields via YAML - no code changes needed
-- **API Key Authentication**: Secure authentication using Odoo API keys (password auth deprecated)
-- **Incremental Synchronization**: Uses `write_date` for efficient delta syncs
-- **Automatic Schema Evolution**: Creates tables and adds columns automatically
-- **UPSERT Operations**: Uses PostgreSQL `INSERT ON CONFLICT DO UPDATE`
-- **Dual Sync Modes**: Full sync and incremental sync supported
-- **Scheduled Execution**: APScheduler-based job scheduling
-- **REST API Ready**: FastAPI integration for production deployment
-- **Comprehensive Logging**: Structured logging with structlog
-- **State Tracking**: Persistent sync state in `sync_state` table
-- **Health Monitoring**: `/health`, `/sync-status`, `/sync-history` endpoints
+**No more manual field definitions!** Simply add any Odoo model name to `models.yaml` and all fields are automatically discovered and synchronized.
 
-## Project Structure
-
-```
-odoo_postgres_sync/
-├── config/
-│   └── models.yaml          # Model configuration (add/edit models here)
-├── migrations/               # Alembic database migrations
-│   ├── versions/            # Migration scripts
-│   ├── env.py               # Migration environment
-│   └── script.py.mako       # Migration template
-├── src/
-│   ├── __init__.py
-│   ├── main.py              # CLI entry point
-│   ├── api.py               # FastAPI REST API (future)
-│   ├── clients/
-│   │   ├── odoo_client.py   # Odoo XML-RPC client
-│   │   └── postgres_client.py # PostgreSQL SQLAlchemy client
-│   ├── engine/
-│   │   ├── sync_engine.py   # Core synchronization logic
-│   │   └── scheduler.py     # Job scheduling
-│   ├── models/
-│   │   ├── __init__.py
-│   │   ├── config.py        # Pydantic config models
-│   │   └── state.py         # Sync state models
-│   ├── state/
-│   │   └── state_manager.py # State persistence
-│   └── utils/
-│       ├── __init__.py
-│       ├── config_loader.py # YAML config loading
-│       ├── logging.py       # Logging setup
-│       └── settings.py      # Environment settings
-├── tests/                   # Unit tests
-├── .env.example             # Environment template
-├── requirements.txt         # Python dependencies
-├── pytest.ini              # Test configuration
-├── alembic.ini             # Alembic configuration
-└── README.md
+```yaml
+# That's it! All fields are auto-detected from Odoo
+models:
+  - res.partner
+  - sale.order
+  - product.product
+  - stock.move
 ```
 
-## Read-Only Odoo Architecture
-
-This platform is designed to operate in **STRICT READ-ONLY MODE**. This is a fundamental architectural decision that ensures:
-
-### Core Principles
-
-| Principle | Description |
-|-----------|-------------|
-| **Odoo is Source of Truth** | Odoo remains the master system for all data |
-| **One-Way Data Flow** | Data flows ONLY from Odoo → PostgreSQL |
-| **No Odoo Modifications** | The platform NEVER creates, updates, or deletes Odoo data |
-| **PostgreSQL for Analytics** | PostgreSQL is the destination for analytics, reporting, and AI features |
-
-### Why Read-Only?
-
-1. **Safety**: Eliminates risk of accidental data corruption in Odoo
-2. **Performance**: Odoo doesn't carry the load of analytics queries
-3. **Security**: Reduces attack surface - compromised platform can't modify Odoo
-4. **Reliability**: Odoo ERP remains stable and performant
-
-### API Method Restrictions
-
-The platform uses a **strict allowlist** of Odoo API methods:
-
-| Allowed Methods | Description |
-|----------------|-------------|
-| `search` | Search for record IDs |
-| `read` | Read specific records by ID |
-| `search_read` | Combined search and read |
-| `search_count` | Count matching records |
-| `fields_get` | Get field definitions |
-
-**All write operations are blocked:**
-- ❌ `create` - Creating records
-- ❌ `write` - Updating records  
-- ❌ `unlink` - Deleting records
-- ❌ `copy` - Copying records
-- ❌ Any other mutating method
-
-### Dashboard and AI Features
-
-Dashboard and AI features built on top of this platform **MUST**:
-- ✅ Query PostgreSQL only (never Odoo directly)
-- ✅ Use the synchronized data for all analytics
-- ✅ Build reporting views in PostgreSQL
-
-This ensures Odoo remains unaffected by any analytics workloads.
-
-### Security Features
-
-- **ReadOnlyViolation Exception**: Blocked methods raise a security exception
-- **Startup Validation**: Logs warning when password auth is used
-- **Audit Logging**: All Odoo operations are logged with user, database, and method
-- **READ_ONLY_MODE Flag**: Defaults to `true`, cannot be disabled without explicit override
+---
 
 ## Quick Start
 
-### 1. Installation
+### 1. Install Dependencies
 
 ```bash
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 2. Configuration
+### 2. Configure Environment
 
 ```bash
-# Copy environment template
 cp .env.example .env
-
-# Edit .env with your settings
-nano .env
+# Edit .env with your Odoo and PostgreSQL settings
 ```
 
-Configure your Odoo and PostgreSQL connections in `.env`:
+### 3. Add Models to Sync
+
+Edit `config/models.yaml` - just add model names:
+
+```yaml
+models:
+  - res.partner
+  - sale.order
+  - product.product
+  - account.move
+```
+
+### 4. Run Sync
+
+```bash
+# Full sync (first time)
+python -m src.main --mode full
+
+# Incremental sync (subsequent runs)
+python -m src.main --mode incremental
+```
+
+---
+
+## Key Features
+
+### ✅ Model-Based Auto-Discovery
+- Add any Odoo model by name only
+- ALL fields automatically discovered via `fields_get()`
+- No need to define fields manually
+
+### ✅ Automatic Schema Evolution
+- Tables created automatically
+- New columns added when Odoo adds fields
+- Column types migrated when needed (VARCHAR→TEXT, etc.)
+
+### ✅ Custom Field Support
+- All `x_*` custom fields automatically synced
+- No additional configuration needed
+
+### ✅ Full Sync Modes
+- **Full sync**: Syncs all records
+- **Incremental sync**: Only syncs changed records (via `write_date`)
+
+### ✅ Production Ready
+- Strict read-only mode (Odoo never modified)
+- UPSERT with accurate insert/update tracking
+- Batch processing for large datasets
+- Comprehensive logging and error handling
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     MODEL-BASED SYNC FLOW                        │
+└─────────────────────────────────────────────────────────────────┘
+
+   ┌─────────────┐
+   │ models.yaml │
+   │ (just names)│
+   └──────┬──────┘
+          │
+          ▼
+   ┌─────────────────────────────────────────────────────────────┐
+   │                    ConfigLoader                              │
+   │                                                              │
+   │  1. For each model:                                        │
+   │     └─→ fields_get() ─→ Discover ALL fields               │
+   │                                                              │
+   │  2. Auto-generate field configs:                           │
+   │     └─→ Type mapping, indexes, primary keys               │
+   │                                                              │
+   │  3. Output: Complete ModelConfig with all fields            │
+   └─────────────────────────────────────────────────────────────┘
+          │
+          ▼
+   ┌─────────────────────────────────────────────────────────────┐
+   │                    SyncEngine                                 │
+   │                                                              │
+   │  1. ensure_table_schema()                                  │
+   │     ├─→ Create table if not exists                        │
+   │     ├─→ Add new columns                                    │
+   │     ├─→ Migrate column types                               │
+   │     └─→ Create indexes                                     │
+   │                                                              │
+   │  2. Fetch data from Odoo                                   │
+   │     └─→ search_read() with batching                        │
+   │                                                              │
+   │  3. Upsert to PostgreSQL                                    │
+   │     └─→ INSERT ON CONFLICT DO UPDATE                        │
+   │                                                              │
+   │  4. Update sync state                                       │
+   └─────────────────────────────────────────────────────────────┘
+```
+
+### Component Responsibilities
+
+| Component | Purpose |
+|-----------|---------|
+| `config_loader.py` | Auto-discovers fields from Odoo via `fields_get()` |
+| `sync_engine.py` | Orchestrates sync with schema evolution |
+| `odoo_client.py` | Read-only XML-RPC client |
+| `postgres_client.py` | Schema management and upsert operations |
+| `state_manager.py` | Tracks sync state for incremental sync |
+
+---
+
+## Configuration
+
+### Environment Variables
 
 ```env
-ODOO_URL=http://your-odoo-server:8069
-ODOO_DB=your_database
-ODOO_USERNAME=your_username
-
-# Authentication - API Key is recommended for security
-ODOO_API_KEY=your_api_key_here
-# ODOO_PASSWORD=your_password  # DEPRECATED - only use if API key not available
+ODOO_URL=http://localhost:8069
+ODOO_DB=odoo_db
+ODOO_USERNAME=admin
+ODOO_API_KEY=your_api_key
 
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
-POSTGRES_DB=sync_database
+POSTGRES_DB=sync_db
 POSTGRES_USER=sync_user
-POSTGRES_PASSWORD=secure_password
+POSTGRES_PASSWORD=password
+
+SYNC_BATCH_SIZE=1000
+SYNC_MODE=incremental
 ```
 
-### 3. Configure Models
+### YAML Configuration Formats
 
-Edit `config/models.yaml` to define which Odoo models to synchronize:
+#### 1. Model-Only (Recommended)
+
+Just list model names - everything is auto-detected:
 
 ```yaml
 models:
-  - odoo_model: res.partner
-    postgres_table: res_partner
-    description: "Synchronize Odoo contacts"
+  - res.partner
+  - sale.order
+  - product.product
+```
+
+#### 2. Model with Options
+
+Add customizations while auto-detecting fields:
+
+```yaml
+models_with_options:
+  - odoo_model: sale.order
+    postgres_table: my_sales
+    deletion_strategy: soft_delete
+    
+  - odoo_model: product.product
+    exclusions:
+      - image_1920    # Skip large binary
+      - image_1024
+```
+
+#### 3. Legacy Format (Still Supported)
+
+Explicit field definitions:
+
+```yaml
+legacy_models:
+  - odoo_model: stock.move
+    postgres_table: stock_move
     fields:
-      - odoo_field: id
-        postgres_column: id
-        postgres_type: INTEGER
-        primary_key: true
-        nullable: false
-      - odoo_field: name
-        postgres_column: name
-        postgres_type: VARCHAR(255)
-      - odoo_field: email
-        postgres_column: email
-        postgres_type: VARCHAR(255)
-      - odoo_field: write_date
-        postgres_column: write_date
-        postgres_type: TIMESTAMP
-        is_sync_date: true
+      - id
+      - name
+      - product_id
+        indexed: true
 ```
 
-### 4. Validate Configuration
+---
 
-Before syncing, validate your configuration:
+## Sync Modes
 
-```bash
-python -m src.main --validate
-```
-
-This checks:
-- Environment variables are configured
-- Odoo connection is accessible
-- PostgreSQL connection is accessible
-- models.yaml is valid
-
-### 5. Run Synchronization
+### Full Sync
 
 ```bash
-# Full sync (all records)
 python -m src.main --mode full
+```
 
-# Incremental sync (only changed records)
+- Ignores previous sync state
+- Fetches ALL records from Odoo
+- Creates tables and columns if needed
+
+### Incremental Sync
+
+```bash
 python -m src.main --mode incremental
-
-# Sync specific models
-python -m src.main --models res.partner product.product
-
-# Check sync status
-python -m src.main --status
-
-# Reset sync state for a model
-python -m src.main --reset --models res.partner
 ```
 
-## Command Line Interface
+- Uses `write_date >= last_sync_date` filter
+- Only syncs changed records
+- Much faster for subsequent syncs
 
-### Main Sync Command
+---
 
-```bash
-python -m src.main [OPTIONS]
+## Schema Evolution
 
-Options:
-  --mode {full,incremental}    Sync mode
-  --models MODEL [MODEL ...]   Specific models to sync
-  --config PATH               Path to models.yaml
-  --log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}
-  --log-file FILE             Log file path
-  --validate                  Validate configuration only
-  --status                    Show sync status
-  --reset                     Reset sync state
-```
+The platform automatically handles Odoo schema changes:
 
-### Scheduler Command
+### What Happens Automatically
 
-```bash
-python -m src.engine.scheduler [OPTIONS]
+| Odoo Change | PostgreSQL Action |
+|-------------|-------------------|
+| New field added | Column automatically created |
+| Field type changed | Column type migrated |
+| Field renamed | (Not detected - rename handled manually) |
+| Field deleted | Column remains (no auto-drop) |
 
-Options:
-  --interval MINUTES          Incremental sync interval (default: 15)
-  --full-sync-hour HOUR       Hour for daily full sync (default: 2)
-  --full-sync-minute MINUTE   Minute for full sync (default: 0)
-  --run-immediately           Run sync before scheduling
-  --log-level LEVEL           Logging level
-```
+### Type Mapping
 
-## Scheduled Execution
+| Odoo Type | PostgreSQL Type |
+|-----------|-----------------|
+| integer | INTEGER |
+| float, monetary | NUMERIC(20,4) |
+| char, text | TEXT |
+| boolean | BOOLEAN |
+| date | DATE |
+| datetime | TIMESTAMP |
+| many2one | INTEGER |
+| selection | VARCHAR(64) |
 
-### Using the Built-in Scheduler
-
-```bash
-# Run scheduler with 15-minute incremental syncs
-python -m src.engine.scheduler --interval 15 --run-immediately
-
-# Run with daily full sync at 3:00 AM
-python -m src.engine.scheduler --interval 15 --full-sync-hour 3
-```
-
-### Cron Example
-
-Add to crontab for external scheduling:
-
-```bash
-# Every 15 minutes - incremental sync
-*/15 * * * * cd /path/to/odoo_postgres_sync && python -m src.main --mode incremental >> /var/log/sync.log 2>&1
-
-# Daily at 2:00 AM - full sync
-0 2 * * * cd /path/to/odoo_postgres_sync && python -m src.main --mode full >> /var/log/sync_full.log 2>&1
-```
-
-### Systemd Service (Linux)
-
-Create `/etc/systemd/system/odoo-sync.service`:
-
-```ini
-[Unit]
-Description=Odoo PostgreSQL Sync Service
-After=postgresql.service network.target
-
-[Service]
-Type=simple
-User=youruser
-WorkingDirectory=/path/to/odoo_postgres_sync
-Environment=PYTHONPATH=/path/to/odoo_postgres_sync
-ExecStart=/path/to/venv/bin/python -m src.engine.scheduler --interval 15
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
+---
 
 ## Adding New Models
 
-To add a new Odoo model to synchronize:
-
-1. **Edit `config/models.yaml`**:
+### Step 1: Add Model to YAML
 
 ```yaml
 models:
-  # ... existing models ...
-
-  - odoo_model: stock.quant
-    postgres_table: stock_quant
-    description: "Synchronize stock quantities"
-    fields:
-      - odoo_field: id
-        postgres_column: id
-        postgres_type: INTEGER
-        primary_key: true
-        nullable: false
-      - odoo_field: product_id
-        postgres_column: product_id
-        postgres_type: INTEGER
-      - odoo_field: quantity
-        postgres_column: quantity
-        postgres_type: NUMERIC(12, 3)
-      - odoo_field: location_id
-        postgres_column: location_id
-        postgres_type: INTEGER
-      - odoo_field: write_date
-        postgres_column: write_date
-        postgres_type: TIMESTAMP
-        is_sync_date: true
+  - existing.model
+  - new.model       # Just add the name!
 ```
 
-2. **Run sync** - the table and columns will be created automatically:
+### Step 2: Run Sync
 
 ```bash
 python -m src.main --mode full
 ```
 
-## Supported PostgreSQL Types
+### Step 3: Done!
 
-| YAML Type | PostgreSQL Type |
-|-----------|-----------------|
-| `INTEGER` | INTEGER |
-| `BIGINT` | BIGINT |
-| `VARCHAR(n)` | VARCHAR(n) |
-| `TEXT` | TEXT |
-| `BOOLEAN` | BOOLEAN |
-| `NUMERIC(p,s)` | NUMERIC(precision, scale) |
-| `TIMESTAMP` | TIMESTAMP |
-| `DATE` | DATE |
-| `UUID` | UUID |
-| `JSONB` | TEXT (stored as JSON) |
+- Table created automatically
+- All fields discovered
+- Data synced
 
-## API Reference (Future FastAPI Integration)
+---
 
-The API can be enabled for HTTP-based control:
+## Custom Fields
 
-```bash
-# Install FastAPI dependencies
-pip install fastapi uvicorn
+Custom fields (`x_*`) are automatically detected and synced:
 
-# Run API server
-python -m uvicorn src.api:app --host 0.0.0.0 --port 8000
+### Example
+
+If Odoo has a custom field `x_customer_tier` on `res.partner`:
+
+```yaml
+models:
+  - res.partner    # x_customer_tier automatically included!
 ```
 
-### API Endpoints
+### Excluding Custom Fields
+
+```yaml
+models_with_options:
+  - odoo_model: res.partner
+    exclusions:
+      - x_internal_field    # Skip specific custom field
+```
+
+---
+
+## Supported Models
+
+Pre-configured models in `config/models.yaml`:
+
+| Category | Models |
+|----------|--------|
+| **Core** | res.partner, product.template, product.product |
+| **Sales** | sale.order, sale.order.line |
+| **Purchase** | purchase.order, purchase.order.line |
+| **Accounting** | account.move, account.move.line, account.payment |
+| **Stock** | stock.move, stock.move.line, stock.quant |
+| **Manufacturing** | mrp.production |
+| **Approvals** | approval.request, approval.product.line |
+
+---
+
+## Running the Project
+
+### CLI Commands
+
+```bash
+# Validate configuration
+python -m src.main --validate
+
+# Full sync
+python -m src.main --mode full
+
+# Incremental sync
+python -m src.main --mode incremental
+
+# Sync specific models
+python -m src.main --models res.partner sale.order
+
+# Check status
+python -m src.main --status
+
+# Reset state (force full re-sync)
+python -m src.main --reset --models res.partner
+```
+
+### Scheduler
+
+```bash
+# Run scheduler with 15-min incremental syncs
+python -m src.engine.scheduler --interval 15 --run-immediately
+```
+
+---
+
+## REST API
+
+```bash
+uvicorn src.api:app --host 0.0.0.0 --port 8000
+```
+
+### Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/health` | Health check |
-| GET | `/status` | Sync status for all models |
-| POST | `/sync` | Trigger sync operation |
-| POST | `/sync/{model_name}` | Sync specific model |
-| POST | `/reset` | Reset sync state |
-| GET | `/models` | List configured models |
+| GET | `/sync-status` | Sync status |
+| GET | `/sync-history` | Sync history |
+| POST | `/sync` | Trigger sync |
+| POST | `/sync/{model}` | Sync model |
+| POST | `/reset` | Reset state |
+| GET | `/models` | List models |
 | POST | `/scheduler/start` | Start scheduler |
 | POST | `/scheduler/stop` | Stop scheduler |
-| GET | `/scheduler/status` | Scheduler status |
-| GET | `/validate` | Validate configuration |
 
-## Architecture
+---
 
-### Component Overview
+## Migration Guide
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Sync Engine                              │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
-│  │ Odoo Client │  │  PostgreSQL │  │   State Manager     │  │
-│  │  (XML-RPC)  │  │  (SQLAlchemy)│  │ (sync_state table) │  │
-│  └──────┬──────┘  └──────┬──────┘  └──────────┬──────────┘  │
-│         │                │                     │              │
-│         └────────────────┼─────────────────────┘              │
-│                          ▼                                    │
-│              ┌───────────────────────┐                        │
-│              │   Configuration       │                        │
-│              │   (models.yaml)       │                        │
-│              └───────────────────────┘                        │
-└─────────────────────────────────────────────────────────────┘
+### From Field-Based to Model-Based
+
+**Before (old way):**
+```yaml
+models:
+  - odoo_model: res.partner
+    postgres_table: res_partner
+    fields:
+      - id
+      - name
+      - email
+      - phone
 ```
 
-### Sync Flow
-
-1. **Initialize**: Load config, test connections, ensure tables exist
-2. **Query Odoo**: Use `search_read` with domain filters
-3. **Transform**: Convert Odoo records to PostgreSQL format
-4. **Upsert**: Insert/update records using `ON CONFLICT`
-5. **Track State**: Update `sync_state` table with last sync info
-6. **Report**: Return statistics and any errors
-
-## Testing
-
-```bash
-# Run all tests
-pytest
-
-# Run with coverage
-pytest --cov=src --cov-report=html
-
-# Run specific test file
-pytest tests/test_sync_engine.py -v
+**After (new way):**
+```yaml
+models:
+  - res.partner    # Just the model name!
 ```
 
-## Troubleshooting
+**Result:** All fields (including custom fields) are automatically discovered.
 
-### Common Issues
+### Benefits of Model-Based
 
-**Connection refused to Odoo**
-- Verify Odoo server is running
-- Check URL in `.env` file
-- Ensure firewall allows connection
+1. **Less configuration** - No need to list fields
+2. **Future-proof** - New Odoo fields automatically added
+3. **Custom fields** - All `x_*` fields included automatically
+4. **Fewer errors** - No mismatched field definitions
 
-**Authentication Errors**
-- **API Key authentication failed**: Verify the API key is valid and associated with the user
-  - Generate an API key in Odoo: Settings → User → API Key
-  - Ensure the key hasn't expired or been revoked
-- **Password authentication deprecated**: Consider migrating to API key
-  - Set `ODOO_API_KEY` instead of `ODOO_PASSWORD`
-  - See: [Odoo API Key Documentation](https://www.odoo.com/documentation/17.0/developer/reference/external_api.html)
-- **Both methods fail**: Check that the username matches an existing Odoo user
-- **User lacks permissions**: Ensure the user has access to the models being synced
+---
 
-**Table not found**
-- Run full sync to create tables
-- Check table name in `models.yaml`
+## Known Limitations
 
-**Missing columns**
-- Run full sync to add new columns
-- Check field names match Odoo model
+| Limitation | Workaround |
+|-----------|------------|
+| One2many fields not synced | Sync child models separately |
+| Many2many fields not synced | Sync relation tables manually |
+| Binary fields skipped | External storage for large files |
+| Single Odoo instance | Run multiple instances |
 
-### Authentication Methods
-
-The platform supports two authentication methods:
-
-| Method | Environment Variable | Security | Recommendation |
-|--------|-------------------|----------|----------------|
-| API Key | `ODOO_API_KEY` | High | **Preferred** |
-| Password | `ODOO_PASSWORD` | Low | Deprecated |
-
-#### Generating an Odoo API Key
-
-1. Log in to Odoo as the target user
-2. Go to Settings → Users & Companies → Users
-3. Open the user profile
-4. Click "Preferences" or "Change API Key"
-5. Generate a new API key (copy it immediately - it won't be shown again)
-
-#### Security Best Practices
-
-- **Use API keys**: They don't expose user passwords
-- **Rotate keys periodically**: Regenerate keys every 90 days
-- **Use least privilege**: Create dedicated API users with minimal permissions
-- **Store securely**: Use environment variables or secret management, never in code
-
-### Debug Mode
-
-```bash
-# Enable debug logging
-python -m src.main --log-level DEBUG --log-file debug.log
-```
+---
 
 ## License
 
-MIT License - See LICENSE file for details.
-
-## Contributing
-
-Contributions welcome! Please read the contribution guidelines and submit pull requests.
+MIT License - See LICENSE file.
