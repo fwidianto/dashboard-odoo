@@ -1,7 +1,36 @@
 # FINAL ARCHITECTURE DOCUMENTATION
 
-**Generated:** 2026-06-17  
+**Generated:** 2026-06-18  
+**Last Updated:** 2026-06-18 - Fixed SyncEngine error_callback parameter mismatch  
 **Source:** Verified against actual source code  
+
+---
+
+## API CONTRACT: record_error()
+
+**Canonical Signature:**
+```python
+def record_error(
+    self,
+    model: str,
+    table_name: str,
+    category: ErrorCategory,  # REQUIRED - not 'error_category'
+    record_id: Optional[int] = None,
+    error_message: str = "",
+    column_name: Optional[str] = None,
+    value: Any = None,
+    payload: Optional[dict] = None,
+) -> None:
+```
+
+**Common Mistake:**
+```python
+# WRONG - will raise TypeError
+reporter.record_error(error_category=ErrorCategory.NULL_CONSTRAINT, ...)
+
+# CORRECT
+reporter.record_error(category=ErrorCategory.NULL_CONSTRAINT, ...)
+```
 
 ---
 

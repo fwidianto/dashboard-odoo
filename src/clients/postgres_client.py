@@ -573,7 +573,23 @@ class PostgresClient:
                 )
                 if migration:
                     migrations.append(migration)
-        
+
+            # Check if NULL constraint migration is needed
+            current_nullable = current_col.get("nullable", True)
+            expected_nullable = field.nullable
+            if self._needs_null_constraint_migration(
+                model_config.postgres_table,
+                col_name,
+                current_nullable,
+                expected_nullable,
+            ):
+                null_migration = self._migrate_null_constraint(
+                    model_config.postgres_table,
+                    col_name,
+                )
+                if null_migration:
+                    migrations.append(null_migration)
+
         if migrations:
             self._logger.info(
                 "Column migrations complete",
@@ -634,6 +650,60 @@ class PostgresClient:
         
         return False
     
+
+    def _needs_null_constraint_migration(
+        self,
+        table_name: str,
+        column_name: str,
+        current_nullable: bool,
+        expected_nullable: bool,
+    ) -> bool:
+        """Check if NULL constraint needs to be relaxed."""
+        if current_nullable or not expected_nullable:
+            return False
+        
+        with self.engine.connect() as conn:
+            result = conn.execute(
+                __import__('sqlalchemy').text(f'SELECT COUNT(*) FROM "{table_name}" WHERE "{column_name}" IS NULL')
+            )
+            null_count = result.scalar()
+            return null_count > 0
+
+    def _migrate_null_constraint(
+        self,
+        table_name: str,
+        column_name: str,
+    ) -> dict:
+        """Migrate a column from NOT NULL to NULL."""
+        try:
+            self._logger.info(
+                "Migrating NULL constraint",
+                table=table_name,
+                column=column_name,
+                from_constraint="NOT NULL",
+                to_constraint="NULL",
+            )
+            
+            with self.engine.connect() as conn:
+                conn.execute(__import__('sqlalchemy').text(
+                    f'ALTER TABLE "{table_name}" ALTER COLUMN "{column_name}" DROP NOT NULL'
+                ))
+                conn.commit()
+            
+            return {
+                'column': column_name,
+                'from_constraint': 'NOT NULL',
+                'to_constraint': 'NULL',
+            }
+        except Exception as e:
+            self._logger.warning(
+                "NULL constraint migration failed",
+                table=table_name,
+                column=column_name,
+                error=str(e),
+            )
+            return None
+
     def _migrate_column(
         self,
         table_name: str,
