@@ -19,20 +19,37 @@ import argparse
 import csv
 import json
 import os
-import re
 import sys
 from datetime import datetime, timezone
 from typing import Optional
 
+# Check dependencies
+try:
+    import psycopg2
+    from psycopg2 import sql
+except ImportError:
+    print("❌ Error: psycopg2 is required")
+    print("   Install with: pip install psycopg2-binary")
+    sys.exit(1)
+
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import text, inspect
-
-from src.clients.postgres_client import PostgresClient
 from src.utils.logging import get_logger
 
 logger = get_logger("schema_repair")
+
+
+def get_db_connection():
+    """Get PostgreSQL connection from environment."""
+    import os
+    return psycopg2.connect(
+        host=os.getenv('POSTGRES_HOST', 'localhost'),
+        port=os.getenv('POSTGRES_PORT', '5432'),
+        database=os.getenv('POSTGRES_DB', 'sync_db'),
+        user=os.getenv('POSTGRES_USER', 'sync_user'),
+        password=os.getenv('POSTGRES_PASSWORD', 'password'),
+    )
 
 
 class SchemaRepair:
@@ -102,8 +119,8 @@ class SchemaRepair:
         'x_studio_': 'TEXT',  # Custom fields default to TEXT
     }
     
-    def __init__(self, pg_client: PostgresClient, dry_run: bool = False):
-        self._pg = pg_client
+    def __init__(self, conn=None, dry_run: bool = False):
+        self._conn = conn
         self._dry_run = dry_run
         self._repairs = []
     
@@ -275,17 +292,17 @@ class SchemaRepair:
         """Get list of sync tables from PostgreSQL."""
         tables = []
         try:
-            with self._pg.engine.connect() as conn:
-                result = conn.execute(text("""
+            with self._conn.cursor() as cur:
+                cur.execute("""
                     SELECT table_name 
                     FROM information_schema.tables 
                     WHERE table_schema = 'public' 
-                    AND table_name LIKE '%_template' 
+                    AND (table_name LIKE '%_template' 
                        OR table_name LIKE '%_order' 
                        OR table_name LIKE '%_move' 
-                       OR table_name = 'res_partner'
-                """))
-                tables = [row[0] for row in result.fetchall()]
+                       OR table_name = 'res_partner')
+                """)
+                tables = [row[0] for row in cur.fetchall()]
         except Exception as e:
             logger.error(f"Failed to get tables: {e}")
         return tables
@@ -294,13 +311,18 @@ class SchemaRepair:
         """Get column info from PostgreSQL."""
         columns = {}
         try:
-            inspector = inspect(self._pg.engine)
-            for col in inspector.get_columns(table):
-                columns[col["name"]] = {
-                    "type": str(col["type"]),
-                    "nullable": col.get("nullable", True),
-                    "default": col.get("default"),
-                }
+            with self._conn.cursor() as cur:
+                cur.execute("""
+                    SELECT column_name, data_type, is_nullable, column_default
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = %s
+                """, (table,))
+                for row in cur.fetchall():
+                    columns[row[0]] = {
+                        "type": row[1],
+                        "nullable": row[2] == 'YES',
+                        "default": row[3],
+                    }
         except Exception as e:
             logger.warning(f"Could not inspect table {table}: {e}")
         return columns
@@ -325,9 +347,9 @@ class SchemaRepair:
             logger.info(f"[DRY RUN] Would execute: {repair['sql']}")
         else:
             try:
-                with self._pg.engine.connect() as conn:
-                    conn.execute(text(repair["sql"]))
-                    conn.commit()
+                with self._conn.cursor() as cur:
+                    cur.execute(repair["sql"])
+                self._conn.commit()
                 print(f"  ✓ Added column: {table}.{column} ({pg_type})")
                 logger.info(f"Added column: {table}.{column} ({pg_type})")
             except Exception as e:
@@ -352,9 +374,9 @@ class SchemaRepair:
             logger.info(f"[DRY RUN] Would execute: {repair['sql']}")
         else:
             try:
-                with self._pg.engine.connect() as conn:
-                    conn.execute(text(repair["sql"]))
-                    conn.commit()
+                with self._conn.cursor() as cur:
+                    cur.execute(repair["sql"])
+                self._conn.commit()
                 print(f"  ✓ Migrated column: {table}.{column} -> {new_type}")
                 logger.info(f"Migrated column: {table}.{column} -> {new_type}")
             except Exception as e:
@@ -378,9 +400,9 @@ class SchemaRepair:
             logger.info(f"[DRY RUN] Would execute: {repair['sql']}")
         else:
             try:
-                with self._pg.engine.connect() as conn:
-                    conn.execute(text(repair["sql"]))
-                    conn.commit()
+                with self._conn.cursor() as cur:
+                    cur.execute(repair["sql"])
+                self._conn.commit()
                 print(f"  ✓ Dropped NOT NULL: {table}.{column}")
                 logger.info(f"Dropped NOT NULL: {table}.{column}")
             except Exception as e:
@@ -426,17 +448,19 @@ def main():
     if args.dry_run:
         print("\n⚠️  DRY RUN MODE - No changes will be made\n")
     
-    # Initialize PostgreSQL client
+    # Initialize PostgreSQL connection
     print("Connecting to PostgreSQL...")
     try:
-        pg = PostgresClient()
+        conn = get_db_connection()
         print("✓ Connected successfully\n")
     except Exception as e:
         print(f"✗ Connection failed: {e}")
+        print("\nMake sure PostgreSQL is running and environment variables are set:")
+        print("  POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD")
         sys.exit(1)
     
     # Run repair
-    repair = SchemaRepair(pg, dry_run=args.dry_run)
+    repair = SchemaRepair(conn, dry_run=args.dry_run)
     results = None
     
     if args.from_report:
@@ -472,6 +496,12 @@ def main():
     
     if results and "error" in results:
         print(f"\n✗ Error: {results['error']}")
+    
+    # Close connection
+    try:
+        conn.close()
+    except:
+        pass
     
     # Save report
     if not args.dry_run and results:
