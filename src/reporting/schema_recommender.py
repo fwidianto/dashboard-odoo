@@ -88,7 +88,7 @@ class SchemaRecommender:
                 self._analyze_null_constraint(summary, model_rec)
             elif cat == ErrorCategory.SCHEMA_ERROR:
                 self._analyze_schema_mismatch(summary, model_rec)
-            elif cat == ErrorCategory.INVALID_TYPE:
+            elif cat == ErrorCategory.SCHEMA_ERROR:
                 self._analyze_invalid_type(summary, model_rec)
         
         # Analyze data profiles for type recommendations
@@ -201,14 +201,14 @@ class SchemaRecommender:
         summary, 
         model_rec: ModelRecommendation
     ) -> None:
-        """Analyze INVALID_TYPE errors."""
+        """Analyze SCHEMA_ERROR errors."""
         for col, failures in summary.errors_by_column.items():
             if failures > 0:
                 model_rec.column_recommendations.append(ColumnRecommendation(
                     column_name=col,
                     current_type="UNKNOWN",
                     recommended_type="Verify type compatibility",
-                    reason=f"{failures} INVALID_TYPE failures",
+                    reason=f"{failures} SCHEMA_ERROR failures",
                     estimated_impact=failures,
                 ))
     
