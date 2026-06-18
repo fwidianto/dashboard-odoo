@@ -447,8 +447,8 @@ class SyncEngine:
         Returns:
             List of SyncResult for each model.
         """
-        self._logger.info(
         print(f"[DEBUG] sync_all called: record_limit={record_limit}")
+        self._logger.info(
             "Starting sync all",
             full_sync=full_sync,
             model_count=len(self.config.models),
