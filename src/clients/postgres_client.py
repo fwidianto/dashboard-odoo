@@ -526,15 +526,18 @@ class PostgresClient:
         if not self.table_exists(model_config.postgres_table):
             return
 
+        # Get existing columns in the table
+        existing_cols = self._get_existing_columns(model_config.postgres_table)
+
         with self.engine.connect() as conn:
             # Table comment
             if model_config.description:
                 sql = f"COMMENT ON TABLE \"{model_config.postgres_table}\" IS :desc"
                 conn.execute(text(sql), {"desc": model_config.description})
 
-            # Column comments
+            # Column comments - only for existing columns
             for field in model_config.fields:
-                if field.display_name:
+                if field.display_name and field.postgres_column in existing_cols:
                     sql = f"COMMENT ON COLUMN \"{model_config.postgres_table}\".\"{field.postgres_column}\" IS :name"
                     conn.execute(text(sql), {"name": field.display_name})
             conn.commit()
@@ -544,7 +547,17 @@ class PostgresClient:
             table=model_config.postgres_table,
         )
 
-        return added_columns
+    def _get_existing_columns(self, table_name: str) -> set:
+        """Get set of existing column names for a table."""
+        sql = text("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = :table
+        """)
+        with self.engine.connect() as conn:
+            result = conn.execute(sql, {"table": table_name})
+            return {row[0] for row in result.fetchall()}
+
 
     def ensure_table_schema(self, model_config: ModelConfig) -> dict:
         """
