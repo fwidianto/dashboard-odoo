@@ -13,6 +13,9 @@ Usage:
     python scripts/repair_schema.py --table product_template  # Repair specific table
     python scripts/repair_schema.py --dry-run          # Show what would be changed
     python scripts/repair_schema.py --verbose          # Show detailed progress
+
+Requirements:
+    pip install psycopg2-binary
 """
 
 import argparse
@@ -20,29 +23,28 @@ import csv
 import json
 import os
 import sys
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 
 # Check dependencies
 try:
     import psycopg2
-    from psycopg2 import sql
 except ImportError:
     print("❌ Error: psycopg2 is required")
     print("   Install with: pip install psycopg2-binary")
     sys.exit(1)
 
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from src.utils.logging import get_logger
-
-logger = get_logger("schema_repair")
+# Simple logger (no dependencies)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(message)s'
+)
+logger = logging.getLogger("schema_repair")
 
 
 def get_db_connection():
     """Get PostgreSQL connection from environment."""
-    import os
     return psycopg2.connect(
         host=os.getenv('POSTGRES_HOST', 'localhost'),
         port=os.getenv('POSTGRES_PORT', '5432'),
