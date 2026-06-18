@@ -592,6 +592,7 @@ class OdooClient:
             Batches of record dictionaries.
         """
         total = self.count(model, domain)
+        print(f"[DEBUG] read_batched called: total_limit={total_limit}, total={total}")
         
         # Apply total limit if specified (for quick validation)
         if total_limit and total > total_limit:
