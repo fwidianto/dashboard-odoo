@@ -90,6 +90,8 @@ class ModelErrorStats:
 
 
 class ErrorReporter:
+    """Error reporter matching SyncEngine API."""
+    
     def __init__(self, output_dir: str = "reports/errors", debug_mode: bool = False):
         self.output_dir = Path(output_dir)
         self.debug_mode = debug_mode
@@ -97,18 +99,67 @@ class ErrorReporter:
         self.model_stats: dict = {}
         self.root_causes: list = []
         self.debug_samples: dict = defaultdict(list)
+        self._current_model: Optional[str] = None
+        self._current_table: Optional[str] = None
         self.output_dir.mkdir(parents=True, exist_ok=True)
         if self.debug_mode:
             self.debug_dir.mkdir(parents=True, exist_ok=True)
+    
+    # API methods expected by SyncEngine
+    
+    def start_batch(self, model: str, table_name: str = ""):
+        """Start a new batch for a model. Called before processing records."""
+        self._current_model = model
+        self._current_table = table_name
+        if model not in self.model_stats:
+            self.model_stats[model] = ModelErrorStats(model=model, table_name=table_name)
+    
+    def end_batch(self):
+        """End the current batch. Called after processing records."""
+        self._current_model = None
+        self._current_table = None
+    
+    def record_success(self, count: int = 1, model: Optional[str] = None):
+        """Record successful operations."""
+        model = model or self._current_model
+        if model:
+            stats = self.get_or_create_stats(model, self._current_table)
+            stats.add_success(count)
+    
+    def record_failure(self, category: ErrorCategory, record_id: Optional[int] = None,
+                       error_message: str = "", column_name: Optional[str] = None,
+                       value: Any = None, model: Optional[str] = None):
+        """Record a failed operation."""
+        model = model or self._current_model
+        if model:
+            self.record_error(
+                model=model,
+                table_name=self._current_table or "",
+                category=category,
+                record_id=record_id,
+                error_message=error_message,
+                column_name=column_name,
+                value=value,
+            )
+    
+    def generate_report(self) -> dict:
+        """Generate a summary report."""
+        return self.get_summary()
+    
+    def save_report(self, filename: Optional[str] = None) -> str:
+        """Save report to file. Returns filepath."""
+        return self.export_json(filename)
+    
+    def print_batch_summary(self):
+        """Print batch summary (alias for print_summary)."""
+        self.print_summary()
+    
+    # Internal methods
     
     def get_or_create_stats(self, model: str, table_name: str = "") -> ModelErrorStats:
         if model not in self.model_stats:
             self.model_stats[model] = ModelErrorStats(model=model, table_name=table_name)
         return self.model_stats[model]
-    
-    def record_success(self, model: str, count: int = 1, table_name: str = ""):
-        stats = self.get_or_create_stats(model, table_name)
-        stats.add_success(count)
     
     def record_error(self, model: str, table_name: str, category: ErrorCategory,
                      record_id: Optional[int] = None, error_message: str = "",
@@ -155,6 +206,31 @@ class ErrorReporter:
                 "value_preview": value_preview,
                 "is_cascade": is_cascade,
             })
+    
+    def get_summary(self) -> dict:
+        """Get summary as dict."""
+        total_processed = sum(s.processed for s in self.model_stats.values())
+        total_success = sum(s.success for s in self.model_stats.values())
+        total_failed = sum(s.failed for s in self.model_stats.values())
+        return {
+            "models": {
+                model: {
+                    "processed": stats.processed,
+                    "success": stats.success,
+                    "failed": stats.failed,
+                    "cascade_failures": stats.cascade_failures,
+                    "error_rate": stats.error_rate,
+                    "root_causes": dict(stats.root_causes),
+                }
+                for model, stats in self.model_stats.items()
+            },
+            "total": {
+                "processed": total_processed,
+                "success": total_success,
+                "failed": total_failed,
+                "error_rate": (total_failed / total_processed * 100) if total_processed > 0 else 0,
+            }
+        }
     
     def print_summary(self):
         print()

@@ -54,7 +54,7 @@ class TestErrorReporter:
     def test_record_success(self):
         """Test recording successful operations."""
         reporter = ErrorReporter()
-        reporter.record_success("product.template", count=100)
+        reporter.start_batch(model="product.template"); reporter.record_success(count=100)
         
         stats = reporter.model_stats["product.template"]
         assert stats.success == 100
@@ -156,7 +156,7 @@ class TestErrorReporter:
         """Test JSON export."""
         with tempfile.TemporaryDirectory() as tmpdir:
             reporter = ErrorReporter(output_dir=tmpdir)
-            reporter.record_success("test.model", count=10)
+            reporter.start_batch(model="test.model"); reporter.record_success(count=10)
             reporter.record_error(
                 model="test.model",
                 table_name="test_table",
@@ -202,7 +202,7 @@ class TestErrorReporter:
     def test_print_summary(self):
         """Test print summary doesn't crash."""
         reporter = ErrorReporter()
-        reporter.record_success("test.model", count=100)
+        reporter.start_batch(model="test.model"); reporter.record_success(count=100)
         reporter.record_error(
             model="test.model",
             table_name="test_table",
