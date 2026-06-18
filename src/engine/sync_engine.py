@@ -242,7 +242,9 @@ class SyncEngine:
             def error_callback(error: DetailedError) -> None:
                 """Record error to the error reporter."""
                 self._error_reporter.record_error(
-                    error_category=error.error_category,
+                    model=model_config.odoo_model,
+                    table_name=model_config.postgres_table or model_config.odoo_model.replace(".", "_"),
+                    category=error.error_category,
                     record_id=error.record_id,
                     error_message=error.error_message,
                     column_name=error.column_name,
