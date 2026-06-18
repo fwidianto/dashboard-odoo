@@ -279,13 +279,13 @@ class PostgresClient:
         with self.engine.connect() as conn:
             # Table comment
             if model_config.description:
-                table_comment_sql = f"COMMENT ON TABLE \"{model_config.postgres_table}\" IS %s"
-                conn.execute(text(table_comment_sql), (model_config.description,))
+                table_comment_sql = f"COMMENT ON TABLE \"{model_config.postgres_table}\" IS :desc"
+                conn.execute(text(table_comment_sql), {"desc": model_config.description})
             # Column comments
             for field in model_config.fields:
                 if field.display_name:
-                    col_comment_sql = f"COMMENT ON COLUMN \"{model_config.postgres_table}\".\"{field.postgres_column}\" IS %s"
-                    conn.execute(text(col_comment_sql), (field.display_name,))
+                    col_comment_sql = f"COMMENT ON COLUMN \"{model_config.postgres_table}\".\"{field.postgres_column}\" IS :name"
+                    conn.execute(text(col_comment_sql), {"name": field.display_name})
             conn.commit()
 
         
@@ -493,13 +493,13 @@ class PostgresClient:
 
                 # Add column comment with display name
                 if field.display_name:
-                    comment_sql = f"COMMENT ON COLUMN \"{model_config.postgres_table}\".\"{field.postgres_column}\" IS %s"
-                    conn.execute(text(comment_sql), (field.display_name,))
+                    comment_sql = f"COMMENT ON COLUMN \"{model_config.postgres_table}\".\"{field.postgres_column}\" IS :name"
+                    conn.execute(text(comment_sql), {"name": field.display_name})
                 
                 # If field has a default value and is NOT NULL, update existing rows
                 if field.default_value is not None and not field.nullable:
-                    default_sql = f'UPDATE "{model_config.postgres_table}" SET "{field.postgres_column}" = %s WHERE "{field.postgres_column}" IS NULL'
-                    conn.execute(text(default_sql), (field.default_value,))
+                    default_sql = f'UPDATE "{model_config.postgres_table}" SET "{field.postgres_column}" = :val WHERE "{field.postgres_column}" IS NULL'
+                    conn.execute(text(default_sql), {"val": field.default_value})
                     self._logger.info(
                         "Populated null values with default",
                         table=model_config.postgres_table,
@@ -529,14 +529,14 @@ class PostgresClient:
         with self.engine.connect() as conn:
             # Table comment
             if model_config.description:
-                sql = f"COMMENT ON TABLE \"{model_config.postgres_table}\" IS %s"
-                conn.execute(text(sql), (model_config.description,))
+                sql = f"COMMENT ON TABLE \"{model_config.postgres_table}\" IS :desc"
+                conn.execute(text(sql), {"desc": model_config.description})
 
             # Column comments
             for field in model_config.fields:
                 if field.display_name:
-                    sql = f"COMMENT ON COLUMN \"{model_config.postgres_table}\".\"{field.postgres_column}\" IS %s"
-                    conn.execute(text(sql), (field.display_name,))
+                    sql = f"COMMENT ON COLUMN \"{model_config.postgres_table}\".\"{field.postgres_column}\" IS :name"
+                    conn.execute(text(sql), {"name": field.display_name})
             conn.commit()
 
         self._logger.info(
