@@ -462,6 +462,8 @@ class SyncEngine:
 
         results = []
         for model_config in models_to_sync:
+            # Backfill column comments for existing tables
+            self._pg.backfill_column_comments(model_config)
 
             result = self.sync_model(model_config, full_sync=full_sync, record_limit=record_limit)
             results.append(result)

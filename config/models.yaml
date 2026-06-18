@@ -61,6 +61,8 @@ models:
       amount_total: Total
       create_date: Created
       write_date: Updated
+      x_studio_delivery_status: Delivery Status
+      x_studio_invoice_status: Invoice Status
 
   sale.order.line:
     columns:
