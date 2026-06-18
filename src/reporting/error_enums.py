@@ -12,21 +12,28 @@ class ErrorCategory(str, Enum):
     FOREIGN_KEY = "FOREIGN_KEY"
     UNIQUE_CONSTRAINT = "UNIQUE_CONSTRAINT"
     ODOO_DATA_ERROR = "ODOO_DATA_ERROR"
+    TRANSACTION_ABORTED = "TRANSACTION_ABORTED"
     UNKNOWN = "UNKNOWN"
 
     @classmethod
     def classify_from_message(cls, error_message: str) -> "ErrorCategory":
         msg_lower = error_message.lower()
 
+        # Transaction aborted - this is usually downstream from a real error
+        # Check for the actual root cause first
+        if "in failed sql transaction" in msg_lower or "current transaction is aborted" in msg_lower:
+            # This is a downstream error - try to extract the real cause
+            return cls.TRANSACTION_ABORTED
+
         # NULL constraint violations (PostgreSQL error codes: 23502)
-        if any(p in msg_lower for p in ["23502", "null value", "not-null", "cannot be null"]):
+        if any(p in msg_lower for p in ["23502", "null value", "not-null constraint", "cannot be null"]):
             return cls.NULL_CONSTRAINT
 
-        # VARCHAR/text overflow (PostgreSQL error codes: 22001, 22003)
+        # VARCHAR/text overflow (PostgreSQL error codes: 22001)
         if any(p in msg_lower for p in ["22001", "varchar", "character varying",
                                           "too long for type", "string length", "would be truncated",
                                           "value too long", "right truncation"]):
-            if "numeric" in msg_lower or "22003" in msg_lower:
+            if "numeric" in msg_lower:
                 return cls.NUMERIC_OVERFLOW
             return cls.DATA_TOO_LONG
 
@@ -37,7 +44,8 @@ class ErrorCategory(str, Enum):
             return cls.NUMERIC_OVERFLOW
 
         # Foreign key violations (PostgreSQL error codes: 23503)
-        if any(p in msg_lower for p in ["23503", "foreign key", "referenced key", "referential integrity"]):
+        if any(p in msg_lower for p in ["23503", "foreign key constraint", "foreign key",
+                                         "referenced key", "referential integrity"]):
             return cls.FOREIGN_KEY
 
         # Unique constraint violations (PostgreSQL error codes: 23505)
@@ -49,7 +57,7 @@ class ErrorCategory(str, Enum):
             return cls.SCHEMA_ERROR
 
         # Data errors from Odoo or encoding issues
-        if any(p in msg_lower for p in ["malformed", "invalid encoding", "bytea", "encoding"]):
+        if any(p in msg_lower for p in ["malformed", "invalid encoding", "bytea"]):
             return cls.ODOO_DATA_ERROR
 
         # Check for any PostgreSQL error code in format (XXXXX)
@@ -57,19 +65,17 @@ class ErrorCategory(str, Enum):
         if error_code_match:
             code = error_code_match.group(1)
             # Class 22: Data Exception
-            if code.startswith("22"):
-                if code == "22001":
-                    return cls.DATA_TOO_LONG
-                if code in ["22003", "22008"]:
-                    return cls.NUMERIC_OVERFLOW
+            if code == "22001":
+                return cls.DATA_TOO_LONG
+            if code in ["22003", "22008"]:
+                return cls.NUMERIC_OVERFLOW
             # Class 23: Integrity Constraint Violation
-            if code.startswith("23"):
-                if code == "23502":
-                    return cls.NULL_CONSTRAINT
-                if code == "23503":
-                    return cls.FOREIGN_KEY
-                if code == "23505":
-                    return cls.UNIQUE_CONSTRAINT
+            if code == "23502":
+                return cls.NULL_CONSTRAINT
+            if code == "23503":
+                return cls.FOREIGN_KEY
+            if code == "23505":
+                return cls.UNIQUE_CONSTRAINT
             # Class 42: Syntax Error or Access Rule Violation
             if code.startswith("42"):
                 return cls.SCHEMA_ERROR
