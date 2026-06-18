@@ -123,6 +123,7 @@ def run_sync(
     settings = get_settings()
     
     if record_limit:
+        print(f"[DEBUG] run_sync called: record_limit={record_limit}")
         print(f"\n🔍 QUICK VALIDATION MODE: {record_limit} records per model\n")
 
     try:
