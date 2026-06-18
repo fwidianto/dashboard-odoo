@@ -61,19 +61,38 @@ def load_models_from_yaml():
             config = yaml.safe_load(f)
         
         models = []
+        model_comments = {}  # Store comments for display
+        
         if config:
             if "models" in config:
-                models.extend(config["models"])
+                for m in config["models"]:
+                    if isinstance(m, str):
+                        # Remove inline comments (e.g., "model.name  # comment")
+                        clean = m.split('#')[0].strip().strip('"').strip("'")
+                        if clean and '.' in clean:
+                            models.append(clean)
+                    elif isinstance(m, dict):
+                        model_name = m.get('odoo_model', '')
+                        if model_name and '.' in model_name:
+                            models.append(model_name)
+            
             if "models_with_options" in config:
                 for item in config["models_with_options"]:
                     if isinstance(item, dict):
-                        models.append(item.get("odoo_model", ""))
+                        model_name = item.get("odoo_model", "")
+                        if model_name and '.' in model_name:
+                            models.append(model_name)
                     elif isinstance(item, str):
-                        models.append(item)
+                        clean = item.split('#')[0].strip()
+                        if clean and '.' in clean:
+                            models.append(clean)
+            
             if "legacy_models" in config:
                 for item in config["legacy_models"]:
                     if isinstance(item, dict):
-                        models.append(item.get("odoo_model", ""))
+                        model_name = item.get("odoo_model", "")
+                        if model_name and '.' in model_name:
+                            models.append(model_name)
         
         return [m for m in models if m]
     except ImportError:
@@ -84,10 +103,11 @@ def load_models_from_yaml():
         models = []
         for line in content.split('\n'):
             line = line.strip()
-            if line and not line.startswith('#') and not line.startswith('- '):
+            if line.startswith('#') or not line.startswith('- '):
                 continue
             if line.startswith('- '):
-                model = line[2:].strip().strip('"').strip("'")
+                # Remove inline comments
+                model = line[2:].split('#')[0].strip().strip('"').strip("'")
                 if model and '.' in model:
                     models.append(model)
         return models if models else ["res.partner", "product.template"]
@@ -275,7 +295,7 @@ def main():
     # 4. Check PostgreSQL tables
     print("\n🗄️  STEP 4: Checking PostgreSQL tables...")
     tables = get_postgres_tables(conn)
-    print(f"   Found {len(tables)} tables")
+    print(f"   Found {len(tables)} tables in public schema")
     
     for model in models:
         table = model.replace('.', '_').lower()
@@ -357,8 +377,8 @@ def main():
     print("\n" + "=" * 70)
     print("MODEL STATUS OVERVIEW")
     print("=" * 70)
-    print(f"\n{'Model':<30} {'Table':<25} {'Synced':<10} {'Errors':<10}")
-    print("-" * 75)
+    print(f"\n{'Model':<25} {'Table':<25} {'Synced':<8} {'Errors':<10}")
+    print("-" * 70)
     
     for model in models:
         table = model.replace('.', '_').lower()
@@ -371,7 +391,7 @@ def main():
         else:
             errors = "-"
         
-        print(f"{model:<30} {table:<25} {synced:<10} {errors}")
+        print(f"{model:<25} {table:<25} {synced:<8} {errors}")
     
     conn.close()
     print("\n" + "=" * 70)
