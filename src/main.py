@@ -157,7 +157,7 @@ def run_sync(
             models=model_names or "all",
         )
 
-        results = engine.sync_all(full_sync=full_sync, model_names=model_names)
+        results = engine.sync_all(full_sync=full_sync, model_names=model_names, record_limit=record_limit)
 
         # Report results
         total_synced = 0
