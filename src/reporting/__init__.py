@@ -3,6 +3,7 @@
 from src.reporting.error_enums import ErrorCategory
 from src.reporting.error_reporter import (
     RootCauseError,
+    DataProfile,
     ModelErrorStats,
     BatchSummary,
     SyncReport,
@@ -12,6 +13,7 @@ from src.reporting.error_reporter import (
 __all__ = [
     "ErrorCategory",
     "RootCauseError",
+    "DataProfile",
     "ModelErrorStats",
     "BatchSummary",
     "SyncReport",

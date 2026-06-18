@@ -225,7 +225,7 @@ class SchemaRecommender:
                 continue
             
             # Check for long strings that haven't failed yet
-            if profile.max_length_observed > 1000:
+            if profile.max_length_observed is not None and profile.max_length_observed > 1000:
                 model_rec.column_recommendations.append(ColumnRecommendation(
                     column_name=col,
                     current_type=profile.current_type,
@@ -235,7 +235,7 @@ class SchemaRecommender:
                 ))
             
             # Check for large numeric values
-            if profile.max_value_observed and abs(profile.max_value_observed) > 1e12:
+            if profile.max_value_observed is not None and abs(profile.max_value_observed) > 1e12:
                 recommended = self._suggest_numeric_type(profile.max_value_observed)
                 if recommended != profile.current_type:
                     model_rec.column_recommendations.append(ColumnRecommendation(

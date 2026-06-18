@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 
 from src.reporting.error_enums import ErrorCategory
-from src.reporting.error_reporter import ErrorReporter
+from src.reporting.error_reporter import ErrorReporter, BatchSummary
 
 
 class TestErrorClassification:
