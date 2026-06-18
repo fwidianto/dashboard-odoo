@@ -178,10 +178,23 @@ class ConfigLoader:
         # Support for multiple model sections in YAML
         all_models_data = []
         
-        # Standard models (string list)
+        # Standard models - can be list OR dict with columns
         if "models" in raw_config:
             models = raw_config["models"]
-            if isinstance(models, list):
+            if isinstance(models, dict):
+                # New format: { "res.partner": { "columns": {...} }, ... }
+                for model_name, model_config in models.items():
+                    if isinstance(model_config, dict) and "columns" in model_config:
+                        # Model with explicit columns
+                        all_models_data.append({
+                            "odoo_model": model_name,
+                            "fields": model_config["columns"]
+                        })
+                    else:
+                        # Model without columns - will auto-detect
+                        all_models_data.append(model_name)
+            elif isinstance(models, list):
+                # Legacy format: list of strings or dicts
                 for m in models:
                     if isinstance(m, str):
                         all_models_data.append(m)
@@ -452,6 +465,19 @@ class ConfigLoader:
         auto_lookup = {f['odoo_field']: f for f in auto_fields}
         
         result = []
+
+        # Handle new dict format: { technical_name: display_name }
+        if isinstance(explicit_fields, dict):
+            for tech_name, display_name in explicit_fields.items():
+                if isinstance(tech_name, str) and isinstance(display_name, str):
+                    if tech_name in auto_lookup:
+                        field_config = {**auto_lookup[tech_name]}
+                        field_config['display_name'] = display_name
+                        result.append(field_config)
+                    else:
+                        logger.warning(f"Field '{tech_name}' not found in Odoo, skipping")
+            return result
+
         for field in explicit_fields:
             if isinstance(field, str):
                 # Simple field name - use auto-detected config

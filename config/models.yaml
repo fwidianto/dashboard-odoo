@@ -2,12 +2,12 @@
 # Odoo to PostgreSQL Synchronization Configuration
 # =============================================================================
 #
-# NEW MODEL-BASED ARCHITECTURE:
-# =============================
-# YAML now only contains model names. ALL fields are automatically
-# discovered from Odoo's fields_get() API at runtime.
-#
-# Simply add any Odoo model and it will be fully synchronized!
+# MODEL-BASED CONFIGURATION WITH EXPLICIT COLUMNS:
+# ===============================================
+# Each model defines its own columns with:
+#   - Technical name (Odoo field name)
+#   - Display name (for reports/headers)
+#   - Type (auto-detected)
 #
 # =============================================================================
 
@@ -15,65 +15,225 @@
 default_batch_size: 1000
 max_retries: 3
 retry_delay_seconds: 5
-default_deletion_strategy: ignore  # Options: ignore, soft_delete, reconcile
+default_deletion_strategy: ignore
 
 models:
   # ===========================================================================
-  # MODEL-ONLY FORMAT (Recommended)
-  # ===========================================================================
-  # Just list model names! All fields are auto-detected from Odoo.
-  # The table name is auto-generated from the model name (sale.order → sale_order)
-  #
-  # Auto-discovered for every field:
-  #   - id → PRIMARY KEY, INTEGER
-  #   - write_date, create_date → indexed, TIMESTAMP
-  #   - many2one fields (*_id) → INTEGER, indexed
-  #   - Odoo field types → PostgreSQL types
-  # ===========================================================================
-
-  # ---------------------------------------------------------------------------
   # CORE MODELS
-  # ---------------------------------------------------------------------------
-  - res.partner                    # Contacts/Partners
-  - product.template               # Product Templates
-  - product.product                 # Product Variants
+  # ===========================================================================
   
-  # ---------------------------------------------------------------------------
+  res.partner:
+    columns:
+      id: ID
+      name: Name
+      email: Email
+      phone: Phone
+      active: Active
+      company_id: Company
+      create_date: Created
+      write_date: Updated
+
+  product.template:
+    columns:
+      id: ID
+      name: Name
+      list_price: List Price
+      standard_price: Standard Cost
+      type: Product Type
+      active: Active
+      default_code: Internal Reference
+      barcode: Barcode
+      categ_id: Category
+      create_date: Created
+      write_date: Updated
+
+  # ===========================================================================
   # SALES MODELS
-  # ---------------------------------------------------------------------------
-  - sale.order                     # Sale Orders
-  - sale.order.line               # Sale Order Lines
+  # ===========================================================================
   
-  # ---------------------------------------------------------------------------
+  sale.order:
+    columns:
+      id: ID
+      name: Order Number
+      partner_id: Customer
+      date_order: Order Date
+      state: Status
+      amount_total: Total
+      create_date: Created
+      write_date: Updated
+
+  sale.order.line:
+    columns:
+      id: ID
+      order_id: Order
+      product_id: Product
+      name: Description
+      product_uom_qty: Quantity
+      price_unit: Unit Price
+      price_subtotal: Subtotal
+      create_date: Created
+
+  # ===========================================================================
   # PURCHASE MODELS
-  # ---------------------------------------------------------------------------
-  - purchase.order                 # Purchase Orders
-  - purchase.order.line           # Purchase Order Lines
+  # ===========================================================================
   
-  # ---------------------------------------------------------------------------
+  purchase.order:
+    columns:
+      id: ID
+      name: Order Reference
+      partner_id: Vendor
+      date_order: Order Date
+      state: Status
+      amount_total: Total
+      create_date: Created
+      write_date: Updated
+
+  purchase.order.line:
+    columns:
+      id: ID
+      order_id: Order
+      product_id: Product
+      name: Description
+      product_qty: Quantity
+      price_unit: Unit Price
+      price_subtotal: Subtotal
+      create_date: Created
+
+  # ===========================================================================
   # ACCOUNTING MODELS
-  # ---------------------------------------------------------------------------
-  - account.move                   # Journal Entries
-  - account.move.line             # Journal Entry Lines
-  - account.payment               # Payments
+  # ===========================================================================
   
-  # ---------------------------------------------------------------------------
+  account.move:
+    columns:
+      id: ID
+      name: Number
+      date: Date
+      ref: Reference
+      partner_id: Partner
+      move_type: Type
+      state: Status
+      amount_total: Total
+      create_date: Created
+      write_date: Updated
+
+  account.move.line:
+    columns:
+      id: ID
+      move_id: Journal Entry
+      account_id: Account
+      partner_id: Partner
+      name: Label
+      debit: Debit
+      credit: Credit
+      balance: Balance
+      create_date: Created
+
+  account.payment:
+    columns:
+      id: ID
+      name: Payment Reference
+      date: Date
+      partner_id: Partner
+      amount: Amount
+      payment_type: Type
+      state: Status
+      create_date: Created
+      write_date: Updated
+
+  # ===========================================================================
   # STOCK MODELS
-  # ---------------------------------------------------------------------------
-  - stock.move                     # Stock Moves
-  - stock.move.line               # Stock Move Lines
-  - stock.quant                   # Stock Quants
+  # ===========================================================================
   
-  # ---------------------------------------------------------------------------
+  stock.move:
+    columns:
+      id: ID
+      name: Description
+      product_id: Product
+      product_uom_qty: Quantity
+      state: Status
+      location_id: From Location
+      location_dest_id: To Location
+      date: Date
+      create_date: Created
+
+  stock.move.line:
+    columns:
+      id: ID
+      move_id: Stock Move
+      product_id: Product
+      lot_id: Lot/Serial
+      location_id: From Location
+      location_dest_id: To Location
+      qty_done: Quantity Done
+      create_date: Created
+
+  stock.quant:
+    columns:
+      id: ID
+      product_id: Product
+      location_id: Location
+      lot_id: Lot/Serial
+      quantity: Quantity
+      reserved_quantity: Reserved
+      create_date: Created
+
+  # ===========================================================================
   # MANUFACTURING MODELS
-  # ---------------------------------------------------------------------------
-  - mrp.production                # Manufacturing Orders
+  # ===========================================================================
   
-  # ---------------------------------------------------------------------------
+  mrp.production:
+    columns:
+      id: ID
+      name: Order Reference
+      product_id: Product
+      product_qty: Quantity
+      state: Status
+      date_start: Start Date
+      date_finished: Finished Date
+      create_date: Created
+      write_date: Updated
+
+  # ===========================================================================
   # APPROVAL MODELS
-  # ---------------------------------------------------------------------------
-  - approval.request              # Approval Requests
-  - approval.product.line         # Approval Product Lines
+  # ===========================================================================
+  
+  approval.request:
+    columns:
+      id: ID
+      name: Request Reference
+      request_owner_id: Requester
+      category_id: Category
+      amount: Amount
+      state: Status
+      date: Date
+      create_date: Created
+      write_date: Updated
+
+  approval.product.line:
+    columns:
+      id: ID
+      request_id: Request
+      product_id: Product
+      quantity: Quantity
+      price_unit: Unit Price
+      estimated_price: Estimated Price
+      create_date: Created
+
+  # ===========================================================================
+  # PRODUCT VARIANTS
+  # ===========================================================================
+  
+  product.product:
+    columns:
+      id: ID
+      name: Name
+      default_code: Internal Reference
+      barcode: Barcode
+      list_price: Sale Price
+      standard_price: Cost
+      active: Active
+      create_date: Created
+      write_date: Updated
 
 # =============================================================================
 # MODEL WITH OPTIONS

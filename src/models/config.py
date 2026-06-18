@@ -20,6 +20,7 @@ class FieldConfig(BaseModel):
     is_foreign_key: bool = Field(default=False, description="Is this a foreign key column")
     indexed: bool = Field(default=False, description="Create index on this column")
     description: Optional[str] = Field(default=None, description="Field description")
+    display_name: Optional[str] = Field(default=None, description="Display name for reports/headers")
     field_type: Literal["many2one", "one2many", "many2many", "basic"] = Field(
         default="basic", description="Odoo field type for proper handling"
     )
