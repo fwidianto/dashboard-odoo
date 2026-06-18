@@ -2,9 +2,6 @@
 
 from enum import Enum
 import re
-import logging
-
-_logger = logging.getLogger(__name__)
 
 
 class ErrorCategory(str, Enum):
@@ -26,17 +23,17 @@ class ErrorCategory(str, Enum):
             return cls.NULL_CONSTRAINT
 
         # VARCHAR/text overflow (PostgreSQL error codes: 22001, 22003)
-        if any(p in msg_lower for p in ["22001", "22003", "varchar", "character varying",
+        if any(p in msg_lower for p in ["22001", "varchar", "character varying",
                                           "too long for type", "string length", "would be truncated",
-                                          "value too long", "right truncation", "integer out of range",
-                                          "numeric field overflow"]):
+                                          "value too long", "right truncation"]):
             if "numeric" in msg_lower or "22003" in msg_lower:
                 return cls.NUMERIC_OVERFLOW
             return cls.DATA_TOO_LONG
 
         # Numeric precision/overflow (PostgreSQL error codes: 22003, 22008)
         if any(p in msg_lower for p in ["22003", "22008", "numeric", "precision overflow",
-                                         "decimal overflow", "interval overflow"]):
+                                         "decimal overflow", "interval overflow", "integer out of range",
+                                         "numeric field overflow"]):
             return cls.NUMERIC_OVERFLOW
 
         # Foreign key violations (PostgreSQL error codes: 23503)
@@ -55,13 +52,13 @@ class ErrorCategory(str, Enum):
         if any(p in msg_lower for p in ["malformed", "invalid encoding", "bytea", "encoding"]):
             return cls.ODOO_DATA_ERROR
 
-        # Check for any PostgreSQL error code in format (12345)
-        error_code_match = re.search(r'\(([0-9A-Z]{{5}})\', error_message)
+        # Check for any PostgreSQL error code in format (XXXXX)
+        error_code_match = re.search(r'\(([0-9A-Z]{5})\)', error_message)
         if error_code_match:
             code = error_code_match.group(1)
             # Class 22: Data Exception
             if code.startswith("22"):
-                if code in ["22001"]:
+                if code == "22001":
                     return cls.DATA_TOO_LONG
                 if code in ["22003", "22008"]:
                     return cls.NUMERIC_OVERFLOW
@@ -77,8 +74,6 @@ class ErrorCategory(str, Enum):
             if code.startswith("42"):
                 return cls.SCHEMA_ERROR
 
-        # DEBUG: Log unknown errors
-        _logger.debug(f"Unknown error classification: {error_message[:200]}")
         return cls.UNKNOWN
 
     @classmethod
