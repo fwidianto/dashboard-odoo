@@ -122,7 +122,7 @@ class SyncEngine:
         self._pg.create_all_tables()
 
         # Validate all models against Odoo and create tables
-        for model_config in self.config.models:
+        for model_config in models_to_sync:
             # Get validated model (validates fields against Odoo)
             validated = self._get_validated_model(model_config)
             
@@ -455,16 +455,13 @@ class SyncEngine:
             record_limit=record_limit,
         )
         
-        # Validate and migrate all schemas at startup
+        # Validate and migrate schemas for selected models
         models_to_sync = [m for m in self.config.models 
                          if not model_names or m.odoo_model in model_names]
         schema_report = self._pg.validate_and_migrate_schema(models_to_sync)
 
         results = []
-        for model_config in self.config.models:
-            # Filter by model names if specified
-            if model_names and model_config.odoo_model not in model_names:
-                continue
+        for model_config in models_to_sync:
 
             result = self.sync_model(model_config, full_sync=full_sync, record_limit=record_limit)
             results.append(result)
@@ -659,7 +656,7 @@ class SyncEngine:
         """Validate the current configuration."""
         errors = []
 
-        for model_config in self.config.models:
+        for model_config in models_to_sync:
             try:
                 fields = self._odoo.get_model_fields(model_config.odoo_model)
                 if not fields:
