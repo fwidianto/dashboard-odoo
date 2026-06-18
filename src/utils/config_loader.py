@@ -961,7 +961,27 @@ class ValidatedModelConfig:
 
         for field in self._original_config.fields:
             if field.odoo_field in self._odoo_fields:
-                self._valid_fields.append(field)
+                # Sync nullable from Odoo's required flag
+                odoo_field_def = self._odoo_fields[field.odoo_field]
+                odoo_required = odoo_field_def.get('required', False)
+                expected_nullable = not odoo_required
+                
+                # Log if there's a mismatch and update nullable
+                if field.nullable != expected_nullable:
+                    logger.info(
+                        f"Syncing nullable from Odoo for '{field.odoo_field}': "
+                        f"Odoo required={odoo_required} -> PostgreSQL nullable={expected_nullable}",
+                        field=field.odoo_field,
+                        model=self._original_config.odoo_model,
+                        was_nullable=field.nullable,
+                        now_nullable=expected_nullable,
+                    )
+                    # Create a copy with updated nullable
+                    updated_field = field.model_copy()
+                    updated_field.nullable = expected_nullable
+                    self._valid_fields.append(updated_field)
+                else:
+                    self._valid_fields.append(field)
             else:
                 # Field not found in Odoo - skip it gracefully
                 self._skipped_fields.append(field.odoo_field)

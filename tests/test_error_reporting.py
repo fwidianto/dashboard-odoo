@@ -12,9 +12,11 @@ import pytest
 from src.reporting.error_enums import ErrorCategory
 from src.reporting.error_reporter import (
     ErrorReporter,
-    ErrorRecord,
-    BatchErrorSummary,
-    SyncErrorReport,
+    BatchSummary,
+    SyncReport,
+    RootCauseError,
+    ModelErrorStats,
+    DataProfile,
 )
 
 
@@ -82,12 +84,12 @@ class TestErrorCategory:
         assert category == ErrorCategory.UNKNOWN
 
 
-class TestErrorRecord:
-    """Tests for ErrorRecord dataclass."""
+class TestRootCauseError:
+    """Tests for RootCauseError dataclass."""
 
     def test_create_error_record(self):
         """Test creating an error record."""
-        record = ErrorRecord(
+        record = RootCauseError(
             model="product.template",
             record_id=123,
             error_category=ErrorCategory.DATA_TOO_LONG,
@@ -103,7 +105,7 @@ class TestErrorRecord:
 
     def test_to_dict(self):
         """Test converting error record to dictionary."""
-        record = ErrorRecord(
+        record = RootCauseError(
             model="res.partner",
             record_id=456,
             error_category=ErrorCategory.NULL_CONSTRAINT,
@@ -118,12 +120,12 @@ class TestErrorRecord:
         assert "timestamp" in result
 
 
-class TestBatchErrorSummary:
-    """Tests for BatchErrorSummary."""
+class TestBatchSummary:
+    """Tests for BatchSummary."""
 
     def test_add_error(self):
         """Test adding errors to batch summary."""
-        summary = BatchErrorSummary(model="test.model")
+        summary = BatchSummary(model="test.model")
         
         summary.add_error(
             ErrorCategory.DATA_TOO_LONG,
@@ -137,7 +139,7 @@ class TestBatchErrorSummary:
 
     def test_record_success(self):
         """Test recording successful operations."""
-        summary = BatchErrorSummary(model="test.model")
+        summary = BatchSummary(model="test.model")
         
         summary.record_success(5)
         summary.record_success(3)
@@ -147,7 +149,7 @@ class TestBatchErrorSummary:
 
     def test_error_rate_calculation(self):
         """Test error rate calculation."""
-        summary = BatchErrorSummary(model="test.model")
+        summary = BatchSummary(model="test.model")
         
         # Record success first (90 records)
         summary.record_success(90)
@@ -174,12 +176,12 @@ class TestBatchErrorSummary:
 
     def test_error_rate_zero_processed(self):
         """Test error rate with zero processed records."""
-        summary = BatchErrorSummary(model="test.model")
+        summary = BatchSummary(model="test.model")
         assert summary.error_rate == 0.0
 
     def test_sample_records_limit(self):
         """Test that sample records are limited."""
-        summary = BatchErrorSummary(model="test.model")
+        summary = BatchSummary(model="test.model")
         
         # Add more than 5 errors for DATA_TOO_LONG
         for i in range(10):
@@ -194,18 +196,18 @@ class TestBatchErrorSummary:
         assert len(summary.sample_records[ErrorCategory.DATA_TOO_LONG]) == 10
 
 
-class TestSyncErrorReport:
-    """Tests for SyncErrorReport."""
+class TestSyncReport:
+    """Tests for SyncReport."""
 
     def test_add_model_summary(self):
         """Test adding model summaries to report."""
-        report = SyncErrorReport()
+        report = SyncReport()
         
-        summary1 = BatchErrorSummary(model="product.template")
+        summary1 = BatchSummary(model="product.template")
         summary1.record_success(100)
         summary1.add_error(ErrorCategory.DATA_TOO_LONG, record_id=1)
         
-        summary2 = BatchErrorSummary(model="sale.order")
+        summary2 = BatchSummary(model="sale.order")
         summary2.record_success(200)
         
         report.add_model_summary("product.template", summary1)
@@ -221,14 +223,14 @@ class TestSyncErrorReport:
 
     def test_overall_error_rate(self):
         """Test overall error rate calculation."""
-        report = SyncErrorReport()
+        report = SyncReport()
         
-        summary1 = BatchErrorSummary(model="model1")
+        summary1 = BatchSummary(model="model1")
         summary1.record_success(80)
         summary1.add_error(ErrorCategory.UNKNOWN, record_id=1)
         summary1.add_error(ErrorCategory.UNKNOWN, record_id=2)
         
-        summary2 = BatchErrorSummary(model="model2")
+        summary2 = BatchSummary(model="model2")
         summary2.record_success(190)
         summary2.add_error(ErrorCategory.NULL_CONSTRAINT, record_id=3)
         summary2.add_error(ErrorCategory.NULL_CONSTRAINT, record_id=4)
@@ -254,16 +256,16 @@ class TestSyncErrorReport:
 
     def test_top_failure_causes(self):
         """Test getting top failure causes."""
-        report = SyncErrorReport()
+        report = SyncReport()
         
-        summary1 = BatchErrorSummary(model="model1")
+        summary1 = BatchSummary(model="model1")
         summary1.record_success(100)
         summary1.add_error(ErrorCategory.DATA_TOO_LONG, record_id=1)
         summary1.add_error(ErrorCategory.DATA_TOO_LONG, record_id=2)
         summary1.add_error(ErrorCategory.DATA_TOO_LONG, record_id=3)
         summary1.add_error(ErrorCategory.NULL_CONSTRAINT, record_id=4)
         
-        summary2 = BatchErrorSummary(model="model2")
+        summary2 = BatchSummary(model="model2")
         summary2.record_success(100)
         summary2.add_error(ErrorCategory.DATA_TOO_LONG, record_id=5)
         summary2.add_error(ErrorCategory.NUMERIC_OVERFLOW, record_id=6)
