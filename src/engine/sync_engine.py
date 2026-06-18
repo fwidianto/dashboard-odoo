@@ -122,7 +122,7 @@ class SyncEngine:
         self._pg.create_all_tables()
 
         # Validate all models against Odoo and create tables
-        for model_config in models_to_sync:
+        for model_config in self.config.models:
             # Get validated model (validates fields against Odoo)
             validated = self._get_validated_model(model_config)
             
@@ -656,7 +656,7 @@ class SyncEngine:
         """Validate the current configuration."""
         errors = []
 
-        for model_config in models_to_sync:
+        for model_config in self.config.models:
             try:
                 fields = self._odoo.get_model_fields(model_config.odoo_model)
                 if not fields:
