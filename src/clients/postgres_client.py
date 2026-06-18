@@ -10,6 +10,7 @@ PostgreSQL Identifier Hardening:
 - Reserved keywords are avoided
 """
 
+import logging
 import json
 import re
 from dataclasses import dataclass
@@ -825,6 +826,8 @@ class PostgresClient:
             """Process an error record with detailed information."""
             record_id = record.get(primary_key_column)
             error_category = ErrorCategory.classify_from_message(error_msg)
+            # DEBUG: Print raw error for diagnosis
+            print(f"DEBUG ERROR: {error_msg[:300]}")
             
             # Extract column name from error message if possible
             column_name = self._extract_column_from_error(error_msg, columns)

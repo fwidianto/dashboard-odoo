@@ -2,6 +2,9 @@
 
 from enum import Enum
 import re
+import logging
+
+_logger = logging.getLogger(__name__)
 
 
 class ErrorCategory(str, Enum):
@@ -53,7 +56,7 @@ class ErrorCategory(str, Enum):
             return cls.ODOO_DATA_ERROR
 
         # Check for any PostgreSQL error code in format (12345)
-        error_code_match = re.search(r'\(([0-9A-Z]{5})\)', error_message)
+        error_code_match = re.search(r'\(([0-9A-Z]{{5}})\', error_message)
         if error_code_match:
             code = error_code_match.group(1)
             # Class 22: Data Exception
@@ -74,6 +77,8 @@ class ErrorCategory(str, Enum):
             if code.startswith("42"):
                 return cls.SCHEMA_ERROR
 
+        # DEBUG: Log unknown errors
+        _logger.debug(f"Unknown error classification: {error_message[:200]}")
         return cls.UNKNOWN
 
     @classmethod
