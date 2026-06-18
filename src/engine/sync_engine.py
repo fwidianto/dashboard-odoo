@@ -144,6 +144,7 @@ class SyncEngine:
         self,
         model_config: ModelConfig,
         full_sync: bool = False,
+        record_limit: Optional[int] = None,
     ) -> SyncResult:
         """
         Synchronize a single model from Odoo to PostgreSQL.
@@ -151,6 +152,7 @@ class SyncEngine:
         Args:
             model_config: Model configuration.
             full_sync: If True, sync all records; if False, only incremental.
+            record_limit: Optional limit of records to sync (for quick validation).
 
         Returns:
             SyncResult with statistics.
@@ -165,6 +167,7 @@ class SyncEngine:
             model=model_config.odoo_model,
             table=model_config.postgres_table,
             full_sync=full_sync,
+            record_limit=record_limit,
         )
 
         # Mark sync as started
@@ -259,6 +262,7 @@ class SyncEngine:
                 fields=field_names,
                 batch_size=batch_size,
                 order="id",
+                total_limit=record_limit,
             ):
                 # Transform records using validated config (skips invalid fields)
                 transformed = self._transform_records(batch, validated)
@@ -430,6 +434,7 @@ class SyncEngine:
         self,
         full_sync: bool = False,
         model_names: Optional[list[str]] = None,
+        record_limit: Optional[int] = None,
     ) -> list[SyncResult]:
         """
         Synchronize all configured models.
@@ -437,6 +442,7 @@ class SyncEngine:
         Args:
             full_sync: If True, sync all records; if False, only incremental.
             model_names: Optional list of specific model names to sync.
+            record_limit: Optional limit of records per model (for quick validation).
 
         Returns:
             List of SyncResult for each model.
@@ -445,6 +451,7 @@ class SyncEngine:
             "Starting sync all",
             full_sync=full_sync,
             model_count=len(self.config.models),
+            record_limit=record_limit,
         )
         
         # Validate and migrate all schemas at startup
@@ -458,7 +465,7 @@ class SyncEngine:
             if model_names and model_config.odoo_model not in model_names:
                 continue
 
-            result = self.sync_model(model_config, full_sync=full_sync)
+            result = self.sync_model(model_config, full_sync=full_sync, record_limit=record_limit)
             results.append(result)
 
         successful = sum(1 for r in results if r.success)
@@ -474,12 +481,7 @@ class SyncEngine:
 
         # Export all reports
         if self._error_reporter.has_errors():
-            paths = self._error_reporter.export_all()
-            self._logger.info(
-                "Error reports exported",
-                csv_path=csv_path,
-                json_path=json_path,
-            )
+            self._error_reporter.export_all()
         
         # Print final sync health report
         self._error_reporter.print_summary()

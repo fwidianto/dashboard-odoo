@@ -58,6 +58,12 @@ def parse_args():
         action="store_true",
         help="Reset sync state for specified models (use with --models)",
     )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Limit records per model for quick validation (e.g., 1000). Runs validation then exits.",
+    )
 
     return parser.parse_args()
 
@@ -98,6 +104,7 @@ def run_sync(
     model_names: Optional[list[str]] = None,
     config_path: Optional[str] = None,
     validate_only: bool = False,
+    record_limit: Optional[int] = None,
 ) -> int:
     """
     Run the synchronization process.
@@ -107,12 +114,16 @@ def run_sync(
         model_names: Optional list of specific models to sync.
         config_path: Optional path to configuration file.
         validate_only: If True, only validate configuration.
+        record_limit: If set, limit records per model for quick validation.
 
     Returns:
         Exit code (0 for success, 1 for failure).
     """
     logger = get_logger("main")
     settings = get_settings()
+    
+    if record_limit:
+        print(f"\n🔍 QUICK VALIDATION MODE: {record_limit} records per model\n")
 
     try:
         # Load configuration
@@ -317,6 +328,7 @@ if __name__ == "__main__":
         model_names=args.models,
         config_path=args.config,
         validate_only=args.validate,
+        record_limit=args.limit,
     )
 
     sys.exit(exit_code)

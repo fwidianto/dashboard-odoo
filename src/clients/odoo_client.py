@@ -575,6 +575,7 @@ class OdooClient:
         fields: Optional[list[str]] = None,
         batch_size: int = 1000,
         order: Optional[str] = "id",
+        total_limit: Optional[int] = None,
     ) -> list[dict]:
         """
         Read records in batches for efficient large dataset handling (READ-ONLY).
@@ -585,17 +586,30 @@ class OdooClient:
             fields: Fields to read.
             batch_size: Records per batch.
             order: Sort order for consistent pagination.
+            total_limit: Maximum total records to read (for quick validation).
 
         Yields:
             Batches of record dictionaries.
         """
         total = self.count(model, domain)
-        self._logger.info(
-            "Starting READ-ONLY batched read",
-            model=model,
-            total_records=total,
-            batch_size=batch_size,
-        )
+        
+        # Apply total limit if specified (for quick validation)
+        if total_limit and total > total_limit:
+            total = total_limit
+            self._logger.info(
+                "Starting READ-ONLY batched read (LIMITED)",
+                model=model,
+                total_records=total,
+                batch_size=batch_size,
+                limit=total_limit,
+            )
+        else:
+            self._logger.info(
+                "Starting READ-ONLY batched read",
+                model=model,
+                total_records=total,
+                batch_size=batch_size,
+            )
 
         offset = 0
         while offset < total:
