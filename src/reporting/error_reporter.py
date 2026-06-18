@@ -146,6 +146,21 @@ class ErrorReporter:
         """Generate a summary report."""
         return self.get_summary()
     
+    def get_batch_summary(self) -> dict:
+        """Get batch summary for current model."""
+        if self._current_model and self._current_model in self.model_stats:
+            stats = self.model_stats[self._current_model]
+            return {
+                "model": self._current_model,
+                "processed": stats.processed,
+                "success": stats.success,
+                "failed": stats.failed,
+                "cascade_failures": stats.cascade_failures,
+                "error_rate": stats.error_rate,
+                "root_causes": dict(stats.root_causes),
+            }
+        return {}
+    
     def save_report(self, filename: Optional[str] = None) -> str:
         """Save report to file. Returns filepath."""
         return self.export_json(filename)
@@ -153,6 +168,27 @@ class ErrorReporter:
     def print_batch_summary(self):
         """Print batch summary (alias for print_summary)."""
         self.print_summary()
+    
+    def profile_data(self, column_name: str, column_type: str, value: Any) -> None:
+        """Profile data values for schema recommendations."""
+        # Not implemented in this version - placeholder for compatibility
+        pass
+    
+    def has_errors(self) -> bool:
+        """Check if there are any errors recorded."""
+        return any(stats.failed > 0 for stats in self.model_stats.values())
+    
+    def export_all(self) -> None:
+        """Export all reports."""
+        self.export_json()
+        self.export_csv()
+        self.export_root_causes()
+        if self.debug_mode:
+            self.export_debug_samples()
+    
+    def get_sync_report(self) -> "SyncReport":
+        """Get sync report (returns a simple dict for compatibility)."""
+        return SyncReport(models=self.model_stats)
     
     # Internal methods
     
@@ -344,3 +380,8 @@ class ErrorReporter:
                 json.dump({"model": model, "sample_count": len(samples), "samples": samples}, f, indent=2)
             result[model] = str(filepath)
         return result
+
+class SyncReport:
+    """Simple sync report for compatibility."""
+    def __init__(self, models: dict):
+        self.models = models
