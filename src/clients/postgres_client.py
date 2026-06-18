@@ -781,26 +781,19 @@ class PostgresClient:
         error_callback: Optional[Callable[["DetailedError"], None]] = None,
     ) -> tuple[int, int, int]:
         """
-        Upsert records into a table using INSERT ON CONFLICT.
+        Upsert records with PER-RECORD ISOLATION.
         
-        Uses PostgreSQL RETURNING with xmax to accurately detect inserts vs updates.
-        On batch failure, retries individual records to skip invalid ones.
-
-        Args:
-            table_name: Target table name.
-            records: List of record dictionaries.
-            primary_key_column: Primary key column name.
-            error_callback: Optional callback to receive detailed error information.
-                This allows the caller to aggregate and classify errors.
-
-        Returns:
-            Tuple of (inserted_count, updated_count, error_count).
+        Each record is processed in its own transaction. If one record fails,
+        only that record fails - remaining records continue processing.
+        
+        This prevents cascade failures where one bad record causes all subsequent
+        records to fail with "InFailedSqlTransaction" errors.
         """
         if not records:
             return 0, 0, 0
 
         self._logger.debug(
-            "Upserting records",
+            "Upserting records with per-record isolation",
             table=table_name,
             count=len(records),
         )
@@ -813,8 +806,6 @@ class PostgresClient:
             f'"{c}" = EXCLUDED."{c}"' for c in columns if c != primary_key_column
         )
 
-        # Use RETURNING with xmax to detect inserts vs updates
-        # xmax = 0 means insert, xmax > 0 means update
         sql = text(f"""
             INSERT INTO "{table_name}" ({insert_cols})
             VALUES ({placeholders})
@@ -826,19 +817,17 @@ class PostgresClient:
             """Process an error record with detailed information."""
             record_id = record.get(primary_key_column)
             error_category = ErrorCategory.classify_from_message(error_msg)
-            # DEBUG: Print raw error for diagnosis
-            print(f"DEBUG ERROR: {error_msg[:300]}")
-            
+
             # Extract column name from error message if possible
             column_name = self._extract_column_from_error(error_msg, columns)
-            
+
             # Get value preview for problematic column
             value_preview = None
             if column_name and column_name in record:
                 value = record[column_name]
                 if value is not None:
                     value_preview = str(value)[:200]
-            
+
             # Call error callback if provided
             if error_callback:
                 detailed_error = DetailedError(
@@ -849,65 +838,36 @@ class PostgresClient:
                     value_preview=value_preview,
                 )
                 error_callback(detailed_error)
-            
+
             self._logger.warning(
                 "Record upsert failed, skipping",
                 table=table_name,
                 record_id=record_id,
                 error_category=error_category.value,
-                error=str(error_msg),
+                error=str(error_msg)[:200],
             )
 
         inserted = 0
         updated = 0
         errors = 0
 
-        with self.engine.connect() as conn:
+        # PER-RECORD ISOLATION: Each record gets its own transaction
+        for record in records:
             try:
-                # Try batch insert first
-                for record in records:
-                    try:
-                        result = conn.execute(sql, record)
-                        row = result.fetchone()
-                        if row:
-                            xmax = row[1]
-                            if xmax == 0:
-                                inserted += 1
-                            else:
-                                updated += 1
-                    except SQLAlchemyError as e:
-                        errors += 1
-                        process_error(record, str(e))
-                
-                conn.commit()
-                
-            except SQLAlchemyError as e:
-                conn.rollback()
-                self._logger.error(
-                    "Batch upsert failed, retrying individually",
-                    table=table_name,
-                    error=str(e),
-                )
-                
-                # Retry individually - skip failed records
-                for record in records:
-                    try:
-                        result = conn.execute(sql, record)
-                        row = result.fetchone()
-                        if row:
-                            xmax = row[1]
-                            if xmax == 0:
-                                inserted += 1
-                            else:
-                                updated += 1
-                    except SQLAlchemyError as record_error:
-                        errors += 1
-                        process_error(record, str(record_error))
-                
-                try:
+                with self.engine.connect() as conn:
+                    result = conn.execute(sql, record)
+                    row = result.fetchone()
+                    if row:
+                        xmax = row[1]
+                        if xmax == 0:
+                            inserted += 1
+                        else:
+                            updated += 1
                     conn.commit()
-                except SQLAlchemyError:
-                    pass  # Already rolled back
+            except SQLAlchemyError as e:
+                errors += 1
+                process_error(record, str(e))
+                # No rollback needed - each record has its own transaction
 
         self._logger.info(
             "Upsert complete",
@@ -919,7 +879,8 @@ class PostgresClient:
         )
 
         return inserted, updated, errors
-    
+
+
     def _extract_column_from_error(self, error_message: str, available_columns: list[str]) -> Optional[str]:
         """
         Extract column name from PostgreSQL error message.
