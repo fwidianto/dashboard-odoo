@@ -331,8 +331,23 @@ class SyncEngine:
                             "INCREMENTAL FILTER GENERATED",
                             model=model_config.odoo_model,
                             last_sync_date=date_str,
+                            last_sync_date_type=type(last_sync_date).__name__,
                             last_sync_id=last_sync_id,
+                            last_sync_id_type=type(last_sync_id).__name__,
                             domain=domain,
+                        )
+                        
+                        # CRITICAL: Log exact values for debugging
+                        self._logger.info(
+                            "DOMAIN_DEBUG",
+                            model=model_config.odoo_model,
+                            date_str_repr=repr(date_str),
+                            last_sync_id_repr=repr(last_sync_id),
+                            last_sync_id_is_int=isinstance(last_sync_id, int),
+                            sync_date_field=sync_date_field.odoo_field,
+                            domain_tuple_0=(sync_date_field.odoo_field, ">", date_str),
+                            domain_tuple_1=(sync_date_field.odoo_field, "=", date_str),
+                            domain_tuple_2=("id", ">", last_sync_id),
                         )
                     else:
                         # First incremental run (only date available) - fall back to simple filter
@@ -521,38 +536,63 @@ class SyncEngine:
                 # Do NOT use batch[-1] - examine every record
                 if sync_date_field and batch:
                     write_date_field = sync_date_field.odoo_field
+                    
+                    # Log first and last record in batch for debugging
+                    first_record = batch[0]
+                    last_record = batch[-1]
+                    self._logger.info(
+                        "BATCH_BOUNDS",
+                        model=model_config.odoo_model,
+                        batch_index=batches_processed,
+                        batch_size=len(batch),
+                        first_record_id=first_record.get("id"),
+                        first_record_write_date=first_record.get(write_date_field),
+                        last_record_id=last_record.get("id"),
+                        last_record_write_date=last_record.get(write_date_field),
+                    )
+                    
                     for record in batch:
                         record_id = record.get("id")
                         record_write_date = record.get(write_date_field)
                         
-                        if record_write_date is not None:
-                            # Update checkpoint if this record has a higher write_date
-                            if last_write_date is None or record_write_date > last_write_date:
-                                self._logger.info(
-                                    "MAX_WRITE_DATE_FOUND",
-                                    model=model_config.odoo_model,
-                                    batch_index=batches_processed,
-                                    record_id=record_id,
-                                    record_write_date=record_write_date,
-                                    old_max_date=last_write_date,
-                                    old_max_id=last_id,
-                                    new_max_date=record_write_date,
-                                    new_max_id=record_id,
-                                )
-                                last_write_date = record_write_date
-                                last_id = record_id
-                            # If same write_date, use max id
-                            elif record_write_date == last_write_date and record_id > (last_id or 0):
-                                self._logger.info(
-                                    "MAX_ID_FOR_SAME_DATE",
-                                    model=model_config.odoo_model,
-                                    batch_index=batches_processed,
-                                    record_id=record_id,
-                                    same_date=record_write_date,
-                                    old_max_id=last_id,
-                                    new_max_id=record_id,
-                                )
-                                last_id = record_id
+                        # Handle NULL write_date - skip these records
+                        if record_write_date is None:
+                            self._logger.warning(
+                                "RECORD_NULL_WRITE_DATE",
+                                model=model_config.odoo_model,
+                                batch_index=batches_processed,
+                                record_id=record_id,
+                                warning="Skipping NULL write_date for checkpoint calculation",
+                            )
+                            continue
+                        
+                        # Update checkpoint if this record has a higher write_date
+                        if last_write_date is None or record_write_date > last_write_date:
+                            self._logger.info(
+                                "MAX_WRITE_DATE_FOUND",
+                                model=model_config.odoo_model,
+                                batch_index=batches_processed,
+                                record_id=record_id,
+                                record_write_date=record_write_date,
+                                old_max_date=last_write_date,
+                                old_max_id=last_id,
+                                new_max_date=record_write_date,
+                                new_max_id=record_id,
+                            )
+                            last_write_date = record_write_date
+                            last_id = record_id
+                        # If same write_date, use max id
+                        elif record_write_date == last_write_date and record_id > (last_id or 0):
+                            self._logger.info(
+                                "MAX_ID_FOR_SAME_DATE",
+                                model=model_config.odoo_model,
+                                batch_index=batches_processed,
+                                record_id=record_id,
+                                same_date=record_write_date,
+                                old_max_id=last_id,
+                                new_max_id=record_id,
+                            )
+                            last_id = record_id
 
                 batches_processed += 1
 
@@ -597,15 +637,27 @@ class SyncEngine:
                 final_checkpoint=f"date={last_write_date}, id={last_id}",
             )
 
+            # CRITICAL: Log checkpoint details before saving
+            self._logger.info(
+                "CHECKPOINT_SAVING",
+                model=model_config.odoo_model,
+                raw_last_write_date=last_write_date,
+                raw_last_write_date_type=type(last_write_date).__name__,
+                raw_last_id=last_id,
+                raw_last_id_type=type(last_id).__name__,
+            )
+
             if last_write_date:
                 parsed_end_time = self._parse_datetime(last_write_date)
                 result.end_time = parsed_end_time
                 result.last_sync_id = last_id  # Watermark for incremental sync
                 self._logger.info(
-                    "Setting result.end_time and last_sync_id",
+                    "CHECKPOINT_SAVED",
                     model=model_config.odoo_model,
-                    end_time=parsed_end_time,
-                    last_sync_id=last_id,
+                    raw_last_write_date=last_write_date,
+                    parsed_end_time=parsed_end_time,
+                    raw_last_id=last_id,
+                    last_sync_id_in_result=result.last_sync_id,
                 )
 
             self._state_mgr.mark_sync_completed(model_config, result)
