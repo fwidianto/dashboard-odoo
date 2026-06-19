@@ -1375,6 +1375,7 @@ class PostgresClient:
             "SYNC STATE SAVED",
             model=model_name,
             saved_last_sync_date=saved.get("last_sync_date") if saved else "NOT FOUND",
+            saved_last_sync_id=saved.get("last_sync_id") if saved else "NOT FOUND",
             saved_status=saved.get("status") if saved else "NOT FOUND",
             saved_record_count=saved.get("record_count") if saved else 0,
         )
