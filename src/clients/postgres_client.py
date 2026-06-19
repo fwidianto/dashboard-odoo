@@ -1343,9 +1343,18 @@ class PostgresClient:
             "DEBUG: update_sync_state SQL PARAMS",
             model_name=model_name,
             last_sync_date_input=last_sync_date,
+            last_sync_date_type=type(last_sync_date).__name__,
             last_sync_id_input=last_sync_id,
+            last_sync_id_type=type(last_sync_id).__name__,
             record_count_input=record_count,
             status_input=status,
+        )
+        
+        # Log the actual SQL values
+        self._logger.info(
+            "DEBUG: update_sync_state SQL VALUES",
+            sql_last_sync_date=str(last_sync_date) if last_sync_date else "NULL",
+            sql_last_sync_id=str(last_sync_id) if last_sync_id else "NULL",
         )
 
         with self.engine.connect() as conn:

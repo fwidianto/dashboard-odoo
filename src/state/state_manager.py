@@ -132,6 +132,8 @@ class StateManager:
             records_synced=result.records_synced,
             result_end_time=result.end_time,
             last_sync_date_about_to_save=last_sync_date,
+            last_sync_id_about_to_save=last_sync_id,
+            result_last_sync_id=result.last_sync_id,
             success=result.success,
         )
 
