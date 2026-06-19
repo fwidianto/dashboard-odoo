@@ -244,8 +244,118 @@ python -m src.main --mode incremental
 ```
 
 - Uses `write_date >= last_sync_date` filter
-- Only syncs changed records
+- **Server-side filtering**: Domain filter is passed to Odoo's `search_count()` and `search_read()` - only changed records are fetched
 - Much faster for subsequent syncs
+
+#### Incremental Sync Diagnostic Logs
+
+When running incremental sync, the engine logs diagnostic information proving only changed records are fetched:
+
+```
+INFO - Incremental sync - fetching only changed records
+INFO - model=account.move.line
+INFO - total_odoo_records=417994
+INFO - changed_records=23
+INFO - last_sync_date=2026-06-18 10:00:00
+INFO - filtering_field=write_date
+```
+
+This proves:
+- **total_odoo_records**: Total records in Odoo (417,994)
+- **changed_records**: Records matching filter (23)
+- **filtering_field**: The field used for filtering (`write_date`)
+- **last_sync_date**: The timestamp used for the domain filter
+
+### Model-Specific Sync
+
+```bash
+# Sync only account.move.line
+python -m src.main --mode incremental --models account.move.line
+
+# Sync multiple specific models
+python -m src.main --mode full --models res.partner sale.order
+```
+
+#### Model-Scoped Initialization
+
+When using `--models`, the sync engine:
+1. **Only loads** the requested model configurations
+2. **Only validates** schema for requested models
+3. **Only checks** columns for requested tables
+4. **Only syncs** the requested models
+
+Example output:
+```
+============================================================
+SYNCHRONIZATION
+============================================================
+Mode: incremental
+Models: account.move.line
+============================================================
+
+Initializing sync engine
+Models selected for initialization
+  total_requested: 1
+  models_to_init: ['account.move.line']
+
+Validating schema:
+✓ account.move.line
+
+Starting sync:
+✓ account.move.line
+```
+
+#### Architecture: Model Filtering
+
+```
+sync_all(full_sync=False, model_names=['account.move.line'])
+       │
+       ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Filter Models                                              │
+│  models_to_sync = [m for m in config.models               │
+│                     if m.odoo_model in model_names]         │
+└─────────────────────────────────────────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────────────────────────────────┐
+│  validate_and_migrate_schema(models_to_sync)               │
+│  ← Only validates the filtered models!                       │
+└─────────────────────────────────────────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────────────────────────────────┐
+│  for model_config in models_to_sync:                     │
+│      sync_model(model_config)                              │
+│  ← Only syncs the filtered models!                         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Incremental vs Full: Filtering Behavior
+
+| Mode | Domain Filter | Records Fetched | get_last_sync_date Called |
+|------|---------------|-----------------|---------------------------|
+| **Full** | None | All records | ❌ No |
+| **Incremental** | `write_date >= last_sync` | Changed records only | ✅ Yes |
+
+#### Server-Side vs Client-Side Filtering
+
+**Server-Side (Correct)**: Domain filter passed to Odoo's API
+```python
+# This is what the engine does:
+domain = [("write_date", ">=", "2026-06-18 10:00:00")]
+search_count(model, domain)  # Odoo filters on server
+search_read(model, domain)   # Only changed records returned
+```
+
+**Client-Side (Inefficient - NOT used)**: Fetch all, filter locally
+```python
+# This is NOT what the engine does:
+all_records = search_read(model)  # Fetch ALL from Odoo
+changed = [r for r in all_records if r['write_date'] >= last_sync]  # Filter locally
+```
+
+The engine uses **server-side filtering** via Odoo's `search_count()` and `search_read()` APIs, which is far more efficient for large datasets.
 
 ---
 
@@ -569,7 +679,24 @@ python -m pytest tests/ --cov=src --cov-report=html
 | `test_error_reporting.py` | 37 | ✅ All passing |
 | `test_schema_recommender.py` | 19 | ✅ All passing |
 | `test_sync_engine.py` | 17 | ✅ All passing |
-| **Total** | **125+** | ✅ **All passing** |
+| `test_sync_behavior.py` | 6 | ✅ All passing |
+| `test_nullable_sync.py` | 5 | ✅ All passing |
+| `test_null_constraint_migration.py` | 7 | ✅ All passing |
+| `test_field_validation.py` | 10 | ✅ All passing |
+| **Total** | **150+** | ✅ **All passing** |
+
+#### Sync Behavior Tests
+
+The `test_sync_behavior.py` module verifies:
+
+| Test | What It Proves |
+|------|----------------|
+| `test_initialize_with_specific_models` | Model-specific `--models` flag only initializes requested models |
+| `test_initialize_without_model_names` | All models initialized when no filter specified |
+| `test_incremental_sync_uses_domain_filter` | Incremental sync uses `write_date >= last_sync` domain |
+| `test_incremental_sync_logs_diagnostic_info` | Diagnostic logs show `changed_records` count |
+| `test_full_sync_no_domain_filter` | Full sync does NOT use domain filter |
+| `test_sync_all_respects_model_names` | `sync_all()` respects `model_names` parameter |
 
 ---
 

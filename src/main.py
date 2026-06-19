@@ -133,9 +133,16 @@ def run_sync(
         # Determine sync mode
         full_sync = mode == "full"
 
-        # Initialize sync engine
+        # Initialize sync engine with selected models
+        print("\n" + "=" * 60)
+        print("SYNCHRONIZATION")
+        print("=" * 60)
+        print(f"Mode: {mode}")
+        print(f"Models: {', '.join(model_names) if model_names else 'ALL'}")
+        print("=" * 60)
+        
         engine = SyncEngine()
-        engine.initialize()
+        engine.initialize(model_names=model_names)
 
         # Run validation if requested
         if validate_only:
@@ -216,9 +223,12 @@ def run_sync(
         return 1
 
 
-def show_status() -> int:
+def show_status(model_names: Optional[list[str]] = None) -> int:
     """
-    Show sync status for all models.
+    Show sync status for models.
+
+    Args:
+        model_names: Optional list of specific models to show status for.
 
     Returns:
         Exit code.
@@ -227,7 +237,7 @@ def show_status() -> int:
 
     try:
         engine = SyncEngine()
-        engine.initialize()
+        engine.initialize(model_names=model_names)
 
         status = engine.get_sync_status()
 

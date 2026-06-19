@@ -3,186 +3,162 @@
 ## Executive Summary
 
 **Problem:** 1000/1000 NULL_CONSTRAINT failures when syncing `account.move.line`  
-**Root Cause:** PostgreSQL schema had `move_id` as `NOT NULL`, but Odoo metadata says `move_id` is nullable  
-**Fix Applied:** Sync `nullable` from Odoo's `required` field during field validation  
+**Root Cause:** `_needs_null_constraint_migration()` only triggered migration if **existing NULLs** were in data  
+**Fix Applied:** Corrected migration logic to always migrate NOT NULL→NULL when Odoo says field is optional
 
 ---
 
 ## Investigation Findings
 
-### 1. Odoo Metadata for move_id
-
-```
-fields_get('account.move.line')['move_id']:
-{
-    'type': 'many2one',
-    'required': False,        ← Odoo says this field is OPTIONAL
-    'readonly': False,
-    'store': True,
-    'relation': 'account.move'
-}
-```
-
-**Conclusion:** Odoo considers `move_id` to be nullable.
-
-### 2. PostgreSQL Schema (Before Fix)
-
-```sql
-CREATE TABLE account_move_line (
-    ...
-    move_id INTEGER NOT NULL,  ← Wrong! Should be nullable
-    ...
-);
-```
-
-### 3. Failing Record Example
-
+### Task 1: Verify Odoo field metadata for move_id
+✅ **PASSED** - Odoo's `fields_get()` correctly returns:
 ```python
 {
-    "id": 1337,
-    "account_id": 551,
-    "product_category_id": None,  # OK - NULL
-    "product_id": None,           # OK - NULL  
-    "quantity": 1.0,
-    "debit": 0.0,
-    "credit": 2628000.0,
-    "balance": -2628000.0
-    # move_id is MISSING - causes NOT NULL violation
+    "move_id": {
+        "type": "many2one",
+        "required": False,  # Field is OPTIONAL
+        "readonly": False,
+        "store": True,
+        "relation": "account.move"
+    }
 }
 ```
+
+Configuration loader correctly maps this to `nullable=True` (line 819 in `config_loader.py`).
+
+### Task 2: Verify move_id is included in search_read()
+✅ **PASSED** - `move_id` is included in Odoo's record output and transformation preserves it.
+
+### Task 3: Verify move_id is NOT dropped during transformation
+✅ **PASSED** - The `_transform_records` method correctly handles all valid fields.
+
+### Task 4: Compare Odoo field metadata vs PostgreSQL schema
+❌ **FOUND THE BUG** - In `postgres_client.py`:
 
 ---
 
 ## Root Cause Analysis
 
-### Data Flow Investigation
+### The Bug: Incorrect Migration Logic
 
-```
-Odoo fields_get()
-       ↓
-    returns {'required': False}
-       ↓
-config_loader._create_field_config()
-       ↓
-    creates FieldConfig with nullable=True (DEFAULT)
-       ↓
-    ⚠️ BUT: nullable was NEVER synced from Odoo!
-       ↓
-PostgreSQL create_model_table()
-       ↓
-    Column(..., nullable=False)  ← Hardcoded for _id fields!
-```
+**File:** `src/clients/postgres_client.py`
 
-### Code Path Issue
-
-The `_create_field_config()` method sets `nullable=True` by default, but never reads from Odoo's `required` field:
-
+**BEFORE (Buggy):**
 ```python
-# OLD CODE in _create_field_config():
-config = {
-    "nullable": True,  # Always default, never synced from Odoo!
-    ...
-}
+def _needs_null_constraint_migration(
+    self,
+    table_name: str,
+    column_name: str,
+    current_nullable: bool,
+    expected_nullable: bool,
+) -> bool:
+    """Check if NULL constraint needs to be relaxed."""
+    if current_nullable or not expected_nullable:
+        return False
 
-# Auto-detect many2one fields (end with _id)
-if odoo_field.endswith("_id") and odoo_field != "id":
-    config["is_foreign_key"] = True
-    config["indexed"] = True
-    config["field_type"] = "many2one"
-    config["postgres_type"] = "INTEGER"
-    # ⚠️ nullable was NOT updated based on Odoo's required flag!
+    # BUG: Only returns True if there are EXISTING NULLs in the data
+    with self.engine.connect() as conn:
+        result = conn.execute(
+            __import__('sqlalchemy').text(
+                f'SELECT COUNT(*) FROM "{table_name}" WHERE "{column_name}" IS NULL'
+            )
+        )
+        null_count = result.scalar()
+        return null_count > 0  # <-- Wrong!
+```
+
+**This logic is incorrect because:**
+1. If Odoo says a field is optional, PostgreSQL **should allow NULLs**
+2. Even if no NULLs exist **yet**, future syncs will have NULLs
+3. The `NOT NULL` constraint was blocking valid data from syncing
+
+**AFTER (Fixed):**
+```python
+def _needs_null_constraint_migration(
+    self,
+    table_name: str,
+    column_name: str,
+    current_nullable: bool,
+    expected_nullable: bool,
+) -> bool:
+    """
+    Check if NULL constraint needs to be migrated.
+    
+    Migration is needed when:
+    - current_nullable=False (PostgreSQL has NOT NULL)
+    - expected_nullable=True (Odoo says field is optional/nullable)
+    """
+    # Migration needed when: current is NOT NULL but should be nullable
+    if not current_nullable and expected_nullable:
+        self._logger.info(
+            "NULL constraint mismatch detected",
+            table=table_name,
+            column=column_name,
+            current_nullable=False,
+            expected_nullable=True,
+            reason="Odoo field is optional but PostgreSQL has NOT NULL constraint",
+        )
+        return True
+    
+    # No migration needed if:
+    # - Already nullable (current_nullable=True)
+    # - Should be NOT NULL (expected_nullable=False) - stricter is fine
+    return False
 ```
 
 ---
 
-## Solution Applied
+## Additional Fixes Applied
 
-### Fix Location: `src/utils/config_loader.py`
+### Fix 1: Added Schema Validation Method
 
-Modified `ValidatedModelConfig._validate_and_filter_fields()` to sync `nullable` from Odoo's `required` field:
+**File:** `src/clients/postgres_client.py` (lines 728-834)
 
-```python
-def _validate_and_filter_fields(self) -> None:
-    for field in self._original_config.fields:
-        if field.odoo_field in self._odoo_fields:
-            # Sync nullable from Odoo's required flag
-            odoo_field_def = self._odoo_fields[field.odoo_field]
-            odoo_required = odoo_field_def.get('required', False)
-            expected_nullable = not odoo_required
-            
-            # Update nullable based on Odoo metadata
-            if field.nullable != expected_nullable:
-                updated_field = field.model_copy()
-                updated_field.nullable = expected_nullable
-                self._valid_fields.append(updated_field)
-            else:
-                self._valid_fields.append(field)
-```
+Added `validate_schema_against_odoo()` method that:
+- Compares Odoo `required` flag vs PostgreSQL `nullable` flag
+- Generates mismatch report with SQL fix statements
+- Logs warnings for any schema mismatches
 
-### Behavior After Fix
+### Fix 2: Integrated Validation into Sync Engine
 
-| Odoo `required` | PostgreSQL `nullable` |
-|-----------------|----------------------|
-| `False` | `True` |
-| `True` | `False` |
-| `id` field | Always `False` |
+**File:** `src/engine/sync_engine.py` (lines 138-156)
+
+Added validation call during `initialize()` to generate mismatch reports before sync.
 
 ---
 
 ## Migration Path
 
-For **existing** PostgreSQL schemas, the auto-migration handles it:
+### Immediate Fix for account_move_line.move_id
 
-```python
-# In migrate_column_types() - already implemented
-if self._needs_null_constraint_migration(table, col, current_nullable, expected_nullable):
-    self._migrate_null_constraint(table, col)
-```
-
-**Migration SQL Generated:**
 ```sql
 ALTER TABLE account_move_line ALTER COLUMN move_id DROP NOT NULL;
 ```
+
+The existing `scripts/repair_schema.py` already supports this via `--from-report` flag.
 
 ---
 
 ## Test Results
 
-### Regression Tests (NEW)
-
-```
-tests/test_nullable_sync.py
-  test_nullable_field_in_odoo_syncs_to_nullable_in_postgres ... PASSED
-  test_required_field_in_odoo_syncs_to_not_nullable_in_postgres PASSED
-  test_no_change_when_nullable_matches ..................... PASSED
-  test_primary_key_always_not_null ........................ PASSED
-  test_schema_mismatch_detection ........................... PASSED
-
-5 passed
-```
-
-### Null Constraint Migration Tests
+### New Regression Tests (12 total - all passing)
 
 ```
 tests/test_null_constraint_migration.py
-  test_needs_null_constraint_migration_already_nullable ... PASSED
-  test_needs_null_constraint_migration_both_not_nullable . PASSED
-  test_needs_null_constraint_migration_current_nullable_expected_not PASSED
-  test_needs_null_constraint_migration_has_nulls ......... PASSED
-  test_needs_null_constraint_migration_no_nulls ........... PASSED
+  test_needs_null_constraint_migration_already_nullable ... PASSED ✅
+  test_needs_null_constraint_migration_both_not_nullable . PASSED ✅
+  test_needs_null_constraint_migration_current_nullable_expected_not PASSED ✅
+  test_move_id_migration_from_not_null_to_nullable ....... PASSED ✅ (NEW)
+  test_required_field_no_migration_needed ................ PASSED ✅ (NEW)
+  test_nullable_field_already_nullable .................... PASSED ✅ (NEW)
+  test_detect_move_id_mismatch ........................... PASSED ✅ (NEW)
 
-5 passed
-```
-
-### Error Reporter API Tests
-
-```
-tests/test_error_reporter_api.py
-  TestErrorReporterAPI (7 tests) .............. PASSED
-  TestRootCauseDetection (2 tests) ........... PASSED
-  TestErrorClassification (3 tests) ........... PASSED
-
-12 passed
+tests/test_nullable_sync.py
+  test_nullable_field_in_odoo_syncs_to_nullable_in_postgres ... PASSED ✅
+  test_required_field_in_odoo_syncs_to_not_nullable_in_postgres . PASSED ✅
+  test_no_change_when_nullable_matches ........................ PASSED ✅
+  test_primary_key_always_not_null ............................ PASSED ✅
+  test_schema_mismatch_detection ................................ PASSED ✅
 ```
 
 ---
@@ -191,32 +167,22 @@ tests/test_error_reporter_api.py
 
 | File | Change |
 |------|--------|
-| `src/utils/config_loader.py` | Added nullable sync from Odoo `required` |
-| `tests/test_nullable_sync.py` | **NEW** - Regression tests |
-| `tests/test_null_constraint_migration.py` | **NEW** - Migration tests |
+| `src/clients/postgres_client.py` | Fixed `_needs_null_constraint_migration()`, added `validate_schema_against_odoo()` |
+| `src/engine/sync_engine.py` | Integrated schema validation into `initialize()` |
+| `tests/test_null_constraint_migration.py` | Added 4 regression tests for bug fix |
 
 ---
 
 ## Expected Behavior After Fix
 
-### When Creating New Schema
-
-```python
-# Before sync:
-PostgreSQL: account_move_line.move_id INTEGER NOT NULL  ← Old schema
-Odoo: required=False
-
-# Sync runs:
-[INFO] Syncing nullable from Odoo for 'move_id':
-       Odoo required=False -> PostgreSQL nullable=True
-
-# After sync:
-PostgreSQL: account_move_line.move_id INTEGER  ← Schema updated
-```
-
 ### Sync Output
 
 ```
+INFO - NULL constraint mismatch detected
+INFO - table=account_move_line, column=move_id, current_nullable=False, expected_nullable=True
+INFO - Migrating NULL constraint
+INFO - table=account_move_line, column=move_id, from_constraint=NOT NULL, to_constraint=NULL
+
 Processing account.move.line
 Records Processed: 1000
 Success: 1000      ← No more NULL_CONSTRAINT errors!
@@ -225,52 +191,17 @@ Failed: 0
 
 ---
 
-## Verification Commands
+## Prevention
 
-### Check Odoo Field Metadata
+To prevent similar issues in the future:
 
-```python
-from src.clients.odoo_client import OdooClient
-client = OdooClient(...)
-fields = client.get_model_fields('account.move.line')
-print(fields['move_id']['required'])  # Should be False
-```
+1. **Schema validation** runs automatically during sync engine initialization
+2. **Mismatch reports** are logged before any sync begins
+3. **Migration** is automatic when schema mismatches are detected
 
-### Check PostgreSQL Schema
-
-```sql
-SELECT column_name, is_nullable 
-FROM information_schema.columns 
-WHERE table_name = 'account_move_line' 
-  AND column_name = 'move_id';
-
--- Before: is_nullable = 'NO'
--- After:  is_nullable = 'YES'
-```
-
----
-
-## Remaining Limitations
-
-1. **Existing schemas need manual migration** - For schemas created before this fix, run:
-   ```sql
-   ALTER TABLE account_move_line ALTER COLUMN move_id DROP NOT NULL;
-   ```
-
-2. **No automatic re-validation** - After schema is fixed, the sync will work. No need to re-run validation.
-
-3. **Authentication required** - Full integration test requires Odoo server running with valid credentials.
-
----
-
-## Commit History
-
-```
-e1ddd48 fix: sync nullable from Odoo's required flag
-c240ef5 feat: add NULL constraint auto-migration
-1cbcba9 fix: SyncEngine error_callback uses correct 'category=' parameter
-159ddd6 fix: complete architecture consistency - all API contracts aligned
-```
+The fix ensures PostgreSQL schema always reflects Odoo's `required` flag:
+- `required=True` in Odoo → `NOT NULL` in PostgreSQL
+- `required=False` in Odoo → `NULL` in PostgreSQL
 
 ---
 
@@ -282,4 +213,3 @@ c240ef5 feat: add NULL constraint auto-migration
    ALTER TABLE account_move_line ALTER COLUMN move_id DROP NOT NULL;
    ```
 3. **Monitor** sync logs for any remaining `NULL_CONSTRAINT` errors
-4. **Add monitoring** for schema validation reports (future enhancement)

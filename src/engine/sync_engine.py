@@ -107,10 +107,16 @@ class SyncEngine:
         
         return self._validated_models[model_config.odoo_model]
 
-    def initialize(self) -> None:
-        """Initialize the sync engine and infrastructure."""
+    def initialize(self, model_names: Optional[list[str]] = None) -> None:
+        """
+        Initialize the sync engine and infrastructure.
+        
+        Args:
+            model_names: Optional list of specific model names to initialize.
+                        If None, all models are initialized.
+        """
         self._logger.info("Initializing sync engine")
-
+        
         # Test connections
         if not self._odoo.test_connection():
             raise SyncEngineError("Cannot connect to Odoo server")
@@ -121,8 +127,23 @@ class SyncEngine:
         # Initialize state tracking tables
         self._pg.create_all_tables()
 
-        # Validate all models against Odoo and create tables
-        for model_config in self.config.models:
+        # Filter models if specific ones requested
+        if model_names:
+            models_to_init = [
+                m for m in self.config.models 
+                if m.odoo_model in model_names
+            ]
+        else:
+            models_to_init = self.config.models
+
+        self._logger.info(
+            "Models selected for initialization",
+            total_requested=len(model_names) if model_names else len(self.config.models),
+            models_to_init=[m.odoo_model for m in models_to_init],
+        )
+
+        # Validate only requested models against Odoo and create tables
+        for model_config in models_to_init:
             # Get validated model (validates fields against Odoo)
             validated = self._get_validated_model(model_config)
             
@@ -135,10 +156,34 @@ class SyncEngine:
                 )
                 continue
             
+            # Get Odoo fields for validation report
+            try:
+                odoo_fields = self._odoo.get_model_fields(model_config.odoo_model)
+            except Exception as e:
+                self._logger.warning(
+                    f"Could not fetch Odoo fields for validation: {e}",
+                    model=model_config.odoo_model,
+                )
+                odoo_fields = {}
+            
+            # Generate schema validation report (logs mismatches)
+            validation_report = self._pg.validate_schema_against_odoo(validated, odoo_fields)
+            
+            # Log the mismatch report
+            if validation_report['mismatches']:
+                self._logger.warning(
+                    f"Schema mismatch report for {model_config.odoo_model}:",
+                    mismatches=validation_report['mismatches'],
+                )
+            
             # Create table with validated fields
             self._pg.ensure_table_schema(validated)
 
-        self._logger.info("Sync engine initialized", models=len(self.config.models))
+        self._logger.info(
+            "Sync engine initialized",
+            total_models=len(self.config.models),
+            initialized_models=len(models_to_init),
+        )
 
     def sync_model(
         self,
@@ -192,8 +237,9 @@ class SyncEngine:
                 result.mark_complete()
                 return result
             
-            # Get counts before sync for audit
-            result.odoo_count_before = self._odoo.count(model_config.odoo_model, [])
+            # Get total Odoo records for audit (always query without domain)
+            total_odoo_records = self._odoo.count(model_config.odoo_model, [])
+            result.odoo_count_before = total_odoo_records
             result.postgres_count_before = self._pg.get_table_row_count(model_config.postgres_table)
 
             # Get fields to sync from validated config (one2many/many2many already filtered)
@@ -209,29 +255,37 @@ class SyncEngine:
                 if f.field_type not in ("one2many", "many2many")
             }
 
-            # Determine domain filter
+            # Determine domain filter for incremental sync
             domain = []
+            last_sync_date = None
             if not full_sync and sync_date_field:
-                last_sync = self._state_mgr.get_last_sync_date(model_config.odoo_model)
-                if last_sync:
-                    date_str = last_sync.strftime("%Y-%m-%d %H:%M:%S")
+                last_sync_date = self._state_mgr.get_last_sync_date(model_config.odoo_model)
+                if last_sync_date:
+                    date_str = last_sync_date.strftime("%Y-%m-%d %H:%M:%S")
                     domain = [(sync_date_field.odoo_field, ">=", date_str)]
-                    self._logger.info(
-                        "Incremental sync",
-                        model=model_config.odoo_model,
-                        since=last_sync,
-                    )
-
+            
             # Get batch size for this model
             batch_size = self.config.get_effective_batch_size(model_config)
 
-            # Get total count for logging
-            total_count = self._odoo.count(model_config.odoo_model, domain)
-            self._logger.info(
-                "Records to sync",
-                model=model_config.odoo_model,
-                count=total_count,
-            )
+            # Get count of records to sync (with domain filter for incremental)
+            # This is the CRITICAL metric that proves incremental is working
+            if full_sync:
+                sync_count = total_odoo_records
+                self._logger.info(
+                    "Full sync - fetching all records",
+                    model=model_config.odoo_model,
+                    total_records=total_odoo_records,
+                )
+            else:
+                sync_count = self._odoo.count(model_config.odoo_model, domain)
+                self._logger.info(
+                    "Incremental sync - fetching only changed records",
+                    model=model_config.odoo_model,
+                    total_odoo_records=total_odoo_records,
+                    changed_records=sync_count,
+                    last_sync_date=last_sync_date.strftime("%Y-%m-%d %H:%M:%S") if last_sync_date else "Never",
+                    filtering_field=sync_date_field.odoo_field if sync_date_field else "None",
+                )
 
             # Process in batches
             records_synced = 0

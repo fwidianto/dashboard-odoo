@@ -658,16 +658,37 @@ class PostgresClient:
         current_nullable: bool,
         expected_nullable: bool,
     ) -> bool:
-        """Check if NULL constraint needs to be relaxed."""
-        if current_nullable or not expected_nullable:
-            return False
+        """
+        Check if NULL constraint needs to be migrated.
         
-        with self.engine.connect() as conn:
-            result = conn.execute(
-                __import__('sqlalchemy').text(f'SELECT COUNT(*) FROM "{table_name}" WHERE "{column_name}" IS NULL')
+        Migration is needed when:
+        - current_nullable=False (PostgreSQL has NOT NULL)
+        - expected_nullable=True (Odoo says field is optional/nullable)
+        
+        This indicates a schema mismatch where Odoo's optional field was incorrectly
+        created as NOT NULL in PostgreSQL.
+        
+        Note: We do NOT check for existing NULL values in the data because:
+        1. The Odoo field is nullable, so NULLs may appear in future syncs
+        2. The NOT NULL constraint blocks valid data from syncing
+        3. If there are already NULLs, they indicate the constraint is wrong
+        """
+        # Migration needed when: current is NOT NULL but should be nullable
+        if not current_nullable and expected_nullable:
+            self._logger.info(
+                "NULL constraint mismatch detected",
+                table=table_name,
+                column=column_name,
+                current_nullable=False,
+                expected_nullable=True,
+                reason="Odoo field is optional but PostgreSQL has NOT NULL constraint",
             )
-            null_count = result.scalar()
-            return null_count > 0
+            return True
+        
+        # No migration needed if:
+        # - Already nullable (current_nullable=True)
+        # - Should be NOT NULL (expected_nullable=False) - stricter is fine
+        return False
 
     def _migrate_null_constraint(
         self,
@@ -703,6 +724,114 @@ class PostgresClient:
                 error=str(e),
             )
             return None
+
+    def validate_schema_against_odoo(
+        self,
+        model_config: "ModelConfig",
+        odoo_fields: dict,
+    ) -> dict:
+        """
+        Validate PostgreSQL schema against Odoo metadata.
+        
+        Generates a mismatch report comparing:
+        - Odoo field required flag
+        - PostgreSQL nullable flag
+        
+        Args:
+            model_config: Model configuration
+            odoo_fields: Dictionary from Odoo fields_get()
+            
+        Returns:
+            Validation report with mismatches and recommended actions
+        """
+        self._logger.info(
+            "Validating schema against Odoo metadata",
+            table=model_config.postgres_table,
+            model=model_config.odoo_model,
+        )
+        
+        inspector = inspect(self.engine)
+        
+        # Get existing columns
+        if model_config.postgres_table not in inspector.get_table_names():
+            return {
+                'table_exists': False,
+                'mismatches': [],
+                'warnings': ['Table does not exist yet'],
+            }
+        
+        existing_columns = {
+            col["name"]: col 
+            for col in inspector.get_columns(model_config.postgres_table)
+        }
+        
+        mismatches = []
+        warnings = []
+        
+        for field in model_config.fields:
+            col_name = field.postgres_column
+            
+            if col_name not in existing_columns:
+                warnings.append(f"Column '{col_name}' not found in PostgreSQL (will be added)")
+                continue
+            
+            pg_column = existing_columns[col_name]
+            pg_nullable = pg_column.get("nullable", True)
+            
+            # Get Odoo field definition
+            odoo_def = odoo_fields.get(field.odoo_field, {})
+            odoo_required = odoo_def.get("required", False)
+            odoo_nullable = not odoo_required
+            
+            # Check for mismatch
+            if pg_nullable != odoo_nullable:
+                mismatch = {
+                    'column': col_name,
+                    'field': field.odoo_field,
+                    'odoo_required': odoo_required,
+                    'odoo_nullable': odoo_nullable,
+                    'postgres_nullable': pg_nullable,
+                    'issue': 'MISMATCH',
+                    'description': (
+                        f"Odoo says '{field.odoo_field}' is "
+                        f"{'required' if odoo_required else 'optional'}, "
+                        f"but PostgreSQL column is "
+                        f"{'NOT NULL' if not pg_nullable else 'NULL'}"
+                    ),
+                    'fix': (
+                        f"ALTER TABLE {model_config.postgres_table} "
+                        f"{'DROP NOT NULL' if not pg_nullable and odoo_nullable else 'SET NOT NULL'}"
+                    ),
+                }
+                mismatches.append(mismatch)
+                
+                self._logger.warning(
+                    "Schema mismatch detected",
+                    column=col_name,
+                    field=field.odoo_field,
+                    odoo_nullable=odoo_nullable,
+                    postgres_nullable=pg_nullable,
+                    fix=mismatch['fix'],
+                )
+        
+        report = {
+            'table_exists': True,
+            'table': model_config.postgres_table,
+            'model': model_config.odoo_model,
+            'total_columns': len(existing_columns),
+            'mismatches': mismatches,
+            'warnings': warnings,
+            'mismatch_count': len(mismatches),
+        }
+        
+        if mismatches:
+            self._logger.warning(
+                "Schema validation found mismatches",
+                table=model_config.postgres_table,
+                mismatch_count=len(mismatches),
+            )
+        
+        return report
 
     def _migrate_column(
         self,
