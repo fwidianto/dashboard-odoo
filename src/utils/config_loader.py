@@ -146,9 +146,15 @@ class ConfigLoader:
             self._odoo_client.authenticate()
         return self._odoo_client
 
-    def load(self) -> SyncConfig:
+    def load(self, model_names: Optional[list] = None) -> SyncConfig:
         """
         Load and validate configuration from YAML file.
+
+        Args:
+            model_names: Optional list of specific models to load. If provided,
+                        only these models will be processed. This is CRITICAL for
+                        performance - prevents field discovery for ALL models when
+                        only specific models are requested.
 
         Returns:
             SyncConfig: Validated configuration object.
@@ -177,6 +183,14 @@ class ConfigLoader:
         # Extract models from all possible keys
         # Support for multiple model sections in YAML
         all_models_data = []
+        model_filter_set = set(model_names) if model_names else None
+        
+        # Helper function to check if model should be included
+        def should_include(model_name: str) -> bool:
+            """Check if model should be included based on filter."""
+            if model_filter_set is None:
+                return True  # No filter - include all
+            return model_name in model_filter_set
         
         # Standard models - can be list OR dict with columns
         if "models" in raw_config:
@@ -184,6 +198,8 @@ class ConfigLoader:
             if isinstance(models, dict):
                 # New format: { "res.partner": { "columns": {...} }, ... }
                 for model_name, model_config in models.items():
+                    if not should_include(model_name):
+                        continue  # Skip filtered models
                     if isinstance(model_config, dict) and "columns" in model_config:
                         # Model with explicit columns
                         all_models_data.append({
@@ -197,21 +213,47 @@ class ConfigLoader:
                 # Legacy format: list of strings or dicts
                 for m in models:
                     if isinstance(m, str):
+                        if not should_include(m):
+                            continue  # Skip filtered models
                         all_models_data.append(m)
-                    elif isinstance(m, dict):
+                    elif isinstance(m, dict) and isinstance(m.get('odoo_model'), str):
+                        model_name = m.get('odoo_model')
+                        if not should_include(model_name):
+                            continue  # Skip filtered models
                         all_models_data.append(m)
         
         # Models with options (list of dicts)
         if "models_with_options" in raw_config:
             models = raw_config["models_with_options"]
             if isinstance(models, list):
-                all_models_data.extend(models)
+                for m in models:
+                    model_name = m.get('odoo_model') if isinstance(m, dict) else None
+                    if model_name and not should_include(model_name):
+                        continue  # Skip filtered models
+                    all_models_data.append(m)
         
         # Legacy models (list of dicts with fields)
         if "legacy_models" in raw_config:
             models = raw_config["legacy_models"]
             if isinstance(models, list):
-                all_models_data.extend(models)
+                for m in models:
+                    model_name = m.get('odoo_model') if isinstance(m, dict) else None
+                    if model_name and not should_include(model_name):
+                        continue  # Skip filtered models
+                    all_models_data.append(m)
+        
+        # Log filtering summary
+        from src.utils.logging import get_logger
+        logger = get_logger("config_loader")
+        if model_filter_set:
+            logger.info(
+                f"Model filter applied: loading only {len(all_models_data)} of {len(model_filter_set)} requested models",
+                requested_models=list(model_filter_set),
+                loaded_models=[
+                    m if isinstance(m, str) else m.get('odoo_model') 
+                    for m in all_models_data
+                ],
+            )
         
         # Process models - auto-detect fields from Odoo
         processed_models = self._process_models(all_models_data)
@@ -1072,15 +1114,19 @@ class ValidatedModelConfig:
         return self._original_config.batch_size
 
 
-def get_config(config_path: Optional[str] = None) -> SyncConfig:
+def get_config(config_path: Optional[str] = None, model_names: Optional[list] = None) -> SyncConfig:
     """
     Convenience function to load configuration.
 
     Args:
         config_path: Optional path to configuration file.
+        model_names: Optional list of specific models to load. If provided,
+                    only these models will be processed. This is CRITICAL for
+                    performance - prevents field discovery for ALL models when
+                    only specific models are requested.
 
     Returns:
         SyncConfig: Loaded configuration.
     """
     loader = ConfigLoader(config_path)
-    return loader.load()
+    return loader.load(model_names=model_names)

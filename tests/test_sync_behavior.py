@@ -625,5 +625,110 @@ class TestSingleModelIncrementalSync:
             assert actual_domain[0][2] == "2026-06-18 12:30:00", f"Expected date string, got: {actual_domain[0][2]}"
 
 
+class TestConfigLoadingWithModelFilter:
+    """Tests proving config loading respects model filter BEFORE field discovery."""
+
+    def test_config_loader_filters_models_before_field_discovery(self):
+        """
+        When model_names=['account.move.line'] is passed to get_config(),
+        ONLY account.move.line should be processed for field discovery.
+        
+        This is the ROOT CAUSE FIX: config loading must filter models BEFORE
+        _process_models() is called, not AFTER.
+        """
+        from src.utils.config_loader import ConfigLoader
+        from unittest.mock import MagicMock, patch
+        import tempfile
+        import os
+        
+        # Create a temp config file with multiple models
+        config_content = """
+models:
+  - res.partner
+  - account.move.line
+  - product.product
+  - sale.order
+"""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(config_content)
+            temp_config_path = f.name
+        
+        try:
+            # Track which models get field discovery calls
+            field_discovery_calls = []
+            
+            # Mock Odoo client to track field discovery
+            mock_odoo_client = MagicMock()
+            def track_field_discovery(model_name):
+                field_discovery_calls.append(model_name)
+                return {"id": {"type": "integer", "required": True}}
+            mock_odoo_client.get_model_fields.side_effect = track_field_discovery
+            
+            # Mock the OdooClient class - it's imported inside the method
+            with patch('src.clients.odoo_client.OdooClient', return_value=mock_odoo_client):
+                # Load config WITH model filter
+                loader = ConfigLoader(temp_config_path)
+                config = loader.load(model_names=["account.move.line"])
+            
+            # Verify ONLY account.move.line got field discovery
+            assert field_discovery_calls == ["account.move.line"], (
+                f"Expected field discovery for ONLY 'account.move.line', "
+                f"but got: {field_discovery_calls}"
+            )
+            
+            # Verify config contains only the filtered model
+            assert len(config.models) == 1, (
+                f"Expected 1 model in config, got {len(config.models)}"
+            )
+            assert config.models[0].odoo_model == "account.move.line", (
+                f"Expected 'account.move.line', got {config.models[0].odoo_model}"
+            )
+        finally:
+            os.unlink(temp_config_path)
+
+    def test_config_loader_without_filter_discovers_all_models(self):
+        """
+        When model_names=None (no filter), ALL models should get field discovery.
+        """
+        from src.utils.config_loader import ConfigLoader
+        from unittest.mock import MagicMock, patch
+        import tempfile
+        import os
+        
+        config_content = """
+models:
+  - res.partner
+  - account.move.line
+"""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(config_content)
+            temp_config_path = f.name
+        
+        try:
+            field_discovery_calls = []
+            
+            mock_odoo_client = MagicMock()
+            def track_field_discovery(model_name):
+                field_discovery_calls.append(model_name)
+                return {"id": {"type": "integer", "required": True}}
+            mock_odoo_client.get_model_fields.side_effect = track_field_discovery
+            
+            with patch('src.clients.odoo_client.OdooClient', return_value=mock_odoo_client):
+                loader = ConfigLoader(temp_config_path)
+                config = loader.load(model_names=None)  # No filter
+            
+            # Verify BOTH models got field discovery
+            assert set(field_discovery_calls) == {"res.partner", "account.move.line"}, (
+                f"Expected field discovery for both models, got: {field_discovery_calls}"
+            )
+            
+            # Verify config contains both models
+            assert len(config.models) == 2, (
+                f"Expected 2 models in config, got {len(config.models)}"
+            )
+        finally:
+            os.unlink(temp_config_path)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

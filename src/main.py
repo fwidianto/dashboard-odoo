@@ -127,8 +127,9 @@ def run_sync(
         print(f"\n🔍 QUICK VALIDATION MODE: {record_limit} records per model\n")
 
     try:
-        # Load configuration
-        config = get_config(config_path)
+        # Load configuration - PASS model_names to prevent loading ALL models
+        # This is CRITICAL for performance - without this, ALL models get field discovery
+        config = get_config(config_path, model_names=model_names)
 
         # Determine sync mode
         full_sync = mode == "full"

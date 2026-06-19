@@ -290,11 +290,21 @@ class SyncEngine:
             # Determine domain filter for incremental sync
             domain = []
             last_sync_date = None
+            sync_date_field_name = sync_date_field.odoo_field if sync_date_field else None
+            
             if not full_sync and sync_date_field:
                 last_sync_date = self._state_mgr.get_last_sync_date(model_config.odoo_model)
                 if last_sync_date:
                     date_str = last_sync_date.strftime("%Y-%m-%d %H:%M:%S")
                     domain = [(sync_date_field.odoo_field, ">=", date_str)]
+                else:
+                    # Log why incremental is falling back to full sync
+                    self._logger.warning(
+                        "No previous sync found - treating as full sync",
+                        model=model_config.odoo_model,
+                        reason="last_sync_date is None in sync_state table",
+                        suggestion="Run full sync first: --mode full --models " + model_config.odoo_model,
+                    )
             
             # Get batch size for this model
             batch_size = self.config.get_effective_batch_size(model_config)
