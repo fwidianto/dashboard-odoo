@@ -1221,20 +1221,38 @@ class PostgresClient:
             return result.rowcount
 
     def get_sync_state(self, model_name: str) -> Optional[dict]:
-        """Get sync state for a model."""
+        """
+        Get sync state for a model.
+        
+        DEBUG: Logs exact query, parameters, and results.
+        """
         sql = text("""
             SELECT model_name, table_name, last_sync_date, last_sync_id,
                    record_count, status, error_message, created_at, updated_at
             FROM sync_state
             WHERE model_name = :model_name
         """)
+        
+        self._logger.info(
+            "DEBUG: get_sync_state EXECUTING",
+            model_name_input=model_name,
+            model_name_type=type(model_name).__name__,
+            model_name_repr=repr(model_name),
+        )
 
         with self.engine.connect() as conn:
             result = conn.execute(sql, {"model_name": model_name})
-            row = result.fetchone()
+            rows = result.fetchall()
 
-        if row:
-            return {
+        self._logger.info(
+            "DEBUG: get_sync_state RESULTS",
+            model_name=model_name,
+            rows_count=len(rows),
+        )
+
+        if rows:
+            row = rows[0]
+            state = {
                 "model_name": row[0],
                 "table_name": row[1],
                 "last_sync_date": row[2],
@@ -1245,6 +1263,14 @@ class PostgresClient:
                 "created_at": row[7],
                 "updated_at": row[8],
             }
+            self._logger.info(
+                "DEBUG: get_sync_state RETURNING",
+                model_name_from_db=row[0],
+                last_sync_date_from_db=row[2],
+                status_from_db=row[5],
+                record_count_from_db=row[4],
+            )
+            return state
         return None
 
     def update_sync_state(
