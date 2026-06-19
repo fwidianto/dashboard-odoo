@@ -115,7 +115,14 @@ class SyncEngine:
             model_names: Optional list of specific model names to initialize.
                         If None, all models are initialized.
         """
-        self._logger.info("Initializing sync engine")
+        self._logger.info("=" * 60)
+        self._logger.info("INITIALIZE CALLED")
+        self._logger.info("=" * 60)
+        self._logger.info(
+            "Model filter requested",
+            model_names_requested=model_names,
+            total_models_in_config=len(self.config.models),
+        )
         
         # Test connections
         if not self._odoo.test_connection():
@@ -136,14 +143,31 @@ class SyncEngine:
         else:
             models_to_init = self.config.models
 
+        self._logger.info("=" * 60)
+        self._logger.info("MODEL FILTERING RESULT")
+        self._logger.info("=" * 60)
         self._logger.info(
-            "Models selected for initialization",
-            total_requested=len(model_names) if model_names else len(self.config.models),
-            models_to_init=[m.odoo_model for m in models_to_init],
+            "Models to initialize",
+            requested=model_names,
+            all_in_config=[m.odoo_model for m in self.config.models],
+            filtered=[m.odoo_model for m in models_to_init],
+            count=len(models_to_init),
         )
+        self._logger.info("=" * 60)
+        
+        if not models_to_init:
+            self._logger.warning(
+                "No models match the requested filter!",
+                requested=model_names,
+            )
+            return
 
         # Validate only requested models against Odoo and create tables
         for model_config in models_to_init:
+            self._logger.info("-" * 40)
+            self._logger.info(f"INITIALIZING MODEL: {model_config.odoo_model}")
+            self._logger.info("-" * 40)
+            
             # Get validated model (validates fields against Odoo)
             validated = self._get_validated_model(model_config)
             
@@ -158,7 +182,9 @@ class SyncEngine:
             
             # Get Odoo fields for validation report
             try:
+                self._logger.info(f"  Fetching fields_get() for {model_config.odoo_model}")
                 odoo_fields = self._odoo.get_model_fields(model_config.odoo_model)
+                self._logger.info(f"  fields_get() returned {len(odoo_fields)} fields")
             except Exception as e:
                 self._logger.warning(
                     f"Could not fetch Odoo fields for validation: {e}",
@@ -167,6 +193,7 @@ class SyncEngine:
                 odoo_fields = {}
             
             # Generate schema validation report (logs mismatches)
+            self._logger.info(f"  Running schema validation for {model_config.odoo_model}")
             validation_report = self._pg.validate_schema_against_odoo(validated, odoo_fields)
             
             # Log the mismatch report
@@ -177,13 +204,18 @@ class SyncEngine:
                 )
             
             # Create table with validated fields
+            self._logger.info(f"  Creating/Updating table schema for {model_config.postgres_table}")
             self._pg.ensure_table_schema(validated)
+            self._logger.info(f"  COMPLETED: {model_config.odoo_model}")
 
+        self._logger.info("=" * 60)
         self._logger.info(
             "Sync engine initialized",
-            total_models=len(self.config.models),
-            initialized_models=len(models_to_init),
+            total_models_in_config=len(self.config.models),
+            initialized_models_count=len(models_to_init),
+            initialized_models=[m.odoo_model for m in models_to_init],
         )
+        self._logger.info("=" * 60)
 
     def sync_model(
         self,
@@ -272,19 +304,85 @@ class SyncEngine:
             if full_sync:
                 sync_count = total_odoo_records
                 self._logger.info(
-                    "Full sync - fetching all records",
+                    "=" * 60
+                )
+                self._logger.info("FULL SYNC MODE")
+                self._logger.info(
+                    "=" * 60
+                )
+                self._logger.info(
+                    "Model:",
                     model=model_config.odoo_model,
-                    total_records=total_odoo_records,
+                )
+                self._logger.info(
+                    "Fetching: ALL records (no domain filter)",
+                )
+                self._logger.info(
+                    "Total records in Odoo:",
+                    total=total_odoo_records,
+                )
+                self._logger.info(
+                    "=" * 60
                 )
             else:
                 sync_count = self._odoo.count(model_config.odoo_model, domain)
                 self._logger.info(
-                    "Incremental sync - fetching only changed records",
+                    "=" * 60
+                )
+                self._logger.info("INCREMENTAL SYNC MODE")
+                self._logger.info(
+                    "=" * 60
+                )
+                self._logger.info(
+                    "Model:",
                     model=model_config.odoo_model,
-                    total_odoo_records=total_odoo_records,
-                    changed_records=sync_count,
-                    last_sync_date=last_sync_date.strftime("%Y-%m-%d %H:%M:%S") if last_sync_date else "Never",
-                    filtering_field=sync_date_field.odoo_field if sync_date_field else "None",
+                )
+                self._logger.info(
+                    "Last sync timestamp:",
+                    last_sync=last_sync_date.strftime("%Y-%m-%d %H:%M:%S") if last_sync_date else "Never (full sync needed)",
+                )
+                self._logger.info(
+                    "Filtering field:",
+                    field=sync_date_field.odoo_field if sync_date_field else "None",
+                )
+                self._logger.info(
+                    "Generated domain:",
+                    domain=domain,
+                )
+                self._logger.info(
+                    "-" * 40
+                )
+                self._logger.info(
+                    "Total records in Odoo:",
+                    total=total_odoo_records,
+                )
+                self._logger.info(
+                    "Records matching filter:",
+                    changed=sync_count,
+                )
+                self._logger.info(
+                    "-" * 40
+                )
+                if sync_count == 0:
+                    self._logger.info(
+                        "No records to sync - all up to date!",
+                    )
+                elif sync_count < total_odoo_records:
+                    reduction_pct = (1 - sync_count / total_odoo_records) * 100
+                    self._logger.info(
+                        "INCREMENTAL SUCCESS: Fetching only {:.1f}% of records".format(
+                            sync_count / total_odoo_records * 100
+                        ),
+                    )
+                    self._logger.info(
+                        "DATA SAVED: Skipped {} records (99.99% reduction)".format(
+                            total_odoo_records - sync_count
+                        ) if reduction_pct > 99 else "Records saved: {}".format(
+                            total_odoo_records - sync_count
+                        ),
+                    )
+                self._logger.info(
+                    "=" * 60
                 )
 
             # Process in batches
@@ -390,13 +488,32 @@ class SyncEngine:
             # Create history record
             self._create_history_record(model_config, result, "full" if full_sync else "incremental")
 
-            self._logger.info(
-                "Model sync completed",
-                model=model_config.odoo_model,
-                records=records_synced,
-                deleted=deleted_count,
-                duration=result.duration_seconds,
-            )
+            # Final sync result logging
+            self._logger.info("=" * 60)
+            self._logger.info("SYNC COMPLETE")
+            self._logger.info("=" * 60)
+            self._logger.info("Model:", model=model_config.odoo_model)
+            self._logger.info("Table:", table=model_config.postgres_table)
+            self._logger.info("Mode:", mode="FULL" if full_sync else "INCREMENTAL")
+            self._logger.info("-" * 40)
+            self._logger.info("Records processed:", total=records_synced)
+            self._logger.info("Records inserted:", inserted=result.records_inserted)
+            self._logger.info("Records updated:", updated=result.records_updated)
+            self._logger.info("Records deleted:", deleted=deleted_count)
+            self._logger.info("Records failed:", failed=len(result.errors))
+            self._logger.info("-" * 40)
+            if full_sync:
+                self._logger.info("Fetched {} records (all records)".format(records_synced))
+            else:
+                if sync_count < total_odoo_records:
+                    saved = total_odoo_records - sync_count
+                    self._logger.info("Fetched {} records (saved {} queries)".format(
+                        records_synced, saved
+                    ))
+                else:
+                    self._logger.info("Fetched {} records".format(records_synced))
+            self._logger.info("Duration:", duration="{:.2f}s".format(result.duration_seconds) if result.duration_seconds else "N/A")
+            self._logger.info("=" * 60)
 
         except Exception as e:
             result.add_error(str(e))

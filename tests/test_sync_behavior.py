@@ -270,7 +270,7 @@ class TestIncrementalSyncFiltering:
                 }
             engine._odoo.get_model_fields.side_effect = mock_fields_get
             
-            def mock_count(model, domain):
+            def mock_count(model, domain=None):
                 if domain:
                     return 23
                 return 417994
@@ -280,15 +280,21 @@ class TestIncrementalSyncFiltering:
             
             result = engine.sync_model(model, full_sync=False)
             
-            info_calls = engine._logger.info.call_args_list
-            incremental_log = None
-            for call in info_calls:
-                if "changed_records" in str(call):
-                    incremental_log = call
-                    break
+            info_calls_str = [str(c) for c in engine._logger.info.call_args_list]
             
-            assert incremental_log is not None, (
-                f"Expected 'changed_records' in log call. Got: {[str(c) for c in info_calls]}"
+            # Check for INCREMENTAL SYNC MODE log
+            assert any("INCREMENTAL SYNC MODE" in c for c in info_calls_str), (
+                f"Expected 'INCREMENTAL SYNC MODE' in logs. Got: {info_calls_str}"
+            )
+            
+            # Check for domain in logs
+            assert any("write_date" in c and ">=" in c for c in info_calls_str), (
+                f"Expected domain filter in logs. Got: {info_calls_str}"
+            )
+            
+            # Check for records matching filter
+            assert any("417994" in c for c in info_calls_str), (
+                f"Expected total records in logs. Got: {info_calls_str}"
             )
 
 
@@ -423,6 +429,200 @@ class TestSyncModelFiltering:
                 f"Expected 1 model in validate_and_migrate_schema, got {len(passed_models)}"
             )
             assert passed_models[0].odoo_model == "account.move.line"
+
+
+class TestSingleModelIncrementalSync:
+    """Tests proving single-model incremental sync only touches the requested model."""
+
+    def test_single_model_sync_only_validates_one_model(self):
+        """
+        When --models account.move.line is requested, ONLY account.move.line
+        should be validated - NOT all models.
+        
+        Note: fields_get() may be called twice per model (once in _get_validated_model,
+        once in initialize), but ONLY for the requested model.
+        """
+        from src.engine.sync_engine import SyncEngine
+        from src.models.config import ModelConfig, FieldConfig, SyncConfig
+        
+        # Setup 3 models
+        model1 = ModelConfig(
+            odoo_model="account.move.line",
+            postgres_table="account_move_line",
+            fields=[
+                FieldConfig(
+                    odoo_field="id",
+                    postgres_column="id",
+                    postgres_type="BIGINT",
+                    primary_key=True,
+                    nullable=False,
+                ),
+                FieldConfig(
+                    odoo_field="write_date",
+                    postgres_column="write_date",
+                    postgres_type="TIMESTAMP",
+                    is_sync_date=True,
+                    nullable=True,
+                ),
+            ],
+        )
+        model2 = ModelConfig(
+            odoo_model="res.partner",
+            postgres_table="res_partner",
+            fields=[
+                FieldConfig(
+                    odoo_field="id",
+                    postgres_column="id",
+                    postgres_type="BIGINT",
+                    primary_key=True,
+                    nullable=False,
+                ),
+            ],
+        )
+        model3 = ModelConfig(
+            odoo_model="product.product",
+            postgres_table="product_product",
+            fields=[
+                FieldConfig(
+                    odoo_field="id",
+                    postgres_column="id",
+                    postgres_type="BIGINT",
+                    primary_key=True,
+                    nullable=False,
+                ),
+            ],
+        )
+        
+        config = SyncConfig(models=[model1, model2, model3])
+        
+        with patch.object(SyncEngine, '__init__', lambda x: None):
+            engine = SyncEngine()
+            engine._logger = MagicMock()
+            engine._odoo = MagicMock()
+            engine._odoo.test_connection.return_value = True
+            engine._odoo.get_model_fields.return_value = {
+                "id": {"type": "integer", "required": True},
+                "write_date": {"type": "datetime", "required": False},
+            }
+            engine._pg = MagicMock()
+            engine._pg.test_connection.return_value = True
+            engine._config = config
+            engine._validated_models = {}
+            engine._error_reporter = MagicMock()
+            engine._schema_recommender = MagicMock()
+            engine._pg.validate_schema_against_odoo.return_value = {'mismatches': [], 'warnings': []}
+            engine._pg.ensure_table_schema.return_value = {'added_columns': [], 'migrated_columns': []}
+            
+            # Call initialize with single model filter
+            engine.initialize(model_names=["account.move.line"])
+            
+            # Verify get_model_fields was called ONLY for account.move.line (possibly twice)
+            fields_get_calls = engine._odoo.get_model_fields.call_args_list
+            models_called = [call[0][0] for call in fields_get_calls]
+            
+            # All calls should be for account.move.line (not res.partner or product.product)
+            assert all(m == "account.move.line" for m in models_called), (
+                f"fields_get() should only be called for account.move.line, "
+                f"but was called for: {set(models_called)}"
+            )
+            
+            # Verify ensure_table_schema was called ONLY for account_move_line
+            ensure_calls = engine._pg.ensure_table_schema.call_args_list
+            tables_called = [call[0][0].postgres_table for call in ensure_calls]
+            
+            assert tables_called == ["account_move_line"], (
+                f"ensure_table_schema() should only be called for account_move_line, "
+                f"but was called for: {tables_called}"
+            )
+            
+            # Verify validate_schema_against_odoo was called ONLY once
+            validate_calls = engine._pg.validate_schema_against_odoo.call_args_list
+            assert len(validate_calls) == 1, (
+                f"validate_schema_against_odoo() should be called once, "
+                f"but was called {len(validate_calls)} times"
+            )
+
+    def test_incremental_sync_generates_correct_domain(self):
+        """
+        Incremental sync should generate domain with write_date >= last_sync.
+        
+        The key test: read_batched should be called with the domain filter,
+        proving server-side filtering is used.
+        """
+        from src.engine.sync_engine import SyncEngine
+        from src.models.config import ModelConfig, FieldConfig
+        from datetime import datetime
+        
+        model = ModelConfig(
+            odoo_model="account.move.line",
+            postgres_table="account_move_line",
+            fields=[
+                FieldConfig(
+                    odoo_field="id",
+                    postgres_column="id",
+                    postgres_type="BIGINT",
+                    primary_key=True,
+                    nullable=False,
+                ),
+                FieldConfig(
+                    odoo_field="write_date",
+                    postgres_column="write_date",
+                    postgres_type="TIMESTAMP",
+                    is_sync_date=True,
+                    nullable=True,
+                ),
+            ],
+        )
+        
+        last_sync = datetime(2026, 6, 18, 12, 30, 0)
+        
+        with patch.object(SyncEngine, '__init__', lambda x: None):
+            engine = SyncEngine()
+            engine._logger = MagicMock()
+            engine._odoo = MagicMock()
+            engine._state_mgr = MagicMock()
+            engine._state_mgr.get_last_sync_date.return_value = last_sync
+            engine._pg = MagicMock()
+            engine._pg.get_table_row_count.return_value = 100
+            engine._config = MagicMock()
+            engine._config.get_effective_batch_size.return_value = 1000
+            engine._error_reporter = MagicMock()
+            engine._validated_models = {}
+            
+            def mock_fields_get(model):
+                return {
+                    "id": {"type": "integer", "required": True},
+                    "write_date": {"type": "datetime", "required": False},
+                }
+            engine._odoo.get_model_fields.side_effect = mock_fields_get
+            
+            # Track the domain passed to read_batched
+            read_batched_calls = []
+            
+            def mock_read_batched(model, domain=None, fields=None, batch_size=None, order=None, total_limit=None):
+                read_batched_calls.append(domain if domain else [])
+                return iter([])
+            
+            engine._odoo.read_batched = mock_read_batched
+            engine._odoo.count.return_value = 23  # Return 23 for domain, 417994 without
+            engine._pg.upsert.return_value = (0, 0, 0)
+            
+            # Run incremental sync
+            result = engine.sync_model(model, full_sync=False)
+            
+            # Verify read_batched was called with correct domain
+            assert len(read_batched_calls) >= 1, (
+                f"read_batched should be called at least once, got {len(read_batched_calls)}"
+            )
+            
+            expected_domain = [("write_date", ">=", "2026-06-18 12:30:00")]
+            
+            # The domain should contain the write_date filter
+            actual_domain = read_batched_calls[0]
+            assert len(actual_domain) == 1, f"Expected domain with 1 filter, got: {actual_domain}"
+            assert actual_domain[0][0] == "write_date", f"Expected write_date filter, got: {actual_domain}"
+            assert actual_domain[0][1] == ">=", f"Expected >= operator, got: {actual_domain}"
+            assert actual_domain[0][2] == "2026-06-18 12:30:00", f"Expected date string, got: {actual_domain[0][2]}"
 
 
 if __name__ == "__main__":
