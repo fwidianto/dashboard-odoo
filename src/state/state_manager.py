@@ -125,10 +125,7 @@ class StateManager:
         # Use result's end_time and last_sync_id for watermark
         last_sync_date = result.end_time
         last_sync_id = result.last_sync_id
-        
-        # Use result's end_time and last_sync_id for watermark
-        last_sync_date = result.end_time
-        
+
         self._logger.info(
             "SAVING SYNC STATE",
             model=model_config.odoo_model,

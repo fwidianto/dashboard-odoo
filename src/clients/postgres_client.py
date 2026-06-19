@@ -1277,6 +1277,7 @@ class PostgresClient:
                 "DEBUG: get_sync_state RETURNING",
                 model_name_from_db=row[0],
                 last_sync_date_from_db=row[2],
+                last_sync_id_from_db=row[3],
                 status_from_db=row[5],
                 record_count_from_db=row[4],
             )
@@ -1308,6 +1309,16 @@ class PostgresClient:
                 error_message = EXCLUDED.error_message,
                 updated_at = NOW()
         """)
+
+        # CRITICAL DEBUG: Log what's being passed to SQL
+        self._logger.info(
+            "DEBUG: update_sync_state SQL PARAMS",
+            model_name=model_name,
+            last_sync_date_input=last_sync_date,
+            last_sync_id_input=last_sync_id,
+            record_count_input=record_count,
+            status_input=status,
+        )
 
         with self.engine.connect() as conn:
             conn.execute(sql, {
