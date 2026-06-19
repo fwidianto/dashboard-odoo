@@ -293,10 +293,30 @@ class SyncEngine:
             sync_date_field_name = sync_date_field.odoo_field if sync_date_field else None
             
             if not full_sync and sync_date_field:
+                # CRITICAL DEBUG: Log we're reading sync state
+                self._logger.info(
+                    "READING SYNC STATE",
+                    model=model_config.odoo_model,
+                    action="get_last_sync_date",
+                )
                 last_sync_date = self._state_mgr.get_last_sync_date(model_config.odoo_model)
+                
+                # CRITICAL DEBUG: Log what we read
+                self._logger.info(
+                    "SYNC STATE READ",
+                    model=model_config.odoo_model,
+                    last_sync_date_read=last_sync_date,
+                    type=type(last_sync_date).__name__,
+                )
+                
                 if last_sync_date:
                     date_str = last_sync_date.strftime("%Y-%m-%d %H:%M:%S")
                     domain = [(sync_date_field.odoo_field, ">=", date_str)]
+                    self._logger.info(
+                        "INCREMENTAL FILTER GENERATED",
+                        model=model_config.odoo_model,
+                        domain=domain,
+                    )
                 else:
                     # Log why incremental is falling back to full sync
                     self._logger.warning(

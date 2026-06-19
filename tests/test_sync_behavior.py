@@ -730,5 +730,84 @@ models:
             os.unlink(temp_config_path)
 
 
+class TestSyncEngineReceivesConfig:
+    """
+    Regression test for bug where SyncEngine was created WITHOUT config.
+    
+    Bug: run_sync() loaded config with model_names, but then created
+    SyncEngine() without passing config. SyncEngine's config property
+    would reload config WITHOUT model_names filter.
+    
+    Fix: Pass config to SyncEngine constructor.
+    """
+
+    def test_sync_engine_uses_passed_config(self):
+        """
+        Verify SyncEngine uses the config passed to its constructor.
+        
+        This was a critical bug - SyncEngine was always created without config,
+        causing the lazy-loading property to reload config without model_names.
+        """
+        from src.engine.sync_engine import SyncEngine
+        from src.models.config import SyncConfig, ModelConfig, FieldConfig
+        
+        # Create a filtered config with only account.move.line
+        filtered_config = SyncConfig(
+            models=[
+                ModelConfig(
+                    odoo_model="account.move.line",
+                    postgres_table="account_move_line",
+                    fields=[
+                        FieldConfig(
+                            odoo_field="id",
+                            postgres_column="id",
+                            postgres_type="BIGINT",
+                            primary_key=True,
+                            nullable=False,
+                        ),
+                    ],
+                ),
+            ]
+        )
+        
+        # Create SyncEngine with config
+        engine = SyncEngine(config=filtered_config)
+        
+        # Verify config is set directly, not lazily loaded
+        assert engine._config is filtered_config, (
+            "SyncEngine._config should be set directly when passed to constructor"
+        )
+        
+        # Verify engine.config returns the passed config
+        assert engine.config is filtered_config, (
+            "engine.config should return the passed config"
+        )
+        
+        # Verify only 1 model in config
+        assert len(engine.config.models) == 1, (
+            f"Expected 1 model, got {len(engine.config.models)}"
+        )
+        assert engine.config.models[0].odoo_model == "account.move.line"
+
+    def test_sync_engine_lazy_loads_when_no_config(self):
+        """
+        Verify SyncEngine lazy-loads config when None is passed.
+        
+        This preserves the original behavior for cases where config
+        is not explicitly passed.
+        """
+        from src.engine.sync_engine import SyncEngine
+        
+        # Create SyncEngine without config - should lazy-load
+        engine = SyncEngine()
+        
+        # Access config to trigger lazy load
+        # Note: This will try to load from disk, so we just verify
+        # the property exists and _config starts as None
+        assert engine._config is None, (
+            "SyncEngine._config should be None initially when not passed"
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

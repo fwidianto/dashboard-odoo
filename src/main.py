@@ -141,8 +141,8 @@ def run_sync(
         print(f"Mode: {mode}")
         print(f"Models: {', '.join(model_names) if model_names else 'ALL'}")
         print("=" * 60)
-        
-        engine = SyncEngine()
+
+        engine = SyncEngine(config=config)
         engine.initialize(model_names=model_names)
 
         # Run validation if requested
@@ -237,7 +237,9 @@ def show_status(model_names: Optional[list[str]] = None) -> int:
     logger = get_logger("status")
 
     try:
-        engine = SyncEngine()
+        # Load config with model_names filter
+        config = get_config(model_names=model_names)
+        engine = SyncEngine(config=config)
         engine.initialize(model_names=model_names)
 
         status = engine.get_sync_status()

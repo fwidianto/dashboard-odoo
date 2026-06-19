@@ -112,6 +112,16 @@ class StateManager:
         
         if result.end_time:
             last_sync_date = result.end_time
+        
+        # CRITICAL DEBUG: Log what we're about to save
+        self._logger.info(
+            "SAVING SYNC STATE",
+            model=model_config.odoo_model,
+            records_synced=result.records_synced,
+            result_end_time=result.end_time,
+            last_sync_date_about_to_save=last_sync_date,
+            success=result.success,
+        )
 
         self._pg_client.update_sync_state(
             model_name=model_config.odoo_model,
@@ -122,6 +132,17 @@ class StateManager:
             status=SyncStatus.COMPLETED.value if result.success else SyncStatus.PARTIAL.value,
             error_message="; ".join(result.errors) if result.errors else None,
         )
+        
+        # CRITICAL DEBUG: Log what was actually saved
+        # Read back to verify
+        saved_state = self._pg_client.get_sync_state(model_config.odoo_model)
+        self._logger.info(
+            "SYNC STATE SAVED",
+            model=model_config.odoo_model,
+            saved_last_sync_date=saved_state.get("last_sync_date") if saved_state else "NOT FOUND",
+            saved_status=saved_state.get("status") if saved_state else "NOT FOUND",
+        )
+        
         self._logger.info(
             "Sync completed",
             model=model_config.odoo_model,
