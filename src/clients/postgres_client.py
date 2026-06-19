@@ -127,7 +127,35 @@ class PostgresClient:
         )
 
         sync_state.create(self.engine, checkfirst=True)
+        
+        # CRITICAL: Ensure last_sync_id column exists (migration for existing tables)
+        self._ensure_last_sync_id_column()
+        
         self._logger.info("sync_state table ready")
+
+    def _ensure_last_sync_id_column(self) -> None:
+        """Add last_sync_id column if it doesn't exist (migration)."""
+        try:
+            with self.engine.connect() as conn:
+                # Check if column exists
+                result = conn.execute(__import__('sqlalchemy').text("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'sync_state' AND column_name = 'last_sync_id'
+                """))
+                if not result.fetchone():
+                    self._logger.info("Migrating sync_state: adding last_sync_id column")
+                    conn.execute(__import__('sqlalchemy').text("""
+                        ALTER TABLE sync_state 
+                        ADD COLUMN last_sync_id INTEGER NULL
+                    """))
+                    conn.commit()
+                    self._logger.info("Migration complete: last_sync_id column added")
+        except Exception as e:
+            self._logger.warning(
+                "Failed to add last_sync_id column",
+                error=str(e),
+            )
 
     def create_sync_audit_table(self) -> None:
         """Create the sync_audit table for comparing Odoo and PostgreSQL counts."""

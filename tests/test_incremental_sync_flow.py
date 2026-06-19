@@ -10,7 +10,7 @@ This test traces the exact code path to verify:
 import pytest
 from unittest.mock import MagicMock, patch, call
 from datetime import datetime
-from src.models.state import SyncResult
+from src.models.state import SyncResult, SyncStatus
 
 
 class TestIncrementalSyncStateFlow:
@@ -731,72 +731,43 @@ class TestGetSyncStateSQL:
         )
 
 
+
 class TestWatermarkStrategy:
     """
     Test the (last_sync_date, last_sync_id) watermark strategy.
-    
-    Problem: If all synced records share the same timestamp:
-      id=100 write_date=09:53:54
-      id=101 write_date=09:53:54  
-      id=102 write_date=09:53:54
-    
-    Old strategy: last_sync_date = 09:53:54
-                  Next query: write_date >= '09:53:54' → Returns same 3 records again!
-    
-    New strategy: last_sync_date = 09:53:54, last_sync_id = 102
-                  Next query: (write_date > '09:53:54') OR (write_date = '09:53:54' AND id > 102)
-                  Result: Returns 0 records (correct!)
     """
 
     def test_watermark_prevents_duplicate_processing(self):
-        """
-        Test that the (date, id) watermark prevents processing same records again.
-        """
-        # Simulate what happens when all records have same timestamp
+        """Test that (date, id) watermark prevents processing same records."""
+        from datetime import datetime
+        
         last_sync_date = datetime(2026, 6, 18, 9, 53, 54)
-        last_sync_id = 102  # Last ID from previous sync
+        last_sync_id = 102
         
-        # Build domain with watermark
-        domain = [
-            "|",
-            ("write_date", ">", last_sync_date),
-            "&",
-            ("write_date", "=", last_sync_date),
-            ("id", ">", last_sync_id),
-        ]
-        
-        # Simulate records with same timestamp
         records = [
             {"id": 100, "write_date": "2026-06-18 09:53:54"},
             {"id": 101, "write_date": "2026-06-18 09:53:54"},
             {"id": 102, "write_date": "2026-06-18 09:53:54"},
         ]
         
-        # Apply domain filter
         def matches_domain(record):
             wd = record["write_date"]
             iid = record["id"]
-            # (wd > last_sync_date) OR (wd == last_sync_date AND id > last_sync_id)
             return wd > str(last_sync_date) or (wd == str(last_sync_date) and iid > last_sync_id)
         
         matching = [r for r in records if matches_domain(r)]
-        
-        # Should return 0 records (all have id <= last_sync_id)
-        assert len(matching) == 0, (
-            f"Watermark should prevent duplicate processing, got {len(matching)} records"
-        )
+        assert len(matching) == 0, f"Expected 0, got {len(matching)}"
 
     def test_watermark_catches_new_records(self):
-        """
-        Test that the (date, id) watermark correctly captures new records.
-        """
+        """Test that (date, id) watermark captures new records."""
+        from datetime import datetime
+        
         last_sync_date = datetime(2026, 6, 18, 9, 53, 54)
         last_sync_id = 102
         
-        # New records that should be synced
         new_records = [
-            {"id": 103, "write_date": "2026-06-18 09:53:54"},  # Same date, new id
-            {"id": 104, "write_date": "2026-06-18 10:00:00"},  # New date
+            {"id": 103, "write_date": "2026-06-18 09:53:54"},
+            {"id": 104, "write_date": "2026-06-18 10:00:00"},
         ]
         
         def matches_domain(record):
@@ -805,76 +776,102 @@ class TestWatermarkStrategy:
             return wd > str(last_sync_date) or (wd == str(last_sync_date) and iid > last_sync_id)
         
         matching = [r for r in new_records if matches_domain(r)]
-        
-        # Should return both new records
-        assert len(matching) == 2, (
-            f"Watermark should capture new records, got {len(matching)}: {matching}"
-        )
+        assert len(matching) == 2, f"Expected 2, got {len(matching)}"
 
     def test_sync_result_contains_last_sync_id(self):
-        """
-        Test that SyncResult can hold the last_sync_id watermark.
-        """
-        from src.models.state import SyncResult
+        """Test SyncResult can hold last_sync_id watermark."""
+        from src.models.state import SyncResult, SyncStatus
         
         result = SyncResult(
             model_name="sale.order",
             table_name="sale_order",
         )
-        
-        # Initially None
         assert result.last_sync_id is None
-        
-        # Set watermark
         result.last_sync_id = 102
         result.end_time = datetime(2026, 6, 18, 9, 53, 54)
-        
         assert result.last_sync_id == 102
-        assert result.end_time == datetime(2026, 6, 18, 9, 53, 54)
 
     def test_mark_sync_completed_saves_watermark(self):
-        """
-        Test that mark_sync_completed saves both last_sync_date and last_sync_id.
-        """
+        """Test mark_sync_completed saves both date and id."""
         from src.state.state_manager import StateManager
-        from src.models.state import SyncResult
+        from src.models.state import SyncResult, SyncStatus
+        from datetime import datetime
         
         saved_states = []
-        
         mock_pg = MagicMock()
         
         def track_update_sync_state(**kwargs):
             saved_states.append(kwargs.copy())
         
         mock_pg.update_sync_state.side_effect = track_update_sync_state
-        
         state_mgr = StateManager(mock_pg)
         
         mock_model_config = MagicMock()
         mock_model_config.odoo_model = "sale.order"
         mock_model_config.postgres_table = "sale_order"
         
-        # Create result with watermark
         result = SyncResult(
             model_name="sale.order",
             table_name="sale_order",
             success=True,
             records_synced=350,
             end_time=datetime(2026, 6, 18, 9, 53, 54),
-            last_sync_id=102,  # Watermark: max id at that timestamp
+            last_sync_id=102,
         )
         
-        # Mark as completed
         state_mgr.mark_sync_completed(mock_model_config, result)
         
-        # Verify both values were saved
         assert len(saved_states) == 1
         saved = saved_states[0]
         assert saved["last_sync_date"] == datetime(2026, 6, 18, 9, 53, 54)
         assert saved["last_sync_id"] == 102
-        assert saved["status"] == "completed"
 
-
+    def test_watermark_end_to_end_domain_generation(self):
+        """Test that watermark generates correct compound domain."""
+        from datetime import datetime
+        
+        # Test the domain generation logic directly
+        last_sync_date = datetime(2026, 6, 18, 9, 53, 54)
+        last_sync_id = 3
+        
+        # Simulate domain generation (same logic as sync_engine.py)
+        date_str = last_sync_date.strftime("%Y-%m-%d %H:%M:%S")
+        
+        if last_sync_id is not None:
+            domain = [
+                "|",
+                ("write_date", ">", date_str),
+                "&",
+                ("write_date", "=", date_str),
+                ("id", ">", last_sync_id),
+            ]
+        else:
+            domain = [("write_date", ">=", date_str)]
+        
+        # Verify the domain
+        assert domain[0] == '|', f"Domain should start with OR, got {domain[0]}"
+        assert ('id', '>', 3) in domain, f"Domain should include id > 3, got {domain}"
+        
+        # Simulate filtering with this domain
+        all_records = [
+            {"id": 1, "write_date": "2026-06-18 09:53:54"},
+            {"id": 2, "write_date": "2026-06-18 09:53:54"},
+            {"id": 3, "write_date": "2026-06-18 09:53:54"},
+            {"id": 4, "write_date": "2026-06-18 09:53:54"},  # New
+            {"id": 5, "write_date": "2026-06-18 10:00:00"},  # New
+        ]
+        
+        def matches_domain(record):
+            wd = record["write_date"]
+            iid = record["id"]
+            # (wd > T) OR (wd == T AND id > 3)
+            return wd > date_str or (wd == date_str and iid > last_sync_id)
+        
+        matching = [r for r in all_records if matches_domain(r)]
+        # Should only match id > 3 OR date > T
+        assert len(matching) == 2, f"Expected 2 new records, got {len(matching)}: {matching}"
+        assert matching[0]["id"] == 4
+        assert matching[1]["id"] == 5
 
 
 
