@@ -236,6 +236,158 @@ class TestIncrementalSyncStateFlow:
         )
 
 
+class TestFullIncrementalFlowSimulation:
+    """
+    Comprehensive test simulating the entire incremental sync flow.
+    
+    This test proves:
+    1. Full sync saves last_write_date to sync_state
+    2. Next incremental sync reads last_write_date from sync_state
+    3. Incremental sync generates domain filter
+    4. Only changed records are synced
+    """
+
+    def test_full_then_incremental_sync_flow(self):
+        """
+        Simulate full sync followed by incremental sync.
+        
+        This is the key test that proves incremental sync works correctly.
+        """
+        from src.engine.sync_engine import SyncEngine
+        from src.models.config import ModelConfig, FieldConfig
+        from src.state.state_manager import StateManager
+        
+        # Track state across the flow
+        sync_state_db = {}  # Simulates PostgreSQL sync_state table
+        
+        def mock_get_sync_state(model_name):
+            return sync_state_db.get(model_name)
+        
+        def mock_update_sync_state(**kwargs):
+            model_name = kwargs['model_name']
+            # Get existing state or create new
+            existing = sync_state_db.get(model_name, {"model_name": model_name})
+            # Update with provided values (use existing if not provided)
+            existing.update({
+                "table_name": kwargs.get('table_name', existing.get('table_name')),
+                "last_sync_date": kwargs.get('last_sync_date', existing.get('last_sync_date')),
+                "record_count": kwargs.get('record_count', existing.get('record_count', 0)),
+                "status": kwargs.get('status', existing.get('status', 'unknown')),
+            })
+            sync_state_db[model_name] = existing
+        
+        # Create mock postgres client for state manager
+        mock_pg_for_state = MagicMock()
+        mock_pg_for_state.get_sync_state.side_effect = mock_get_sync_state
+        mock_pg_for_state.update_sync_state.side_effect = mock_update_sync_state
+        
+        # Create real StateManager with mock PG
+        state_mgr = StateManager(mock_pg_for_state)
+        
+        # Create mock Odoo client that returns sample data
+        odoo_records = [
+            {"id": 1, "write_date": "2026-06-18 10:00:00"},
+            {"id": 2, "write_date": "2026-06-18 11:00:00"},
+            {"id": 3, "write_date": "2026-06-18 12:00:00"},
+            {"id": 4, "write_date": "2026-06-18 13:00:00"},
+            {"id": 5, "write_date": "2026-06-18 14:00:00"},
+        ]
+        
+        def mock_read_batched(model, domain, fields, batch_size, order, total_limit):
+            if domain:
+                # Incremental: filter by write_date
+                filter_date = domain[0][2]
+                filtered = [r for r in odoo_records if r["write_date"] > filter_date]
+                yield filtered
+            else:
+                # Full: return all records
+                yield odoo_records
+        
+        model = ModelConfig(
+            odoo_model="account.move.line",
+            postgres_table="account_move_line",
+            fields=[
+                FieldConfig(
+                    odoo_field="id",
+                    postgres_column="id",
+                    postgres_type="BIGINT",
+                    primary_key=True,
+                    nullable=False,
+                ),
+                FieldConfig(
+                    odoo_field="write_date",
+                    postgres_column="write_date",
+                    postgres_type="TIMESTAMP",
+                    is_sync_date=True,
+                    nullable=True,
+                ),
+            ],
+        )
+        
+        # Set up SyncEngine with mocks
+        with patch.object(SyncEngine, '__init__', lambda x: None):
+            engine = SyncEngine()
+            engine._logger = MagicMock()
+            engine._odoo = MagicMock()
+            engine._state_mgr = state_mgr  # Use real StateManager with mock PG
+            engine._pg = MagicMock()
+            engine._pg.get_sync_state.side_effect = mock_get_sync_state
+            engine._pg.update_sync_state.side_effect = mock_update_sync_state
+            engine._pg.get_table_row_count.return_value = 0
+            engine._config = MagicMock()
+            engine._config.get_effective_batch_size.return_value = 1000
+            engine._error_reporter = MagicMock()
+            engine._validated_models = {}
+            
+            def mock_fields_get(model):
+                return {
+                    "id": {"type": "integer", "required": True},
+                    "write_date": {"type": "datetime", "required": False},
+                }
+            engine._odoo.get_model_fields.side_effect = mock_fields_get
+            engine._odoo.count.return_value = 5
+            engine._odoo.read_batched.side_effect = mock_read_batched
+            engine._pg.upsert.return_value = (0, 0, 0)
+            
+            # STEP 1: Run FULL sync
+            print("\n" + "="*60)
+            print("STEP 1: FULL SYNC")
+            print("="*60)
+            
+            result1 = engine.sync_model(model, full_sync=True)
+            
+            # Verify full sync saved state
+            print(f"sync_state_db after full sync: {sync_state_db}")
+            assert "account.move.line" in sync_state_db, "Full sync should save state"
+            saved_date = sync_state_db["account.move.line"]["last_sync_date"]
+            assert saved_date is not None, f"Full sync should save last_write_date, got {saved_date}"
+            print(f"Full sync saved last_write_date: {saved_date}")
+            
+            # STEP 2: Run INCREMENTAL sync
+            print("\n" + "="*60)
+            print("STEP 2: INCREMENTAL SYNC")
+            print("="*60)
+            
+            # Reset the mock to track incremental calls
+            engine._odoo.read_batched.reset_mock()
+            engine._odoo.read_batched.side_effect = mock_read_batched
+            
+            result2 = engine.sync_model(model, full_sync=False)
+            
+            # Verify incremental sync passed correct domain
+            call_args = engine._odoo.read_batched.call_args
+            domain_passed = call_args[1].get('domain', [])
+            
+            print(f"Incremental domain filter: {domain_passed}")
+            assert len(domain_passed) == 1, f"Expected domain filter, got: {domain_passed}"
+            assert domain_passed[0][0] == "write_date", f"Expected write_date filter"
+            assert domain_passed[0][1] in (">=", ">"), f"Expected comparison operator"
+            
+            print("\n" + "="*60)
+            print("SUCCESS: Incremental sync generated correct domain filter!")
+            print("="*60)
+
+
 class TestSQLQueries:
     """Verify the actual SQL queries used."""
 

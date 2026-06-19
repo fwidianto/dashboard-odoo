@@ -1285,11 +1285,14 @@ class PostgresClient:
             })
             conn.commit()
 
-        self._logger.debug(
-            "Sync state updated",
+        # CRITICAL: Verify the save by reading back
+        saved = self.get_sync_state(model_name)
+        self._logger.info(
+            "SYNC STATE SAVED",
             model=model_name,
-            status=status,
-            record_count=record_count,
+            saved_last_sync_date=saved.get("last_sync_date") if saved else "NOT FOUND",
+            saved_status=saved.get("status") if saved else "NOT FOUND",
+            saved_record_count=saved.get("record_count") if saved else 0,
         )
 
     def insert_sync_audit(self, audit: SyncAudit) -> int:

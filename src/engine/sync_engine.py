@@ -419,6 +419,15 @@ class SyncEngine:
             records_synced = 0
             last_write_date = None
             last_id = None
+            batches_processed = 0
+            
+            self._logger.info(
+                "Starting batch processing",
+                model=model_config.odoo_model,
+                sync_date_field=sync_date_field.odoo_field if sync_date_field else "NONE",
+                domain=domain,
+                batch_size=batch_size,
+            )
             
             # Define error callback for this model
             def error_callback(error: DetailedError) -> None:
@@ -487,12 +496,21 @@ class SyncEngine:
                     last_id = last_record.get("id")
                     if sync_date_field and sync_date_field.odoo_field in last_record:
                         last_write_date = last_record[sync_date_field.odoo_field]
+                        self._logger.debug(
+                            "Updated last_write_date",
+                            model=model_config.odoo_model,
+                            last_write_date=last_write_date,
+                            last_id=last_id,
+                        )
+                    
+                    batches_processed += 1
 
                 self._logger.debug(
                     "Batch processed",
                     model=model_config.odoo_model,
                     batch_size=len(batch),
                     total_synced=records_synced,
+                    batches_total=batches_processed,
                 )
 
             # Handle deletion strategy
@@ -507,8 +525,22 @@ class SyncEngine:
             result.postgres_count_after = self._pg.get_table_row_count(model_config.postgres_table)
 
             # Update state with final info
+            self._logger.info(
+                "FINAL STATE UPDATE",
+                model=model_config.odoo_model,
+                last_write_date_raw=last_write_date,
+                records_synced=records_synced,
+                batches_processed=batches_processed,
+            )
+            
             if last_write_date:
-                result.end_time = self._parse_datetime(last_write_date)
+                parsed_end_time = self._parse_datetime(last_write_date)
+                result.end_time = parsed_end_time
+                self._logger.info(
+                    "Setting result.end_time",
+                    model=model_config.odoo_model,
+                    end_time=parsed_end_time,
+                )
 
             self._state_mgr.mark_sync_completed(model_config, result)
             
