@@ -555,7 +555,9 @@ class SyncEngine:
                         record_id = record.get("id")
                         record_write_date = record.get(write_date_field)
                         
-                        # Handle NULL write_date - skip these records
+                        # Handle NULL/False/Invalid write_date - skip these records
+                        # Odoo can return: None, False, "", "null", datetime, string
+                        # Only accept datetime or string write_date values
                         if record_write_date is None:
                             self._logger.warning(
                                 "RECORD_NULL_WRITE_DATE",
@@ -566,8 +568,61 @@ class SyncEngine:
                             )
                             continue
                         
+                        # Handle boolean False values from Odoo
+                        if record_write_date is False:
+                            self._logger.warning(
+                                "RECORD_FALSE_WRITE_DATE",
+                                model=model_config.odoo_model,
+                                batch_index=batches_processed,
+                                record_id=record_id,
+                                warning="Skipping FALSE write_date for checkpoint calculation",
+                            )
+                            continue
+                        
+                        # Handle empty string or non-string/non-datetime values
+                        if isinstance(record_write_date, bool):
+                            self._logger.warning(
+                                "RECORD_BOOL_WRITE_DATE",
+                                model=model_config.odoo_model,
+                                batch_index=batches_processed,
+                                record_id=record_id,
+                                record_write_date_type=type(record_write_date).__name__,
+                                warning="Skipping non-datetime write_date for checkpoint calculation",
+                            )
+                            continue
+                        
+                        if not isinstance(record_write_date, (str, datetime)):
+                            self._logger.warning(
+                                "RECORD_INVALID_WRITE_DATE",
+                                model=model_config.odoo_model,
+                                batch_index=batches_processed,
+                                record_id=record_id,
+                                record_write_date_type=type(record_write_date).__name__,
+                                record_write_date_value=repr(record_write_date),
+                                warning="Skipping invalid write_date type for checkpoint calculation",
+                            )
+                            continue
+                        
                         # Update checkpoint if this record has a higher write_date
-                        if last_write_date is None or record_write_date > last_write_date:
+                        # Add defensive check to prevent type comparison errors
+                        try:
+                            should_update = (last_write_date is None or record_write_date > last_write_date)
+                        except TypeError as e:
+                            self._logger.error(
+                                "WRITE_DATE_COMPARISON_ERROR",
+                                model=model_config.odoo_model,
+                                batch_index=batches_processed,
+                                record_id=record_id,
+                                record_write_date=record_write_date,
+                                record_write_date_type=type(record_write_date).__name__,
+                                last_write_date=last_write_date,
+                                last_write_date_type=type(last_write_date).__name__,
+                                error=str(e),
+                                warning="Skipping record due to comparison error",
+                            )
+                            continue
+                        
+                        if should_update:
                             self._logger.info(
                                 "MAX_WRITE_DATE_FOUND",
                                 model=model_config.odoo_model,
@@ -579,8 +634,18 @@ class SyncEngine:
                                 new_max_date=record_write_date,
                                 new_max_id=record_id,
                             )
-                            last_write_date = record_write_date
-                            last_id = record_id
+                            # Final validation: ensure we're not setting invalid values
+                            if isinstance(record_write_date, (str, datetime)) and record_write_date:
+                                last_write_date = record_write_date
+                                last_id = record_id
+                            else:
+                                self._logger.warning(
+                                    "SKIPPING_INVALID_ASSIGNMENT",
+                                    model=model_config.odoo_model,
+                                    record_id=record_id,
+                                    record_write_date=record_write_date,
+                                    warning="Not updating checkpoint with invalid value",
+                                )
                         # If same write_date, use max id
                         elif record_write_date == last_write_date and record_id > (last_id or 0):
                             self._logger.info(
