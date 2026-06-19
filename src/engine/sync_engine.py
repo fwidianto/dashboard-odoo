@@ -524,11 +524,35 @@ class SyncEngine:
                     batch_last_id = batch_last_record.get("id")
                     if sync_date_field and sync_date_field.odoo_field in batch_last_record:
                         batch_last_write_date = batch_last_record[sync_date_field.odoo_field]
+                        # CRITICAL TRACE: Log every write_date assignment
+                        self._logger.info(
+                            "TRACE_WRITE_DATE_ASSIGNMENT",
+                            model=model_config.odoo_model,
+                            location="sync_engine.py:526",
+                            batch_index=batches_processed,
+                            record_id=batch_last_id,
+                            batch_last_write_date=batch_last_write_date,
+                            batch_last_write_date_type=type(batch_last_write_date).__name__,
+                            current_last_write_date=last_write_date,
+                            current_last_id=last_id,
+                        )
+
                         
                         # UPDATE: Use MAX to track the highest write_date seen
                         if last_write_date is None or batch_last_write_date > last_write_date:
+                            old_value = last_write_date
                             last_write_date = batch_last_write_date
                             last_id = batch_last_id
+                            self._logger.info(
+                                "TRACE_WRITE_DATE_CHANGED",
+                                model=model_config.odoo_model,
+                                location="sync_engine.py:530",
+                                batch_index=batches_processed,
+                                old_last_write_date=old_value,
+                                new_last_write_date=last_write_date,
+                                new_last_id=last_id,
+                                reason="batch_last_write_date > last_write_date",
+                            )
                             
                         # Also track MAX id for same write_date
                         if batch_last_write_date == last_write_date and batch_last_id > (last_id or 0):
