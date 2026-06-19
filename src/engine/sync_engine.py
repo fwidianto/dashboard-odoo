@@ -517,64 +517,54 @@ class SyncEngine:
                         failed_count=errors,
                     )
 
-                # Track last record for state update
-                # CRITICAL: Track MAX write_date across ALL batches, not just last batch
-                if batch:
-                    batch_last_record = batch[-1]
-                    batch_last_id = batch_last_record.get("id")
-                    if sync_date_field and sync_date_field.odoo_field in batch_last_record:
-                        batch_last_write_date = batch_last_record[sync_date_field.odoo_field]
-                        # CRITICAL TRACE: Log every write_date assignment
-                        self._logger.info(
-                            "TRACE_WRITE_DATE_ASSIGNMENT",
-                            model=model_config.odoo_model,
-                            location="sync_engine.py:526",
-                            batch_index=batches_processed,
-                            record_id=batch_last_id,
-                            batch_last_write_date=batch_last_write_date,
-                            batch_last_write_date_type=type(batch_last_write_date).__name__,
-                            current_last_write_date=last_write_date,
-                            current_last_id=last_id,
-                        )
-
+                # CRITICAL: Track MAX write_date across ALL records in ALL batches
+                # Do NOT use batch[-1] - examine every record
+                if sync_date_field and batch:
+                    write_date_field = sync_date_field.odoo_field
+                    for record in batch:
+                        record_id = record.get("id")
+                        record_write_date = record.get(write_date_field)
                         
-                        # UPDATE: Use MAX to track the highest write_date seen
-                        if last_write_date is None or batch_last_write_date > last_write_date:
-                            old_value = last_write_date
-                            last_write_date = batch_last_write_date
-                            last_id = batch_last_id
-                            self._logger.info(
-                                "TRACE_WRITE_DATE_CHANGED",
-                                model=model_config.odoo_model,
-                                location="sync_engine.py:530",
-                                batch_index=batches_processed,
-                                old_last_write_date=old_value,
-                                new_last_write_date=last_write_date,
-                                new_last_id=last_id,
-                                reason="batch_last_write_date > last_write_date",
-                            )
-                            
-                        # Also track MAX id for same write_date
-                        if batch_last_write_date == last_write_date and batch_last_id > (last_id or 0):
-                            last_id = batch_last_id
-                        
-                        self._logger.debug(
-                            "Updated last_write_date",
-                            model=model_config.odoo_model,
-                            last_write_date=last_write_date,
-                            last_id=last_id,
-                            batch_last_write_date=batch_last_write_date,
-                            batch_last_id=batch_last_id,
-                        )
-                    
-                    batches_processed += 1
+                        if record_write_date is not None:
+                            # Update checkpoint if this record has a higher write_date
+                            if last_write_date is None or record_write_date > last_write_date:
+                                self._logger.info(
+                                    "MAX_WRITE_DATE_FOUND",
+                                    model=model_config.odoo_model,
+                                    batch_index=batches_processed,
+                                    record_id=record_id,
+                                    record_write_date=record_write_date,
+                                    old_max_date=last_write_date,
+                                    old_max_id=last_id,
+                                    new_max_date=record_write_date,
+                                    new_max_id=record_id,
+                                )
+                                last_write_date = record_write_date
+                                last_id = record_id
+                            # If same write_date, use max id
+                            elif record_write_date == last_write_date and record_id > (last_id or 0):
+                                self._logger.info(
+                                    "MAX_ID_FOR_SAME_DATE",
+                                    model=model_config.odoo_model,
+                                    batch_index=batches_processed,
+                                    record_id=record_id,
+                                    same_date=record_write_date,
+                                    old_max_id=last_id,
+                                    new_max_id=record_id,
+                                )
+                                last_id = record_id
 
-                self._logger.debug(
+                batches_processed += 1
+
+                self._logger.info(
                     "Batch processed",
                     model=model_config.odoo_model,
+                    batch_index=batches_processed,
                     batch_size=len(batch),
                     total_synced=records_synced,
                     batches_total=batches_processed,
+                    current_max_write_date=last_write_date,
+                    current_max_id=last_id,
                 )
 
             # Handle deletion strategy
