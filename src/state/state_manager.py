@@ -92,11 +92,12 @@ class StateManager:
         current_state = self._pg_client.get_sync_state(model_config.odoo_model)
         
         if current_state:
-            # Preserve existing last_sync_date - only update status
+            # Preserve existing last_sync_date AND last_sync_id - only update status
             self._pg_client.update_sync_state(
                 model_name=model_config.odoo_model,
                 table_name=model_config.postgres_table,
                 last_sync_date=current_state.get("last_sync_date"),  # PRESERVE!
+                last_sync_id=current_state.get("last_sync_id"),      # PRESERVE! (BUG FIX)
                 status=SyncStatus.RUNNING.value,
             )
         else:
