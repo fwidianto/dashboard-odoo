@@ -865,7 +865,10 @@ class SyncEngine:
         Returns:
             List of SyncResult for each model.
         """
-        print(f"[DEBUG] sync_all called: record_limit={record_limit}")
+        self._logger.debug(
+            "Sync all called",
+            record_limit=record_limit,
+        )
         self._logger.info(
             "Starting sync all",
             full_sync=full_sync,
