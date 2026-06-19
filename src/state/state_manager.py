@@ -84,14 +84,29 @@ class StateManager:
         """
         Mark a sync operation as started.
 
-        Args:
-            model_config: Model configuration.
+        IMPORTANT: This only updates the status to 'running'. It does NOT
+        update last_sync_date because that would overwrite the timestamp
+        from the previous successful sync.
         """
-        self._pg_client.update_sync_state(
-            model_name=model_config.odoo_model,
-            table_name=model_config.postgres_table,
-            status=SyncStatus.RUNNING.value,
-        )
+        # First, get the current state to preserve last_sync_date
+        current_state = self._pg_client.get_sync_state(model_config.odoo_model)
+        
+        if current_state:
+            # Preserve existing last_sync_date - only update status
+            self._pg_client.update_sync_state(
+                model_name=model_config.odoo_model,
+                table_name=model_config.postgres_table,
+                last_sync_date=current_state.get("last_sync_date"),  # PRESERVE!
+                status=SyncStatus.RUNNING.value,
+            )
+        else:
+            # No existing state - create new one without last_sync_date
+            self._pg_client.update_sync_state(
+                model_name=model_config.odoo_model,
+                table_name=model_config.postgres_table,
+                status=SyncStatus.RUNNING.value,
+            )
+        
         self._logger.info("Sync started", model=model_config.odoo_model)
 
     def mark_sync_completed(
@@ -148,14 +163,16 @@ class StateManager:
         """
         Mark a sync operation as failed.
 
-        Args:
-            model_config: Model configuration.
-            error: Error message.
-            record_count: Records synced before failure.
+        IMPORTANT: This preserves the last_sync_date from the previous
+        successful sync. Only the status and error_message are updated.
         """
+        # Get current state to preserve last_sync_date
+        current_state = self._pg_client.get_sync_state(model_config.odoo_model)
+        
         self._pg_client.update_sync_state(
             model_name=model_config.odoo_model,
             table_name=model_config.postgres_table,
+            last_sync_date=current_state.get("last_sync_date") if current_state else None,  # PRESERVE!
             record_count=record_count,
             status=SyncStatus.FAILED.value,
             error_message=error,

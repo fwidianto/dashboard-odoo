@@ -427,5 +427,173 @@ class TestSQLQueries:
         )
 
 
+class TestSyncStatePreservation:
+    """
+    Test that last_sync_date is preserved across sync operations.
+    
+    ROOT CAUSE BUG: mark_sync_started() was overwriting last_sync_date to NULL
+    because the UPSERT was updating ALL fields including last_sync_date.
+    
+    FIX: mark_sync_started() now preserves last_sync_date from previous sync.
+    """
+
+    def test_mark_sync_started_preserves_last_sync_date(self):
+        """
+        Verify that mark_sync_started() does NOT overwrite last_sync_date.
+        
+        This was the root cause bug - mark_sync_started() was calling
+        update_sync_state() without passing last_sync_date, which caused
+        the UPSERT to set last_sync_date = NULL.
+        """
+        from src.state.state_manager import StateManager
+        
+        # Track what gets saved
+        saved_states = []
+        
+        mock_pg = MagicMock()
+        
+        def track_update_sync_state(**kwargs):
+            saved_states.append(kwargs.copy())
+        
+        mock_pg.update_sync_state.side_effect = track_update_sync_state
+        mock_pg.get_sync_state.return_value = {
+            "model_name": "sale.order",
+            "last_sync_date": datetime(2026, 6, 18, 9, 53, 54),  # From previous sync
+            "status": "completed",
+        }
+        
+        state_mgr = StateManager(mock_pg)
+        
+        mock_model_config = MagicMock()
+        mock_model_config.odoo_model = "sale.order"
+        mock_model_config.postgres_table = "sale_order"
+        
+        # Call mark_sync_started
+        state_mgr.mark_sync_started(mock_model_config)
+        
+        # Verify that last_sync_date was PRESERVED
+        assert len(saved_states) == 1, "update_sync_state should be called once"
+        
+        saved_kwargs = saved_states[0]
+        assert "last_sync_date" in saved_kwargs, (
+            "last_sync_date should be passed to preserve it"
+        )
+        assert saved_kwargs["last_sync_date"] == datetime(2026, 6, 18, 9, 53, 54), (
+            f"last_sync_date should be preserved, got: {saved_kwargs['last_sync_date']}"
+        )
+        assert saved_kwargs["status"] == "running", (
+            "status should be set to running"
+        )
+
+    def test_mark_sync_failed_preserves_last_sync_date(self):
+        """
+        Verify that mark_sync_failed() does NOT overwrite last_sync_date.
+        """
+        from src.state.state_manager import StateManager
+        
+        saved_states = []
+        
+        mock_pg = MagicMock()
+        
+        def track_update_sync_state(**kwargs):
+            saved_states.append(kwargs.copy())
+        
+        mock_pg.update_sync_state.side_effect = track_update_sync_state
+        mock_pg.get_sync_state.return_value = {
+            "model_name": "sale.order",
+            "last_sync_date": datetime(2026, 6, 18, 9, 53, 54),  # From previous sync
+            "status": "completed",
+        }
+        
+        state_mgr = StateManager(mock_pg)
+        
+        mock_model_config = MagicMock()
+        mock_model_config.odoo_model = "sale.order"
+        mock_model_config.postgres_table = "sale_order"
+        
+        # Call mark_sync_failed
+        state_mgr.mark_sync_failed(
+            mock_model_config,
+            error="Connection timeout",
+            record_count=500,
+        )
+        
+        # Verify that last_sync_date was PRESERVED
+        assert len(saved_states) == 1, "update_sync_state should be called once"
+        
+        saved_kwargs = saved_states[0]
+        assert saved_kwargs["last_sync_date"] == datetime(2026, 6, 18, 9, 53, 54), (
+            f"last_sync_date should be preserved on failure, got: {saved_kwargs['last_sync_date']}"
+        )
+        assert saved_kwargs["status"] == "failed", (
+            "status should be set to failed"
+        )
+        assert saved_kwargs["error_message"] == "Connection timeout"
+
+    def test_incremental_sync_reads_preserved_last_sync_date(self):
+        """
+        End-to-end test: Verify that after Run #1 completes and Run #2 starts,
+        the last_sync_date is preserved and used for incremental filtering.
+        
+        This test proves the fix for the reported bug where:
+        - Run #1: last_sync_date saved as 2026-06-18 09:53:54
+        - Run #2: mark_sync_started() was overwriting it to NULL
+        - Result: get_last_sync_date() returned NULL, causing full sync
+        """
+        from src.state.state_manager import StateManager
+        
+        # Simulate what happens across two runs
+        saved_states = []
+        
+        mock_pg = MagicMock()
+        
+        def track_update_sync_state(**kwargs):
+            saved_states.append(kwargs.copy())
+            # Update the mock to return what was just saved
+            mock_pg.get_sync_state.return_value = {
+                "model_name": kwargs["model_name"],
+                "last_sync_date": kwargs.get("last_sync_date"),
+                "status": kwargs.get("status"),
+            }
+        
+        mock_pg.update_sync_state.side_effect = track_update_sync_state
+        
+        state_mgr = StateManager(mock_pg)
+        
+        mock_model_config = MagicMock()
+        mock_model_config.odoo_model = "sale.order"
+        mock_model_config.postgres_table = "sale_order"
+        
+        # === RUN #1 COMPLETES ===
+        mock_pg.get_sync_state.return_value = None  # No existing state
+        
+        result1 = MagicMock()
+        result1.end_time = datetime(2026, 6, 18, 9, 53, 54)
+        result1.records_synced = 1200
+        result1.success = True
+        
+        state_mgr.mark_sync_completed(mock_model_config, result1)
+        
+        # Verify Run #1 saved the timestamp
+        assert saved_states[-1]["last_sync_date"] == datetime(2026, 6, 18, 9, 53, 54)
+        assert saved_states[-1]["status"] == "completed"
+        
+        # === RUN #2 STARTS ===
+        # This is where the bug was occurring!
+        state_mgr.mark_sync_started(mock_model_config)
+        
+        # Verify Run #2's mark_sync_started PRESERVED the timestamp
+        assert saved_states[-1]["last_sync_date"] == datetime(2026, 6, 18, 9, 53, 54), (
+            "BUG: last_sync_date was overwritten to NULL!"
+        )
+        assert saved_states[-1]["status"] == "running"
+        
+        # === VERIFY INCREMENTAL SYNC CAN READ IT ===
+        last_sync = state_mgr.get_last_sync_date("sale.order")
+        assert last_sync == datetime(2026, 6, 18, 9, 53, 54), (
+            f"Incremental sync should read preserved timestamp, got: {last_sync}"
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
