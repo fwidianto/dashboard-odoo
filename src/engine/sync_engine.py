@@ -290,6 +290,7 @@ class SyncEngine:
             # Determine domain filter for incremental sync
             domain = []
             last_sync_date = None
+            last_sync_id = None
             sync_date_field_name = sync_date_field.odoo_field if sync_date_field else None
             
             if not full_sync and sync_date_field:
@@ -300,23 +301,49 @@ class SyncEngine:
                     action="get_last_sync_date",
                 )
                 last_sync_date = self._state_mgr.get_last_sync_date(model_config.odoo_model)
+                last_sync_id = self._state_mgr.get_last_sync_id(model_config.odoo_model)
                 
                 # CRITICAL DEBUG: Log what we read
                 self._logger.info(
                     "SYNC STATE READ",
                     model=model_config.odoo_model,
                     last_sync_date_read=last_sync_date,
-                    type=type(last_sync_date).__name__,
+                    last_sync_id_read=last_sync_id,
                 )
                 
-                if last_sync_date:
+                if last_sync_date is not None:
                     date_str = last_sync_date.strftime("%Y-%m-%d %H:%M:%S")
-                    domain = [(sync_date_field.odoo_field, ">=", date_str)]
-                    self._logger.info(
-                        "INCREMENTAL FILTER GENERATED",
-                        model=model_config.odoo_model,
-                        domain=domain,
-                    )
+                    
+                    # Build proper incremental domain using (date, id) watermark:
+                    # Fetch records where:
+                    #   write_date > last_sync_date
+                    #   OR (write_date = last_sync_date AND id > last_sync_id)
+                    if last_sync_id is not None:
+                        # Full watermark: use date + id
+                        domain = [
+                            "|",
+                            (sync_date_field.odoo_field, ">", date_str),
+                            "&",
+                            (sync_date_field.odoo_field, "=", date_str),
+                            ("id", ">", last_sync_id),
+                        ]
+                        self._logger.info(
+                            "INCREMENTAL FILTER GENERATED",
+                            model=model_config.odoo_model,
+                            last_sync_date=date_str,
+                            last_sync_id=last_sync_id,
+                            domain=domain,
+                        )
+                    else:
+                        # First incremental run (only date available) - fall back to simple filter
+                        domain = [(sync_date_field.odoo_field, ">=", date_str)]
+                        self._logger.info(
+                            "INCREMENTAL FILTER GENERATED (date only)",
+                            model=model_config.odoo_model,
+                            last_sync_date=date_str,
+                            last_sync_id=None,
+                            domain=domain,
+                        )
                 else:
                     # Log why incremental is falling back to full sync
                     self._logger.warning(
@@ -536,10 +563,12 @@ class SyncEngine:
             if last_write_date:
                 parsed_end_time = self._parse_datetime(last_write_date)
                 result.end_time = parsed_end_time
+                result.last_sync_id = last_id  # Watermark for incremental sync
                 self._logger.info(
-                    "Setting result.end_time",
+                    "Setting result.end_time and last_sync_id",
                     model=model_config.odoo_model,
                     end_time=parsed_end_time,
+                    last_sync_id=last_id,
                 )
 
             self._state_mgr.mark_sync_completed(model_config, result)

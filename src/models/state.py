@@ -121,6 +121,7 @@ class SyncResult(BaseModel):
     start_time: datetime = Field(default_factory=datetime.utcnow)
     end_time: Optional[datetime] = None
     duration_seconds: Optional[float] = None
+    last_sync_id: Optional[int] = None  # Watermark for incremental sync
     
     # Counts for audit
     odoo_count_before: int = 0

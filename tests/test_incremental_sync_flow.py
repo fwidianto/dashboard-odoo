@@ -140,6 +140,7 @@ class TestIncrementalSyncStateFlow:
             engine._state_mgr = MagicMock()
             # Return a valid last_sync_date
             engine._state_mgr.get_last_sync_date.return_value = datetime(2026, 6, 18, 12, 30, 0)
+            engine._state_mgr.get_last_sync_id.return_value = 102  # Watermark id
             engine._pg = MagicMock()
             engine._pg.get_table_row_count.return_value = 100
             engine._config = MagicMock()
@@ -166,11 +167,14 @@ class TestIncrementalSyncStateFlow:
             
             # Check the domain parameter
             domain_passed = read_batched_calls[0][1].get('domain', [])
-            expected_domain = [("write_date", ">=", "2026-06-18 12:30:00")]
+            # With (date, id) watermark strategy, domain includes last_sync_id
+            # Domain should be: ["|", (">", date), "&", ("=", date), ("id", ">", 102)]
             
-            assert domain_passed == expected_domain, (
-                f"Expected domain {expected_domain}, got: {domain_passed}"
-            )
+            # Verify domain structure (with watermark strategy)
+            assert domain_passed[0] == "|", "First element should be OR"
+            assert ("write_date", ">", "2026-06-18 12:30:00") in domain_passed
+            assert ("write_date", "=", "2026-06-18 12:30:00") in domain_passed
+            assert ("id", ">", 102) in domain_passed
 
     def test_end_to_end_incremental_flow(self):
         """
@@ -725,6 +729,153 @@ class TestGetSyncStateSQL:
         assert last_sync is None, (
             f"get_last_sync_date should return None when last_sync_date is NULL, got: {last_sync}"
         )
+
+
+class TestWatermarkStrategy:
+    """
+    Test the (last_sync_date, last_sync_id) watermark strategy.
+    
+    Problem: If all synced records share the same timestamp:
+      id=100 write_date=09:53:54
+      id=101 write_date=09:53:54  
+      id=102 write_date=09:53:54
+    
+    Old strategy: last_sync_date = 09:53:54
+                  Next query: write_date >= '09:53:54' → Returns same 3 records again!
+    
+    New strategy: last_sync_date = 09:53:54, last_sync_id = 102
+                  Next query: (write_date > '09:53:54') OR (write_date = '09:53:54' AND id > 102)
+                  Result: Returns 0 records (correct!)
+    """
+
+    def test_watermark_prevents_duplicate_processing(self):
+        """
+        Test that the (date, id) watermark prevents processing same records again.
+        """
+        # Simulate what happens when all records have same timestamp
+        last_sync_date = datetime(2026, 6, 18, 9, 53, 54)
+        last_sync_id = 102  # Last ID from previous sync
+        
+        # Build domain with watermark
+        domain = [
+            "|",
+            ("write_date", ">", last_sync_date),
+            "&",
+            ("write_date", "=", last_sync_date),
+            ("id", ">", last_sync_id),
+        ]
+        
+        # Simulate records with same timestamp
+        records = [
+            {"id": 100, "write_date": "2026-06-18 09:53:54"},
+            {"id": 101, "write_date": "2026-06-18 09:53:54"},
+            {"id": 102, "write_date": "2026-06-18 09:53:54"},
+        ]
+        
+        # Apply domain filter
+        def matches_domain(record):
+            wd = record["write_date"]
+            iid = record["id"]
+            # (wd > last_sync_date) OR (wd == last_sync_date AND id > last_sync_id)
+            return wd > str(last_sync_date) or (wd == str(last_sync_date) and iid > last_sync_id)
+        
+        matching = [r for r in records if matches_domain(r)]
+        
+        # Should return 0 records (all have id <= last_sync_id)
+        assert len(matching) == 0, (
+            f"Watermark should prevent duplicate processing, got {len(matching)} records"
+        )
+
+    def test_watermark_catches_new_records(self):
+        """
+        Test that the (date, id) watermark correctly captures new records.
+        """
+        last_sync_date = datetime(2026, 6, 18, 9, 53, 54)
+        last_sync_id = 102
+        
+        # New records that should be synced
+        new_records = [
+            {"id": 103, "write_date": "2026-06-18 09:53:54"},  # Same date, new id
+            {"id": 104, "write_date": "2026-06-18 10:00:00"},  # New date
+        ]
+        
+        def matches_domain(record):
+            wd = record["write_date"]
+            iid = record["id"]
+            return wd > str(last_sync_date) or (wd == str(last_sync_date) and iid > last_sync_id)
+        
+        matching = [r for r in new_records if matches_domain(r)]
+        
+        # Should return both new records
+        assert len(matching) == 2, (
+            f"Watermark should capture new records, got {len(matching)}: {matching}"
+        )
+
+    def test_sync_result_contains_last_sync_id(self):
+        """
+        Test that SyncResult can hold the last_sync_id watermark.
+        """
+        from src.models.state import SyncResult
+        
+        result = SyncResult(
+            model_name="sale.order",
+            table_name="sale_order",
+        )
+        
+        # Initially None
+        assert result.last_sync_id is None
+        
+        # Set watermark
+        result.last_sync_id = 102
+        result.end_time = datetime(2026, 6, 18, 9, 53, 54)
+        
+        assert result.last_sync_id == 102
+        assert result.end_time == datetime(2026, 6, 18, 9, 53, 54)
+
+    def test_mark_sync_completed_saves_watermark(self):
+        """
+        Test that mark_sync_completed saves both last_sync_date and last_sync_id.
+        """
+        from src.state.state_manager import StateManager
+        from src.models.state import SyncResult
+        
+        saved_states = []
+        
+        mock_pg = MagicMock()
+        
+        def track_update_sync_state(**kwargs):
+            saved_states.append(kwargs.copy())
+        
+        mock_pg.update_sync_state.side_effect = track_update_sync_state
+        
+        state_mgr = StateManager(mock_pg)
+        
+        mock_model_config = MagicMock()
+        mock_model_config.odoo_model = "sale.order"
+        mock_model_config.postgres_table = "sale_order"
+        
+        # Create result with watermark
+        result = SyncResult(
+            model_name="sale.order",
+            table_name="sale_order",
+            success=True,
+            records_synced=350,
+            end_time=datetime(2026, 6, 18, 9, 53, 54),
+            last_sync_id=102,  # Watermark: max id at that timestamp
+        )
+        
+        # Mark as completed
+        state_mgr.mark_sync_completed(mock_model_config, result)
+        
+        # Verify both values were saved
+        assert len(saved_states) == 1
+        saved = saved_states[0]
+        assert saved["last_sync_date"] == datetime(2026, 6, 18, 9, 53, 54)
+        assert saved["last_sync_id"] == 102
+        assert saved["status"] == "completed"
+
+
+
 
 
 if __name__ == "__main__":

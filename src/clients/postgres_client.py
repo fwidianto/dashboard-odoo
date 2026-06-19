@@ -577,7 +577,17 @@ class PostgresClient:
             # Check if NULL constraint migration is needed
             current_nullable = current_col.get("nullable", True)
             expected_nullable = field.nullable
-            if self._needs_null_constraint_migration(
+            
+            # SKIP nullable migration for primary key columns
+            # Primary keys MUST remain NOT NULL
+            if col_name == "id" or field.primary_key:
+                self._logger.info(
+                    "Skipping NULL constraint migration for primary key",
+                    table=model_config.postgres_table,
+                    column=col_name,
+                    reason="Primary key columns must remain NOT NULL",
+                )
+            elif self._needs_null_constraint_migration(
                 model_config.postgres_table,
                 col_name,
                 current_nullable,

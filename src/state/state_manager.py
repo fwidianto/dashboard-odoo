@@ -122,11 +122,12 @@ class StateManager:
             result: Sync result with statistics.
         """
         # Get the last record's write_date
-        last_sync_date = None
-        last_sync_id = None
+        # Use result's end_time and last_sync_id for watermark
+        last_sync_date = result.end_time
+        last_sync_id = result.last_sync_id
         
-        if result.end_time:
-            last_sync_date = result.end_time
+        # Use result's end_time and last_sync_id for watermark
+        last_sync_date = result.end_time
         
         self._logger.info(
             "SAVING SYNC STATE",
