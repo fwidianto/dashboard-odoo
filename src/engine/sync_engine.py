@@ -518,16 +518,29 @@ class SyncEngine:
                     )
 
                 # Track last record for state update
+                # CRITICAL: Track MAX write_date across ALL batches, not just last batch
                 if batch:
-                    last_record = batch[-1]
-                    last_id = last_record.get("id")
-                    if sync_date_field and sync_date_field.odoo_field in last_record:
-                        last_write_date = last_record[sync_date_field.odoo_field]
+                    batch_last_record = batch[-1]
+                    batch_last_id = batch_last_record.get("id")
+                    if sync_date_field and sync_date_field.odoo_field in batch_last_record:
+                        batch_last_write_date = batch_last_record[sync_date_field.odoo_field]
+                        
+                        # UPDATE: Use MAX to track the highest write_date seen
+                        if last_write_date is None or batch_last_write_date > last_write_date:
+                            last_write_date = batch_last_write_date
+                            last_id = batch_last_id
+                            
+                        # Also track MAX id for same write_date
+                        if batch_last_write_date == last_write_date and batch_last_id > (last_id or 0):
+                            last_id = batch_last_id
+                        
                         self._logger.debug(
                             "Updated last_write_date",
                             model=model_config.odoo_model,
                             last_write_date=last_write_date,
                             last_id=last_id,
+                            batch_last_write_date=batch_last_write_date,
+                            batch_last_id=batch_last_id,
                         )
                     
                     batches_processed += 1
@@ -560,6 +573,16 @@ class SyncEngine:
                 batches_processed=batches_processed,
             )
             
+            # FINAL CHECKPOINT LOGGING
+            self._logger.info(
+                "CHECKPOINT DECISION",
+                model=model_config.odoo_model,
+                total_records_synced=records_synced,
+                final_last_write_date=last_write_date,
+                final_last_id=last_id,
+                final_checkpoint=f"date={last_write_date}, id={last_id}",
+            )
+
             if last_write_date:
                 parsed_end_time = self._parse_datetime(last_write_date)
                 result.end_time = parsed_end_time
