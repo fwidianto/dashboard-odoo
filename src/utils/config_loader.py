@@ -499,6 +499,10 @@ class ConfigLoader:
         
         Merges explicit field configs with auto-detected ones,
         allowing overrides while validating against Odoo schema.
+        
+        IMPORTANT: For nested paths like "order_id.name", only the base field
+        ("order_id") is validated against Odoo. The full path is resolved at
+        runtime via the transformation engine's PathResolver.
         """
         from src.utils.logging import get_logger
         logger = get_logger("config_loader")
@@ -508,41 +512,114 @@ class ConfigLoader:
         
         result = []
 
+        def get_base_field(field_path: str) -> str:
+            """Extract base field name from path (before first dot)."""
+            return field_path.split('.')[0]
+
+        def is_nested_path(field_path: str) -> bool:
+            """Check if field path contains dot notation."""
+            return '.' in field_path
+
         # Handle new dict format: { technical_name: display_name }
         if isinstance(explicit_fields, dict):
             for tech_name, display_name in explicit_fields.items():
                 if isinstance(tech_name, str) and isinstance(display_name, str):
-                    if tech_name in auto_lookup:
+                    base_field = get_base_field(tech_name)
+                    
+                    if is_nested_path(tech_name):
+                        # Nested path like "order_id.name" - validate base only
+                        if base_field in auto_lookup:
+                            field_config = {**auto_lookup[base_field]}
+                            field_config['display_name'] = display_name
+                            # Keep full path for transformation engine
+                            field_config['full_path'] = tech_name
+                            field_config['is_nested_path'] = True
+                            result.append(field_config)
+                        else:
+                            # Base field not found - still include with warning
+                            # The transformation engine will handle runtime resolution
+                            logger.warning(
+                                f"Base field '{base_field}' for nested path '{tech_name}' "
+                                f"not found in Odoo. Nested resolution may fail at runtime."
+                            )
+                    elif tech_name in auto_lookup:
+                        # Simple field - validate normally
                         field_config = {**auto_lookup[tech_name]}
                         field_config['display_name'] = display_name
                         result.append(field_config)
                     else:
-                        logger.warning(f"Field '{tech_name}' not found in Odoo, skipping")
+                        # Field not found - include with warning but don't skip
+                        # Let it through for potential Odoo custom fields
+                        logger.warning(
+                            f"Field '{tech_name}' not found in Odoo. "
+                            f"Including anyway - may be custom field."
+                        )
+                        result.append({
+                            'odoo_field': tech_name,
+                            'postgres_column': tech_name.replace('.', '_'),
+                            'postgres_type': 'TEXT',
+                            'nullable': True,
+                        })
             return result
 
         for field in explicit_fields:
             if isinstance(field, str):
                 # Simple field name - use auto-detected config
                 field_name = field.strip()
-                if field_name in auto_lookup:
+                base_field = get_base_field(field_name)
+                
+                if is_nested_path(field_name):
+                    # Nested path - validate base field only
+                    if base_field in auto_lookup:
+                        field_config = {**auto_lookup[base_field]}
+                        field_config['full_path'] = field_name
+                        field_config['is_nested_path'] = True
+                        result.append(field_config)
+                    else:
+                        # Base not found - include anyway
+                        logger.warning(
+                            f"Base field '{base_field}' for nested path '{field_name}' "
+                            f"not found in Odoo. Nested resolution may fail."
+                        )
+                elif field_name in auto_lookup:
                     result.append(auto_lookup[field_name])
                 else:
-                    logger.warning(f"Explicit field '{field_name}' not found in Odoo, skipping")
+                    # Field not found - include anyway
+                    logger.warning(
+                        f"Field '{field_name}' not found in Odoo. "
+                        f"Including anyway - may be custom field."
+                    )
+                    result.append({
+                        'odoo_field': field_name,
+                        'postgres_column': field_name,
+                        'postgres_type': 'TEXT',
+                        'nullable': True,
+                    })
             elif isinstance(field, dict):
                 # Full or partial field definition
                 field_name = field.get('odoo_field')
                 if not field_name:
                     continue
                 
-                # Start with auto-detected config if exists
-                if field_name in auto_lookup:
-                    merged = {**auto_lookup[field_name], **field}
+                base_field = get_base_field(field_name)
+                
+                # Start with auto-detected config if exists (check base field)
+                if base_field in auto_lookup:
+                    merged = {**auto_lookup[base_field], **field}
+                    if is_nested_path(field_name):
+                        merged['full_path'] = field_name
+                        merged['is_nested_path'] = True
                     result.append(merged)
                 else:
-                    # Use explicit config (will be validated later)
+                    # Base field not found - include explicit config anyway
+                    # The transformation engine will handle runtime resolution
+                    logger.warning(
+                        f"Base field '{base_field}' for '{field_name}' not found in Odoo. "
+                        f"Including anyway - nested resolution may fail at runtime."
+                    )
                     result.append({
                         'odoo_field': field_name,
-                        'postgres_column': field.get('postgres_column', field_name),
+                        'postgres_column': field.get('postgres_column', field_name.replace('.', '_')),
                         'postgres_type': field.get('postgres_type', 'TEXT'),
                         'nullable': field.get('nullable', True),
                         'primary_key': field.get('primary_key', False),
@@ -978,7 +1055,12 @@ class ValidatedModelConfig:
     Model configuration with Odoo field validation.
     
     This class wraps ModelConfig and validates fields against actual Odoo fields
-    at initialization time. Invalid fields are skipped with warnings.
+    at initialization time. For nested paths like "order_id.name", only the base
+    field ("order_id") is validated. The full path is resolved at runtime via the
+    transformation engine's PathResolver.
+    
+    IMPORTANT: YAML defines OUTPUT schema, not Odoo schema. Fields are NEVER
+    skipped just because a nested path doesn't exist in Odoo's direct fields.
     """
 
     def __init__(self, model_config: ModelConfig, odoo_fields: dict):
@@ -996,19 +1078,73 @@ class ValidatedModelConfig:
         
         self._validate_and_filter_fields()
 
+    def _get_base_field(self, field_path: str) -> str:
+        """Extract base field name from path (before first dot)."""
+        return field_path.split('.')[0]
+
+    def _is_nested_path(self, field_path: str) -> bool:
+        """Check if field path contains dot notation."""
+        return '.' in field_path
+
     def _validate_and_filter_fields(self) -> None:
-        """Validate fields against Odoo and filter out invalid ones."""
+        """
+        Validate fields against Odoo and filter out invalid ones.
+        
+        For nested paths like "order_id.name":
+        - Only validate the base field ("order_id") against Odoo schema
+        - NEVER skip fields because nested path is not in Odoo schema
+        - Full path resolution happens at runtime via PathResolver
+        """
         from src.utils.logging import get_logger
         logger = get_logger("config_validation")
 
         for field in self._original_config.fields:
-            if field.odoo_field in self._odoo_fields:
-                # Sync nullable from Odoo's required flag
+            field_path = field.odoo_field
+            
+            # Check if this is a nested path
+            if self._is_nested_path(field_path):
+                base_field = self._get_base_field(field_path)
+                
+                if base_field in self._odoo_fields:
+                    # Base field exists - sync nullable from Odoo
+                    odoo_field_def = self._odoo_fields[base_field]
+                    odoo_required = odoo_field_def.get('required', False)
+                    expected_nullable = not odoo_required
+                    
+                    # Create a copy with updated nullable
+                    updated_field = field.model_copy()
+                    updated_field.nullable = expected_nullable
+                    # Store nested path info for transformation engine
+                    updated_field.is_nested_path = True
+                    self._valid_fields.append(updated_field)
+                    
+                    logger.debug(
+                        f"Nested path '{field_path}' validated via base field '{base_field}'. "
+                        f"Runtime resolution will fetch related record.",
+                        field=field_path,
+                        base_field=base_field,
+                        model=self._original_config.odoo_model,
+                    )
+                else:
+                    # Base field not found - include anyway for runtime resolution
+                    # The transformation engine may still resolve via other means
+                    logger.warning(
+                        f"Base field '{base_field}' for nested path '{field_path}' "
+                        f"not found in Odoo. Including anyway - runtime resolution may work.",
+                        field=field_path,
+                        base_field=base_field,
+                        model=self._original_config.odoo_model,
+                    )
+                    # Include with default config
+                    updated_field = field.model_copy()
+                    updated_field.is_nested_path = True
+                    self._valid_fields.append(updated_field)
+            elif field.odoo_field in self._odoo_fields:
+                # Simple field - validate normally
                 odoo_field_def = self._odoo_fields[field.odoo_field]
                 odoo_required = odoo_field_def.get('required', False)
                 expected_nullable = not odoo_required
                 
-                # Log if there's a mismatch and update nullable
                 if field.nullable != expected_nullable:
                     logger.info(
                         f"Syncing nullable from Odoo for '{field.odoo_field}': "
@@ -1018,22 +1154,22 @@ class ValidatedModelConfig:
                         was_nullable=field.nullable,
                         now_nullable=expected_nullable,
                     )
-                    # Create a copy with updated nullable
                     updated_field = field.model_copy()
                     updated_field.nullable = expected_nullable
                     self._valid_fields.append(updated_field)
                 else:
                     self._valid_fields.append(field)
             else:
-                # Field not found in Odoo - skip it gracefully
-                self._skipped_fields.append(field.odoo_field)
+                # Simple field not found - include anyway for potential custom fields
+                # NEVER skip fields
                 logger.warning(
-                    f"Field '{field.odoo_field}' not found on model '{self._original_config.odoo_model}'. "
-                    f"Skipping field and continuing sync.",
+                    f"Field '{field.odoo_field}' not found in Odoo. "
+                    f"Including anyway - may be custom field or nested path.",
                     field=field.odoo_field,
                     model=self._original_config.odoo_model,
                     postgres_column=field.postgres_column,
                 )
+                self._valid_fields.append(field)
 
     @property
     def odoo_model(self) -> str:
