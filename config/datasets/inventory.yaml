@@ -1,0 +1,138 @@
+# =============================================================================
+# Inventory Dataset Configuration
+# =============================================================================
+# Dataset definitions for inventory and stock analytics.
+# =============================================================================
+
+version: "1.0"
+
+datasets:
+  # -------------------------------------------------------------------------
+  # Current Stock Levels
+  # -------------------------------------------------------------------------
+  current_stock:
+    model: stock.quant
+    description: "Current inventory levels by product and location"
+    
+    active_only: true
+    order: "id desc"
+    limit: 10000
+    
+    columns:
+      quant_id:
+        path: id
+        label: "Quant ID"
+        type: integer
+      
+      product_id:
+        path: product_id
+        type: integer
+      
+      product_name:
+        path: product_id.name
+        label: "Product"
+      
+      product_code:
+        path: product_id.default_code
+        label: "Product Code"
+      
+      location_id:
+        path: location_id
+        type: integer
+      
+      lot_id:
+        path: lot_id
+        type: integer
+      
+      quantity:
+        path: quantity
+        label: "On Hand"
+        type: number
+        round: 2
+      
+      reserved_quantity:
+        path: reserved_quantity
+        label: "Reserved"
+        type: number
+        round: 2
+      
+      available_quantity:
+        compute: quantity - reserved_quantity
+        label: "Available"
+        type: number
+        round: 2
+      
+      # Cost from product
+      unit_cost:
+        path: product_id.standard_price
+        type: number
+        round: 2
+      
+      # Value calculation
+      inventory_value:
+        compute: available_quantity * unit_cost
+        label: "Inventory Value"
+        type: number
+        round: 2
+
+  # -------------------------------------------------------------------------
+  # Stock Movements
+  # -------------------------------------------------------------------------
+  stock_movements:
+    model: stock.move
+    description: "Stock movement history"
+    
+    domain: [['state', '=', 'done']]
+    order: "date desc"
+    limit: 5000
+    
+    columns:
+      move_id:
+        path: id
+        label: "Move ID"
+        type: integer
+      
+      reference:
+        path: name
+        label: "Reference"
+      
+      product_id:
+        path: product_id
+        type: integer
+      
+      product_name:
+        path: product_id.name
+        label: "Product"
+      
+      product_code:
+        path: product_id.default_code
+        label: "Product Code"
+      
+      quantity:
+        path: product_uom_qty
+        label: "Quantity"
+        type: number
+        round: 2
+      
+      state:
+        path: state
+        label: "State"
+      
+      location_from:
+        path: location_id
+        type: integer
+      
+      location_to:
+        path: location_dest_id
+        type: integer
+      
+      move_date:
+        path: date
+        label: "Date"
+        type: datetime
+        format: "%Y-%m-%d %H:%M:%S"
+      
+      is_transfer:
+        compute: location_from != location_to
+        label: "Is Transfer"
+        type: boolean

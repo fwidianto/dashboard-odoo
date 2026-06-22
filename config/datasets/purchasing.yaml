@@ -1,0 +1,150 @@
+# =============================================================================
+# Purchasing Dataset Configuration
+# =============================================================================
+# Dataset definitions for purchase order analytics.
+# =============================================================================
+
+version: "1.0"
+
+datasets:
+  # -------------------------------------------------------------------------
+  # Purchase Order Summary
+  # -------------------------------------------------------------------------
+  purchase_order_summary:
+    model: purchase.order
+    description: "Purchase order header data with vendor information"
+    
+    domain: [['state', 'in', ['purchase', 'done']]]
+    order: "date_order desc"
+    limit: 1000
+    
+    columns:
+      order_id:
+        path: id
+        label: "Order ID"
+        type: integer
+      
+      order_reference:
+        path: name
+        label: "PO Reference"
+      
+      order_date:
+        path: date_order
+        label: "Order Date"
+        type: date
+        format: "%Y-%m-%d"
+      
+      vendor_id:
+        path: partner_id
+        label: "Vendor ID"
+        type: integer
+      
+      vendor_name:
+        path: partner_id.name
+        label: "Vendor Name"
+      
+      vendor_email:
+        path: partner_id.email
+        label: "Vendor Email"
+      
+      total_amount:
+        path: amount_total
+        label: "Total Amount"
+        type: number
+        round: 2
+      
+      state:
+        path: state
+        label: "Status"
+
+  # -------------------------------------------------------------------------
+  # Purchase Order Lines
+  # -------------------------------------------------------------------------
+  purchase_order_lines:
+    model: purchase.order.line
+    description: "Purchase order line items with product and vendor details"
+    
+    domain: [['order_id.state', 'in', ['purchase', 'done']]]
+    order: "id desc"
+    limit: 5000
+    
+    columns:
+      line_id:
+        path: id
+        label: "Line ID"
+        type: integer
+      
+      order_id:
+        path: order_id
+        type: integer
+      
+      order_reference:
+        path: order_id.name
+        label: "PO Reference"
+      
+      order_date:
+        path: order_id.date_order
+        type: date
+      
+      vendor_id:
+        path: order_id.partner_id
+        type: integer
+      
+      vendor_name:
+        path: order_id.partner_id.name
+        label: "Vendor"
+      
+      product_id:
+        path: product_id
+        type: integer
+      
+      product_name:
+        path: product_id.name
+        label: "Product"
+      
+      product_code:
+        path: product_id.default_code
+        label: "Product Code"
+      
+      description:
+        path: name
+        label: "Description"
+      
+      quantity:
+        path: product_qty
+        label: "Quantity"
+        type: number
+        round: 2
+      
+      unit_cost:
+        path: price_unit
+        label: "Unit Cost"
+        type: number
+        round: 2
+      
+      line_total:
+        path: price_subtotal
+        label: "Line Total"
+        type: number
+        round: 2
+      
+      # Computed field: standard cost from product
+      standard_cost:
+        path: product_id.standard_price
+        label: "Standard Cost"
+        type: number
+        round: 2
+      
+      # Computed field: price variance
+      price_variance:
+        compute: unit_cost - standard_cost
+        label: "Price Variance"
+        type: number
+        round: 2
+      
+      # Computed field: variance percentage
+      variance_pct:
+        compute: (price_variance / standard_cost * 100) if standard_cost != 0 else 0
+        label: "Variance %"
+        type: number
+        round: 2

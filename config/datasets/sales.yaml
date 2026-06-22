@@ -1,0 +1,193 @@
+# =============================================================================
+# Sales Dataset Configuration
+# =============================================================================
+# This configuration defines dashboard datasets for sales analytics.
+# 
+# Key concepts:
+# - 'path' extracts values using dot notation (order_id.name = navigate to order, get name)
+# - 'compute' calculates values using other field names
+# - 'type' specifies output data type
+# =============================================================================
+
+version: "1.0"
+
+datasets:
+  # -------------------------------------------------------------------------
+  # Sales Order Summary
+  # -------------------------------------------------------------------------
+  sales_order_summary:
+    model: sale.order
+    description: "Sales order header data with customer information"
+    
+    # Odoo domain filter (only confirmed orders)
+    domain: [['state', 'in', ['sale', 'done']]]
+    
+    # Sort by date descending
+    order: "date_order desc"
+    
+    # Maximum records (0 = unlimited)
+    limit: 1000
+    
+    columns:
+      order_id:
+        path: id
+        label: "Order ID"
+        type: integer
+      
+      order_reference:
+        path: name
+        label: "Order Reference"
+      
+      order_date:
+        path: date_order
+        label: "Order Date"
+        type: date
+        format: "%Y-%m-%d"
+      
+      customer_id:
+        path: partner_id
+        label: "Customer ID"
+        type: integer
+      
+      customer_name:
+        path: partner_id.name
+        label: "Customer Name"
+      
+      customer_email:
+        path: partner_id.email
+        label: "Customer Email"
+      
+      total_amount:
+        path: amount_total
+        label: "Total Amount"
+        type: number
+        round: 2
+      
+      state:
+        path: state
+        label: "Status"
+      
+      delivery_status:
+        path: x_studio_delivery_status
+        label: "Delivery Status"
+      
+      invoice_status:
+        path: x_studio_invoice_status
+        label: "Invoice Status"
+
+  # -------------------------------------------------------------------------
+  # Sales Order Lines
+  # -------------------------------------------------------------------------
+  sales_order_lines:
+    model: sale.order.line
+    description: "Sales order line items with product and order details"
+    
+    # Only include confirmed orders
+    domain: [['order_id.state', 'in', ['sale', 'done']]]
+    order: "id desc"
+    limit: 5000
+    
+    columns:
+      line_id:
+        path: id
+        label: "Line ID"
+        type: integer
+      
+      order_id:
+        path: order_id
+        label: "Order ID"
+        type: integer
+      
+      order_reference:
+        path: order_id.name
+        label: "Order Reference"
+      
+      order_date:
+        path: order_id.date_order
+        label: "Order Date"
+        type: date
+      
+      customer_id:
+        path: order_id.partner_id
+        type: integer
+      
+      customer_name:
+        path: order_id.partner_id.name
+        label: "Customer"
+      
+      product_id:
+        path: product_id
+        label: "Product ID"
+        type: integer
+      
+      product_name:
+        path: product_id.name
+        label: "Product"
+      
+      product_code:
+        path: product_id.default_code
+        label: "Product Code"
+      
+      description:
+        path: name
+        label: "Description"
+      
+      quantity:
+        path: product_uom_qty
+        label: "Quantity"
+        type: number
+        round: 2
+      
+      unit_price:
+        path: price_unit
+        label: "Unit Price"
+        type: number
+        round: 2
+      
+      line_revenue:
+        path: price_subtotal
+        label: "Line Revenue"
+        type: number
+        round: 2
+      
+      computed_revenue:
+        compute: quantity * unit_price
+        label: "Computed Revenue"
+        type: number
+        round: 2
+      
+      revenue_match:
+        compute: abs(line_revenue - computed_revenue) < 0.01
+        label: "Revenue Matches"
+        type: boolean
+
+  # -------------------------------------------------------------------------
+  # Sales by Customer
+  # -------------------------------------------------------------------------
+  sales_by_customer:
+    model: sale.order
+    description: "Aggregated sales data by customer"
+    
+    domain: [['state', 'in', ['sale', 'done']]]
+    limit: 0  # No limit
+    
+    columns:
+      customer_id:
+        path: partner_id
+        type: integer
+      
+      customer_name:
+        path: partner_id.name
+      
+      customer_email:
+        path: partner_id.email
+      
+      total_orders:
+        path: id
+        label: "Total Orders"
+        # Note: Aggregation would be done in post-processing
+        # This returns individual order IDs, not a count
+      
+      total_revenue:
+        path: amount_total
+        type: number
