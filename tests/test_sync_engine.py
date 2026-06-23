@@ -98,14 +98,87 @@ class TestSyncEngine:
 
     def test_transform_records_with_m2o_relation(self, sync_engine, sample_model_config):
         """Test record transformation handles many2one relations."""
+        config = ModelConfig(
+            odoo_model="res.partner",
+            postgres_table="res_partner",
+            fields=[
+                FieldConfig(odoo_field="id", postgres_column="id", postgres_type="INTEGER", primary_key=True),
+                FieldConfig(
+                    odoo_field="company_id",
+                    postgres_column="company_id",
+                    postgres_type="TEXT",
+                    field_type="many2one",
+                    related_model="res.company",
+                ),
+            ],
+        )
         records = [
-            {"id": 1, "name": "Partner", "email": [1, "Partner"], "write_date": "2024-01-01T00:00:00"},
+            {"id": 1, "company_id": [3, "Nobi"]},
         ]
         
-        transformed = sync_engine._transform_records(records, sample_model_config)
+        transformed = sync_engine._transform_records(records, config)
         
-        # Many2one should be converted to just the ID
-        assert transformed[0]["email"] == 1
+        assert transformed[0]["company_id"] == "Nobi"
+
+    def test_transform_records_resolves_id_suffix_display_name(self, sync_engine):
+        """Fields ending in _id should prefer Odoo display names when provided."""
+        config = ModelConfig(
+            odoo_model="sale.order",
+            postgres_table="sale_order",
+            fields=[
+                FieldConfig(odoo_field="id", postgres_column="id", postgres_type="INTEGER", primary_key=True),
+                FieldConfig(odoo_field="partner_id", postgres_column="partner_id", postgres_type="TEXT"),
+            ],
+        )
+
+        transformed = sync_engine._transform_records(
+            [{"id": 1, "partner_id": [99, "PT Customer"]}],
+            config,
+        )
+
+        assert transformed[0]["partner_id"] == "PT Customer"
+
+    def test_get_odoo_fields_to_fetch_uses_base_field_for_nested_paths(self, sync_engine):
+        """Dotted paths must fetch only their base field from Odoo read()."""
+        config = ModelConfig(
+            odoo_model="sale.order.line",
+            postgres_table="sale_order_line",
+            fields=[
+                FieldConfig(odoo_field="id", postgres_column="id", postgres_type="INTEGER", primary_key=True),
+                FieldConfig(
+                    odoo_field="order_id.name",
+                    postgres_column="order_id_name",
+                    postgres_type="TEXT",
+                    is_nested_path=True,
+                ),
+            ],
+        )
+
+        assert sync_engine._get_odoo_fields_to_fetch(config) == ["id", "order_id"]
+
+    def test_transform_records_resolves_order_id_name(self, sync_engine):
+        """Nested order_id.name should write the order reference, not the order ID."""
+        sync_engine._odoo.read.return_value = [{"id": 42, "name": "SO042"}]
+
+        config = ModelConfig(
+            odoo_model="sale.order.line",
+            postgres_table="sale_order_line",
+            fields=[
+                FieldConfig(odoo_field="id", postgres_column="id", postgres_type="INTEGER", primary_key=True),
+                FieldConfig(
+                    odoo_field="order_id.name",
+                    postgres_column="order_id_name",
+                    postgres_type="TEXT",
+                    is_nested_path=True,
+                    related_model="sale.order",
+                ),
+            ],
+        )
+
+        transformed = sync_engine._transform_records([{"id": 1, "order_id": 42}], config)
+
+        assert transformed[0]["order_id_name"] == "SO042"
+        sync_engine._odoo.read.assert_called_once_with("sale.order", [42], ["name", "id"])
 
     def test_parse_datetime_iso_format(self, sync_engine):
         """Test datetime parsing with ISO format."""

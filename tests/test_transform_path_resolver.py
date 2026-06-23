@@ -235,6 +235,24 @@ class TestPathResolver:
         # Third level - should get partner name
         result = resolver.resolve(record, "order_id.partner_id.name")
         assert result.value == "Acme"
+
+    def test_resolve_many2one_name_from_display_value_without_fetch(self):
+        """Test order_id.name can use Odoo's [id, display_name] value directly."""
+        mock_client = Mock()
+        resolver = PathResolver(odoo_client=mock_client)
+        field_metadata = {"order_id": {"type": "many2one", "relation": "sale.order"}}
+        record = {"order_id": [123, "SO001"]}
+
+        result = resolver.resolve_with_related(
+            record,
+            "order_id.name",
+            field_metadata,
+            "sale.order.line",
+        )
+
+        assert result.success is True
+        assert result.value == "SO001"
+        mock_client.read.assert_not_called()
     
     def test_cache_usage(self):
         """Test that cache is used for subsequent resolutions."""

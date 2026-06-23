@@ -676,6 +676,9 @@ class PostgresClient:
         # VARCHAR to TEXT migration
         if current_type.startswith("VARCHAR") and expected_type == "TEXT":
             return True
+
+        if expected_type == "TEXT" and current_type in ("INTEGER", "BIGINT", "SMALLINT"):
+            return True
         
         # NUMERIC migration to NUMERIC(30,10)
         if current_type.startswith("NUMERIC") and expected_type.startswith("NUMERIC"):
@@ -888,9 +891,13 @@ class PostgresClient:
         try:
             # For VARCHAR -> TEXT: PostgreSQL handles this directly
             # For NUMERIC: Need to handle potential data truncation
+            using_clause = ""
+            if new_type.upper() == "TEXT":
+                using_clause = f' USING "{column_name}"::text'
+
             migration_sql = text(f"""
                 ALTER TABLE "{table_name}" 
-                ALTER COLUMN "{column_name}" TYPE {new_type}
+                ALTER COLUMN "{column_name}" TYPE {new_type}{using_clause}
             """)
             
             with self.engine.connect() as conn:

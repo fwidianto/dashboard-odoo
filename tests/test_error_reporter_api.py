@@ -144,6 +144,10 @@ class TestErrorClassification:
         msg = "value too long for type character varying(255)"
         assert ErrorCategory.classify_from_message(msg) == ErrorCategory.DATA_TOO_LONG
 
+    def test_invalid_text_for_integer_is_schema_error(self):
+        msg = 'invalid input syntax for type integer: "VELO CITRA TEKNOLOGI, PT"'
+        assert ErrorCategory.classify_from_message(msg) == ErrorCategory.SCHEMA_ERROR
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

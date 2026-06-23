@@ -10,6 +10,7 @@ from src.models.state import SyncResult, SyncStatus, SyncAudit, SyncHistory
 from src.reporting.error_reporter import ErrorReporter
 from src.reporting.schema_recommender import SchemaRecommender
 from src.state.state_manager import StateManager
+from src.transform.path_resolver import PathResolver
 from src.utils.logging import get_logger
 from src.utils.settings import get_settings
 from src.utils.config_loader import ValidatedModelConfig
@@ -275,8 +276,7 @@ class SyncEngine:
             result.postgres_count_before = self._pg.get_table_row_count(model_config.postgres_table)
 
             # Get fields to sync from validated config (one2many/many2many already filtered)
-            field_names = [f.odoo_field for f in validated.fields 
-                          if f.field_type != "one2many" and f.field_type != "many2many"]
+            field_names = self._get_odoo_fields_to_fetch(validated)
             pk_field = validated.get_primary_key_field()
             sync_date_field = validated.get_sync_date_field()
             
@@ -318,7 +318,7 @@ class SyncEngine:
                     # Fetch records where:
                     #   write_date > last_sync_date
                     #   OR (write_date = last_sync_date AND id > last_sync_id)
-                    if last_sync_id is not None:
+                    if isinstance(last_sync_id, int):
                         # Full watermark: use date + id
                         domain = [
                             "|",
@@ -356,7 +356,7 @@ class SyncEngine:
                             "INCREMENTAL FILTER GENERATED (date only)",
                             model=model_config.odoo_model,
                             last_sync_date=date_str,
-                            last_sync_id=None,
+                            last_sync_id=last_sync_id,
                             domain=domain,
                         )
                 else:
@@ -776,15 +776,15 @@ class SyncEngine:
                 error=str(e),
             )
         
-        # End batch and print summary
-        self._error_reporter.end_batch()
-        self._error_reporter.print_batch_summary()
-        
         # Record batch errors to result
         batch_summary = self._error_reporter.get_batch_summary()
         if batch_summary and batch_summary.errors_by_category:
             for cat, count in batch_summary.errors_by_category.items():
-                result.add_error(f"{cat.value}: {count} records")
+                result.add_error(f"{cat}: {count} records")
+
+        # End batch and print summary
+        self._error_reporter.end_batch()
+        self._error_reporter.print_batch_summary()
 
         return result
 
@@ -865,10 +865,7 @@ class SyncEngine:
         Returns:
             List of SyncResult for each model.
         """
-        self._logger.debug(
-            "Sync all called",
-            record_limit=record_limit,
-        )
+        print(f"[DEBUG] sync_all called: record_limit={record_limit}")
         self._logger.info(
             "Starting sync all",
             full_sync=full_sync,
@@ -924,7 +921,7 @@ class SyncEngine:
         Transform Odoo records to PostgreSQL format.
         
         Handles:
-        - Many2one fields (store only FK ID)
+        - Many2one fields (store display name when Odoo provides one)
         - One2many fields (skip - handled separately)
         - Many2many fields (skip - handled separately)
         - Datetime conversion
@@ -932,7 +929,8 @@ class SyncEngine:
         - Invalid fields are automatically skipped
         """
         transformed = []
-        valid_field_names = {f.odoo_field for f in model_config.fields}
+        path_resolver = PathResolver(self._odoo)
+        field_metadata = self._build_field_metadata(model_config)
         
         for record in records:
             transformed_record = {}
@@ -942,6 +940,31 @@ class SyncEngine:
                 if field.field_type in ("one2many", "many2many"):
                     continue
                 
+                if field.is_nested_path or "." in field.odoo_field:
+                    result = path_resolver.resolve_with_related(
+                        record,
+                        field.odoo_field,
+                        field_metadata,
+                        model_config.odoo_model,
+                    )
+                    odoo_value = result.value
+                    if odoo_value is None:
+                        if field.default_value is not None:
+                            transformed_record[field.postgres_column] = field.default_value
+                        elif field.nullable:
+                            transformed_record[field.postgres_column] = None
+                        else:
+                            transformed_record[field.postgres_column] = self._get_type_default(
+                                field.postgres_type
+                            )
+                        continue
+
+                    if isinstance(odoo_value, list) and len(odoo_value) >= 2:
+                        odoo_value = odoo_value[1]
+
+                    transformed_record[field.postgres_column] = odoo_value
+                    continue
+
                 # Skip if field not in record (field was filtered out)
                 if field.odoo_field not in record:
                     continue
@@ -960,15 +983,14 @@ class SyncEngine:
                         )
                     continue
 
-                # Handle many2one fields - extract just the ID
-                if field.field_type == "many2one" or isinstance(odoo_value, list):
-                    if isinstance(odoo_value, list) and len(odoo_value) >= 2:
-                        # Odoo returns [id, name] for many2one
-                        odoo_value = odoo_value[0] if isinstance(odoo_value[0], int) else None
-                    elif isinstance(odoo_value, int):
-                        pass  # Already just an ID
-                    else:
-                        odoo_value = None
+                if self._should_use_display_name(field):
+                    odoo_value = self._resolve_display_name(
+                        record,
+                        field,
+                        field_metadata,
+                        path_resolver,
+                        model_config.odoo_model,
+                    )
 
                 # Handle False/True for integer fields (Odoo sometimes returns False instead of null)
                 if odoo_value is False:
@@ -980,7 +1002,7 @@ class SyncEngine:
                         odoo_value = None  # Convert False to NULL for other fields
 
                 # Handle datetime conversion
-                if isinstance(odoo_value, str) and "T" in odoo_value:
+                if isinstance(odoo_value, str) and self._looks_like_datetime(odoo_value):
                     odoo_value = self._parse_datetime(odoo_value)
 
                 # Handle float fields
@@ -992,6 +1014,94 @@ class SyncEngine:
             transformed.append(transformed_record)
 
         return transformed
+
+    def _should_use_display_name(self, field: FieldConfig) -> bool:
+        """Return True when a field should store a related record display name."""
+        return (
+            not field.primary_key
+            and field.odoo_field != "id"
+            and (
+                field.field_type == "many2one"
+                or field.related_model is not None
+                or field.odoo_field.endswith("_id")
+            )
+        )
+
+    def _resolve_display_name(
+        self,
+        record: dict,
+        field: FieldConfig,
+        field_metadata: dict[str, dict],
+        path_resolver: PathResolver,
+        model_name: str,
+    ):
+        """Resolve a many2one-ish field to its display name, falling back to the raw value."""
+        raw_value = record.get(field.odoo_field)
+
+        if isinstance(raw_value, list):
+            if len(raw_value) >= 2:
+                return raw_value[1]
+            if len(raw_value) == 1:
+                return raw_value[0]
+            return None
+
+        if isinstance(raw_value, dict):
+            return raw_value.get("display_name") or raw_value.get("name") or raw_value.get("id")
+
+        if isinstance(raw_value, int) and field.related_model:
+            result = path_resolver.resolve_with_related(
+                record,
+                f"{field.odoo_field}.name",
+                field_metadata,
+                model_name,
+            )
+            if result.value is not None:
+                return result.value
+
+        return raw_value
+
+    def _looks_like_datetime(self, value: str) -> bool:
+        """Return True for Odoo datetime-like strings without catching names like 'PT Customer'."""
+        return (
+            len(value) >= 19
+            and value[4:5] == "-"
+            and value[7:8] == "-"
+            and value[10:11] in ("T", " ")
+            and value[13:14] == ":"
+            and value[16:17] == ":"
+        )
+
+    def _get_odoo_fields_to_fetch(self, model_config: ModelConfig) -> list[str]:
+        """Return direct Odoo fields needed for read(); dotted paths fetch their base field."""
+        field_names = []
+        seen = set()
+
+        for field in model_config.fields:
+            if field.field_type in ("one2many", "many2many"):
+                continue
+
+            field_name = field.odoo_field.split(".", 1)[0]
+            if field_name not in seen:
+                seen.add(field_name)
+                field_names.append(field_name)
+
+        return field_names
+
+    def _build_field_metadata(self, model_config: ModelConfig) -> dict[str, dict]:
+        """Build enough metadata for PathResolver to follow many2one relationships."""
+        metadata = {}
+
+        for field in model_config.fields:
+            base_field = field.odoo_field.split(".", 1)[0]
+            if field.related_model:
+                metadata[base_field] = {
+                    "type": "many2one",
+                    "relation": field.related_model,
+                }
+            elif field.field_type == "many2one":
+                metadata[base_field] = {"type": "many2one"}
+
+        return metadata
 
     def _parse_datetime(self, value) -> Optional[datetime]:
         """Parse datetime from various formats."""

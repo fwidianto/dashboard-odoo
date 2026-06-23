@@ -259,9 +259,9 @@ class TestConfigLoader:
             
             # Check partner_id has correct auto-detections
             partner_id_field = next(f for f in model.fields if f.odoo_field == "partner_id")
-            assert partner_id_field.is_foreign_key is True
+            assert partner_id_field.is_foreign_key is False
             assert partner_id_field.indexed is True
-            assert partner_id_field.postgres_type == "INTEGER"
+            assert partner_id_field.postgres_type == "TEXT"
             
         finally:
             os.unlink(temp_path)

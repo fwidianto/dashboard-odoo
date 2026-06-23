@@ -103,6 +103,22 @@ class TestNeedsMigration:
             result = client._needs_migration("VARCHAR(255)", "TEXT", current_col, field)
             assert result is True, "VARCHAR(255) should need migration to TEXT"
 
+    def test_integer_needs_migration_to_text_for_display_name_fields(self):
+        """Existing FK id columns should migrate to TEXT when storing display names."""
+        from src.clients.postgres_client import PostgresClient
+
+        with patch('src.clients.postgres_client.get_settings') as mock_settings:
+            mock_settings.return_value = MagicMock()
+            mock_settings.return_value.postgres.connection_url = "postgresql://test:test@localhost/test"
+
+            client = PostgresClient(connection_url="postgresql://test:test@localhost/test")
+
+            field = FieldConfig(odoo_field="partner_id", postgres_column="partner_id", postgres_type="TEXT")
+            current_col = {"type": "INTEGER", "nullable": True}
+
+            result = client._needs_migration("INTEGER", "TEXT", current_col, field)
+            assert result is True, "INTEGER partner_id should migrate to TEXT for display names"
+
     def test_numeric_12_needs_migration(self):
         """Test that NUMERIC(12,2) needs migration."""
         from src.clients.postgres_client import PostgresClient
@@ -119,8 +135,8 @@ class TestNeedsMigration:
             result = client._needs_migration("NUMERIC(12,2)", "NUMERIC(20,4)", current_col, field)
             assert result is True, "NUMERIC(12,2) should need migration to NUMERIC(20,4)"
 
-    def test_numeric_20_no_migration_needed(self):
-        """Test that NUMERIC(20,4) does not need migration."""
+    def test_numeric_20_needs_migration_to_numeric_30_10(self):
+        """Test that NUMERIC(20,4) is widened to NUMERIC(30,10)."""
         from src.clients.postgres_client import PostgresClient
         
         with patch('src.clients.postgres_client.get_settings') as mock_settings:
@@ -132,8 +148,8 @@ class TestNeedsMigration:
             field = FieldConfig(odoo_field="amount", postgres_column="amount_total", postgres_type="NUMERIC(20,4)")
             current_col = {"type": "NUMERIC(20,4)", "nullable": False}
             
-            result = client._needs_migration("NUMERIC(20,4)", "NUMERIC(20,4)", current_col, field)
-            assert result is False, "NUMERIC(20,4) should not need migration"
+            result = client._needs_migration("NUMERIC(20,4)", "NUMERIC(30,10)", current_col, field)
+            assert result is True, "NUMERIC(20,4) should migrate to NUMERIC(30,10)"
 
 
 class TestCreateModelTable:
@@ -552,8 +568,8 @@ class TestExpectedPostgresType:
             field = FieldConfig(odoo_field="list_price", postgres_column="list_price", postgres_type="NUMERIC(12,2)")
             result = client._get_expected_postgres_type(field)
             
-            assert result == "NUMERIC(20,4)", \
-                f"NUMERIC should become NUMERIC(20,4), got {result}"
+            assert result == "NUMERIC(30,10)", \
+                f"NUMERIC should become NUMERIC(30,10), got {result}"
 
     def test_varchar_255_becomes_text(self):
         """Test that VARCHAR(255) is expected as TEXT."""

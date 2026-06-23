@@ -21,17 +21,7 @@ models:
   # ===========================================================================
   # CORE MODELS
   # ===========================================================================
-  
-  res.partner:
-    columns:
-      id: ID
-      name: Name
-      email: Email
-      phone: Phone
-      active: Active
-      company_id: Company
-      create_date: Created
-      write_date: Updated
+
 
   product.template:
     columns:
@@ -46,6 +36,7 @@ models:
       categ_id: Category
       create_date: Created
       write_date: Updated
+      company_id: Company
 
   # ===========================================================================
   # SALES MODELS
@@ -54,131 +45,151 @@ models:
   sale.order:
     columns:
       id: ID
+      write_date: Last Updated on
+      x_studio_prodcut_type: Product Type
       name: Order Number
+      create_date: Created
+      date_order: Order Date
+      commitment_date: Commitment Date
+      x_studio_delivery_time: Delivery Time
+      x_studio_sales_name: Sales Name
       partner_id: Customer
+      amount_untaxed: Untaxed Amount
+      x_studio_tanggal_po_cust : Customer PO Date
+      currency_id: Currency
+      currency_rate: Currency Rate
       date_order: Order Date
       state: Status
-      amount_total: Total
-      create_date: Created
-      write_date: Updated
-      x_studio_delivery_status: Delivery Status
-      x_studio_invoice_status: Invoice Status
+      delivery_status: Delivery Status
+      invoice_status: Invoice Status
+      company_id: Company
+      x_studio_io_1: IO
+
 
   sale.order.line:
     columns:
       id: ID
-      order_id: Order
+      write_date: Last Updated on
+      order_id: Order Reference
+      order_partner_id: Customer
       product_id: Product
-      name: Description
       product_uom_qty: Quantity
+      qty_delivered: Quantity Delivered
+      qty_invoiced: Quantity Invoiced
       price_unit: Unit Price
+      currency_id: Currency
+      x_studio_currency_rate: Currency Rate
       price_subtotal: Subtotal
+      name: Description
       create_date: Created
+      company_id: Company
 
   # ===========================================================================
   # PURCHASE MODELS
   # ===========================================================================
-  
-  purchase.order:
-    columns:
-      id: ID
-      name: Order Reference
-      partner_id: Vendor
-      date_order: Order Date
-      state: Status
-      amount_total: Total
-      create_date: Created
-      write_date: Updated
 
   purchase.order.line:
     columns:
       id: ID
-      order_id: Order
+      write_date: Last Updated on
+      x_studio_group_po: Group PO
+      order_id: Order Reference
+      partner_id: Vendor
+      create_date: Created on
+      date_approve: Confirmation date
+      date_planned: Expected Arrival
+      state: Status
       product_id: Product
       name: Description
       product_qty: Quantity
+      product_uom: Unit of Measure
+      qty_received: Received Qty
+      qty_invoiced: Billed Qty
+      currency_id: Currency
+      x_studio_currency_rate_inverse: Currency Rate
       price_unit: Unit Price
+      taxes_id: Taxes
+      x_studio_many2one_field_iJ0j0: IO
+      x_studio_jo: JO
       price_subtotal: Subtotal
-      create_date: Created
+      x_studio_payment_terms: Payment Term
+      purchaser: Purchaser
+      company_id: Company
+
 
   # ===========================================================================
   # ACCOUNTING MODELS
   # ===========================================================================
-  
-  account.move:
-    columns:
-      id: ID
-      name: Number
-      date: Date
-      ref: Reference
-      partner_id: Partner
-      move_type: Type
-      state: Status
-      amount_total: Total
-      create_date: Created
-      write_date: Updated
 
   account.move.line:
     columns:
       id: ID
-      move_id: Journal Entry
+      write_date: Last Updated on
+      date: Date
+      move_name: Number
+      parent_state: Status
+      x_studio_sales_order: Sales Order
       account_id: Account
-      partner_id: Partner
-      name: Label
+      product_category_id: Product Category
+      product_id: Product
+      quantity: Quantity
       debit: Debit
       credit: Credit
       balance: Balance
-      create_date: Created
+      company_id: Company
+
 
   account.payment:
     columns:
       id: ID
-      name: Payment Reference
+      write_date: Last Updated on
       date: Date
+      memo: Memo
+      number: name
+      journal_id: Journal
       partner_id: Partner
-      amount: Amount
-      payment_type: Type
+      amount_company_currency_signed: Amount
       state: Status
-      create_date: Created
-      write_date: Updated
+      company_id: Company
+      
 
   # ===========================================================================
   # STOCK MODELS
   # ===========================================================================
   
-  stock.move:
-    columns:
-      id: ID
-      name: Description
-      product_id: Product
-      product_uom_qty: Quantity
-      state: Status
-      location_id: From Location
-      location_dest_id: To Location
-      date: Date
-      create_date: Created
-
   stock.move.line:
     columns:
       id: ID
-      move_id: Stock Move
+      write_date: Last Updated on
+      reference: Reference
+      date: Date
+      x_studio_source_document: Source Document
+      source: Origin
       product_id: Product
-      lot_id: Lot/Serial
+      product_category_name: Product Category
+      x_studio_sale_line: Sales Order Line
+      x_studio_demand: Demand
+      quantity: Quantity
+      product_uom_id: Unit of Measure
       location_id: From Location
       location_dest_id: To Location
-      qty_done: Quantity Done
-      create_date: Created
+      state: Status
+      picking_partner_id: Customer
+      company_id: Company
+      picking_type_id: Operation Type
+      
 
   stock.quant:
     columns:
       id: ID
-      product_id: Product
+      write_date: Last Updated on
       location_id: Location
-      lot_id: Lot/Serial
-      quantity: Quantity
-      reserved_quantity: Reserved
-      create_date: Created
-
+      product_id: Product
+      inventory_quantity_auto_apply: On Hand Quantity
+      reserved_quantity: Reserved Quantity
+      product_uom_id: Unit of Measure
+      company_id: Company
+      
   # ===========================================================================
   # MANUFACTURING MODELS
   # ===========================================================================
@@ -194,48 +205,38 @@ models:
       date_finished: Finished Date
       create_date: Created
       write_date: Updated
+      origin: Source Document
+      x_studio_nomor_io: IO Number
+      x_studio_nomor_jo: JO Number
+      x_studio_master_production_schedule_start: MPS Start
+      x_studio_master_production_schedule_finish: MPS End
+      company_id: Company
 
   # ===========================================================================
   # APPROVAL MODELS
   # ===========================================================================
-  
-  approval.request:
-    columns:
-      id: ID
-      name: Request Reference
-      request_owner_id: Requester
-      category_id: Category
-      amount: Amount
-      state: Status
-      date: Date
-      create_date: Created
-      write_date: Updated
 
   approval.product.line:
     columns:
       id: ID
-      request_id: Request
+      write_date: Last Updated on
+      create_date: Created on
+      approval_request_id: Approval Request
+      x_studio_nomor_io: IO Number
+      x_studio_nomor_jo: JO Number
+      x_studio_status: Status
+      x_studio_reqestor: Requestor
+      x_studio_related_field_IER4u: Date Confirmed
       product_id: Product
+      description: Description
       quantity: Quantity
-      price_unit: Unit Price
-      estimated_price: Estimated Price
-      create_date: Created
+      product_uom_id: Unit of Measure
+      x_studio_unit_price: Unit Price
+      x_studio_subtotal: Subtotal
+      x_studio_date_of_need: Date of Need
+      company_id: Company
+      x_studio_category: Category
 
-  # ===========================================================================
-  # PRODUCT VARIANTS
-  # ===========================================================================
-  
-  product.product:
-    columns:
-      id: ID
-      name: Name
-      default_code: Internal Reference
-      barcode: Barcode
-      list_price: Sale Price
-      standard_price: Cost
-      active: Active
-      create_date: Created
-      write_date: Updated
 
 # =============================================================================
 # MODEL WITH OPTIONS

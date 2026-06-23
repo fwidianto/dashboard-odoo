@@ -26,7 +26,7 @@ class ErrorCategory(str, Enum):
             return cls.TRANSACTION_ABORTED
 
         # NULL constraint violations (PostgreSQL error codes: 23502)
-        if any(p in msg_lower for p in ["23502", "null value", "not-null constraint", "cannot be null"]):
+        if any(p in msg_lower for p in ["23502", "null value", "not-null constraint", "not null constraint", "cannot be null"]):
             return cls.NULL_CONSTRAINT
 
         # VARCHAR/text overflow (PostgreSQL error codes: 22001)
@@ -54,6 +54,9 @@ class ErrorCategory(str, Enum):
 
         # Schema errors - table/column doesn't exist (PostgreSQL error codes: 42P01, 42703)
         if any(p in msg_lower for p in ["42p01", "42703", "does not exist", "undefined column"]):
+            return cls.SCHEMA_ERROR
+
+        if "invalid input syntax for type" in msg_lower:
             return cls.SCHEMA_ERROR
 
         # Data errors from Odoo or encoding issues

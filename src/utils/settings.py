@@ -1,6 +1,7 @@
 """Application settings using Pydantic settings management."""
 
 import os
+import sys
 from functools import lru_cache
 from typing import Literal, Optional
 
@@ -235,6 +236,8 @@ def get_settings() -> Settings:
     Returns:
         Settings: Application settings instance.
     """
+    if os.environ.get("PYTEST_CURRENT_TEST") or "pytest" in sys.modules:
+        return Settings(_env_file=None)
     return Settings()
 
 

@@ -19,10 +19,10 @@ VALUE_PREVIEW_LENGTH = 200
 @dataclass
 class RootCauseError:
     model: str
-    table_name: str
     record_id: Optional[int]
     error_category: ErrorCategory
     error_message: str
+    table_name: str = ""
     column_name: Optional[str] = None
     value_preview: Optional[str] = None
     payload: Optional[dict] = None
@@ -75,6 +75,7 @@ class ModelErrorStats:
     root_causes: dict = field(default_factory=lambda: defaultdict(int))
     errors_by_column: dict = field(default_factory=lambda: defaultdict(int))
     data_profiles: dict = field(default_factory=dict)
+    sample_records: dict = field(default_factory=lambda: defaultdict(list))
     first_root_cause: Optional[RootCauseError] = None
 
     @property
@@ -108,6 +109,13 @@ class ModelErrorStats:
         self.failed += 1
         category_str = category.value
         self.root_causes[category_str] = self.root_causes.get(category_str, 0) + 1
+        if len(self.sample_records[category]) < MAX_SAMPLE_RECORDS:
+            self.sample_records[category].append({
+                "record_id": record_id,
+                "error_message": error_message,
+                "column_name": column_name,
+                "value_preview": value_preview,
+            })
         if self.first_root_cause is None:
             self.first_root_cause = RootCauseError(
                 model=self.model,
@@ -146,14 +154,31 @@ class ModelErrorStats:
 
 class BatchSummary:
     """Batch summary object for compatibility with SchemaRecommender."""
-    def __init__(self, model: str, table_name: str, stats: ModelErrorStats):
+    def __init__(self, model: str, table_name: str = "", stats: Optional[ModelErrorStats] = None):
         self.model = model
         self.table_name = table_name
-        self.stats = stats
+        self.stats = stats or ModelErrorStats(model=model, table_name=table_name)
+
+    def record_success(self, count: int = 1):
+        self.stats.add_success(count)
+
+    def add_error(self, category: ErrorCategory, record_id: Optional[int] = None,
+                  error_message: str = "", column_name: Optional[str] = None,
+                  value_preview: Optional[str] = None):
+        self.stats.add_error(
+            category=category,
+            record_id=record_id,
+            error_message=error_message,
+            column_name=column_name,
+            value_preview=value_preview,
+        )
 
     @property
     def errors_by_category(self) -> dict:
-        return self.stats.errors_by_category
+        return {
+            ErrorCategory(k) if isinstance(k, str) and k in ErrorCategory._value2member_map_ else k: v
+            for k, v in self.stats.errors_by_category.items()
+        }
 
     @property
     def failure_categories(self) -> dict:
@@ -166,6 +191,10 @@ class BatchSummary:
     @property
     def data_profiles(self) -> dict:
         return self.stats.data_profiles
+
+    @property
+    def sample_records(self) -> dict:
+        return self.stats.sample_records
 
     @property
     def processed(self) -> int:
@@ -190,15 +219,39 @@ class BatchSummary:
 
 class SyncReport:
     """Sync report object for compatibility."""
-    def __init__(self, models: dict):
-        self.models = models
+    def __init__(self, models: Optional[dict] = None):
+        self.models = models or {}
+
+    def add_model_summary(self, model: str, summary: BatchSummary):
+        self.models[model] = summary.stats if isinstance(summary, BatchSummary) else summary
+
+    def get_total_processed(self) -> int:
+        return sum(s.processed for s in self.models.values())
+
+    def get_total_success(self) -> int:
+        return sum(s.success for s in self.models.values())
+
+    def get_total_failed(self) -> int:
+        return sum(s.failed for s in self.models.values())
+
+    def get_overall_error_rate(self) -> float:
+        processed = self.get_total_processed()
+        return (self.get_total_failed() / processed * 100) if processed else 0.0
+
+    def get_top_failure_causes(self) -> list[tuple[ErrorCategory, int]]:
+        totals = defaultdict(int)
+        for stats in self.models.values():
+            for category, count in stats.errors_by_category.items():
+                key = ErrorCategory(category) if isinstance(category, str) and category in ErrorCategory._value2member_map_ else category
+                totals[key] += count
+        return sorted(totals.items(), key=lambda item: (-item[1], str(item[0].value if isinstance(item[0], ErrorCategory) else item[0])))
 
 
 class ErrorReporter:
     """Error reporter matching SyncEngine API."""
 
-    def __init__(self, output_dir: str = "reports/errors", debug_mode: bool = False):
-        self.output_dir = Path(output_dir)
+    def __init__(self, output_dir: str = "reports/errors", debug_mode: bool = False, reports_dir: Optional[str] = None):
+        self.output_dir = Path(reports_dir or output_dir)
         self.debug_mode = debug_mode
         self.debug_dir = Path("logs/debug")
         self.model_stats: dict = {}
@@ -206,6 +259,8 @@ class ErrorReporter:
         self.debug_samples: dict = defaultdict(list)
         self._current_model: Optional[str] = None
         self._current_table: Optional[str] = None
+        self._current_batch: Optional[BatchSummary] = None
+        self._all_errors = self.root_causes
         self.output_dir.mkdir(parents=True, exist_ok=True)
         if self.debug_mode:
             self.debug_dir.mkdir(parents=True, exist_ok=True)
@@ -215,10 +270,14 @@ class ErrorReporter:
         self._current_table = table_name
         if model not in self.model_stats:
             self.model_stats[model] = ModelErrorStats(model=model, table_name=table_name)
+        self._current_batch = BatchSummary(model=model, table_name=table_name, stats=self.model_stats[model])
 
     def end_batch(self):
+        summary = self.get_batch_summary()
         self._current_model = None
         self._current_table = None
+        self._current_batch = None
+        return summary
 
     def record_success(self, count: int = 1, model: Optional[str] = None):
         model = model or self._current_model
@@ -237,10 +296,23 @@ class ErrorReporter:
                 column_name=column_name, value=value,
             )
 
-    def record_error(self, model: str, table_name: str, category: ErrorCategory,
-                     record_id: Optional[int] = None, error_message: str = "",
-                     column_name: Optional[str] = None, value: Any = None,
-                     payload: Optional[dict] = None):
+    def record_error(self, *args, model: Optional[str] = None, table_name: Optional[str] = None,
+                     category: Optional[ErrorCategory] = None, record_id: Optional[int] = None,
+                     error_message: str = "", column_name: Optional[str] = None,
+                     value: Any = None, payload: Optional[dict] = None):
+        if args and isinstance(args[0], ErrorCategory):
+            category = args[0]
+            model = model or self._current_model
+            table_name = table_name if table_name is not None else (self._current_table or "")
+        elif args:
+            model = args[0]
+            table_name = args[1] if len(args) > 1 else (table_name or "")
+            category = args[2] if len(args) > 2 else category
+
+        if not model or category is None:
+            return
+
+        table_name = table_name if table_name is not None else ""
         stats = self.get_or_create_stats(model, table_name)
         value_preview = str(value)[:VALUE_PREVIEW_LENGTH] if value is not None else None
         is_cascade = category == ErrorCategory.TRANSACTION_ABORTED
@@ -277,7 +349,20 @@ class ErrorReporter:
         return self.export_json(filename)
 
     def print_batch_summary(self):
-        self.print_summary()
+        summary = self.get_batch_summary()
+        if not summary:
+            self.print_summary()
+            return
+        print("\n" + "=" * 70)
+        print("BATCH ERROR SUMMARY")
+        print("=" * 70)
+        print(f"Model: {summary.model}")
+        print(f"Processed: {summary.processed}")
+        print(f"Success: {summary.success}")
+        print(f"Failed: {summary.failed}")
+        for category, count in summary.errors_by_category.items():
+            label = category.value if isinstance(category, ErrorCategory) else str(category)
+            print(f"  {label}: {count}")
 
     def has_errors(self) -> bool:
         return any(stats.failed > 0 for stats in self.model_stats.values())
@@ -313,6 +398,10 @@ class ErrorReporter:
         }
 
     def print_summary(self):
+        if not self.model_stats:
+            print("No sync errors recorded")
+            return
+
         print("\n" + "=" * 70)
         print("SYNC HEALTH REPORT")
         print("=" * 70)
@@ -343,8 +432,9 @@ class ErrorReporter:
                     print()
             print()
         all_errors = defaultdict(int)
-        for rc in self.root_causes:
-            all_errors[rc.error_category.value] += 1
+        for stats in self.model_stats.values():
+            for category, count in stats.errors_by_category.items():
+                all_errors[category] += count
         if all_errors:
             print("=" * 70)
             print("ERROR BREAKDOWN BY TYPE")
@@ -358,7 +448,11 @@ class ErrorReporter:
             filename = f"summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         filepath = self.output_dir / filename
         with open(filepath, "w") as f:
-            json.dump(self.get_summary(), f, indent=2)
+            summary = self.get_summary()
+            summary["run_timestamp"] = datetime.now().isoformat()
+            for model_data in summary["models"].values():
+                model_data["errors"] = model_data.pop("errors_by_category", {})
+            json.dump(summary, f, indent=2)
         return str(filepath)
 
     def export_csv(self, filename: Optional[str] = None) -> str:
@@ -372,6 +466,9 @@ class ErrorReporter:
                 writer.writerow([rc.model, rc.record_id, rc.error_category.value, rc.column_name,
                                rc.error_message[:500], rc.value_preview, rc.timestamp.isoformat()])
         return str(filepath)
+
+    def export(self) -> tuple[str, str]:
+        return self.export_csv(), self.export_json()
 
     def export_root_causes(self, filename: str = "logs/root_causes.json") -> str:
         filepath = Path(filename)
@@ -390,3 +487,11 @@ class ErrorReporter:
                 json.dump({"model": model, "sample_count": len(samples), "samples": samples}, f, indent=2)
             result[model] = str(filepath)
         return result
+
+    def clear(self) -> None:
+        self.model_stats.clear()
+        self.root_causes.clear()
+        self.debug_samples.clear()
+        self._current_model = None
+        self._current_table = None
+        self._current_batch = None

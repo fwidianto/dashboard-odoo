@@ -1,0 +1,464 @@
+models:
+- odoo_model: purchase.order
+  postgres_table: purchase_order
+  description: Auto-generated from purchase.order
+  fields:
+  - odoo_field: activity_state
+    postgres_column: activity_state
+    postgres_type: VARCHAR(255)
+  - odoo_field: activity_user_id
+    postgres_column: activity_user_id
+    postgres_type: INTEGER
+    is_foreign_key: true
+    indexed: true
+    field_type: many2one
+    related_model: res.users
+  - odoo_field: activity_type_id
+    postgres_column: activity_type_id
+    postgres_type: INTEGER
+    is_foreign_key: true
+    indexed: true
+    field_type: many2one
+    related_model: mail.activity.type
+  - odoo_field: activity_type_icon
+    postgres_column: activity_type_icon
+    postgres_type: TEXT
+  - odoo_field: activity_date_deadline
+    postgres_column: activity_date_deadline
+    postgres_type: DATE
+  - odoo_field: my_activity_date_deadline
+    postgres_column: my_activity_date_deadline
+    postgres_type: DATE
+  - odoo_field: activity_summary
+    postgres_column: activity_summary
+    postgres_type: TEXT
+  - odoo_field: activity_exception_decoration
+    postgres_column: activity_exception_decoration
+    postgres_type: VARCHAR(255)
+  - odoo_field: activity_exception_icon
+    postgres_column: activity_exception_icon
+    postgres_type: TEXT
+  - odoo_field: activity_calendar_event_id
+    postgres_column: activity_calendar_event_id
+    postgres_type: INTEGER
+    is_foreign_key: true
+    indexed: true
+    field_type: many2one
+    related_model: calendar.event
+  - odoo_field: message_is_follower
+    postgres_column: message_is_follower
+    postgres_type: BOOLEAN
+    nullable: true
+  - odoo_field: has_message
+    postgres_column: has_message
+    postgres_type: BOOLEAN
+    nullable: true
+  - odoo_field: message_needaction
+    postgres_column: message_needaction
+    postgres_type: BOOLEAN
+    nullable: true
+  - odoo_field: message_needaction_counter
+    postgres_column: message_needaction_counter
+    postgres_type: INTEGER
+  - odoo_field: message_has_error
+    postgres_column: message_has_error
+    postgres_type: BOOLEAN
+    nullable: true
+  - odoo_field: message_has_error_counter
+    postgres_column: message_has_error_counter
+    postgres_type: INTEGER
+  - odoo_field: message_attachment_count
+    postgres_column: message_attachment_count
+    postgres_type: INTEGER
+  - odoo_field: message_has_sms_error
+    postgres_column: message_has_sms_error
+    postgres_type: BOOLEAN
+    nullable: true
+  - odoo_field: access_url
+    postgres_column: access_url
+    postgres_type: TEXT
+  - odoo_field: access_token
+    postgres_column: access_token
+    postgres_type: TEXT
+  - odoo_field: access_warning
+    postgres_column: access_warning
+    postgres_type: TEXT
+  - odoo_field: name
+    postgres_column: name
+    postgres_type: TEXT
+    nullable: false
+  - odoo_field: priority
+    postgres_column: priority
+    postgres_type: VARCHAR(255)
+  - odoo_field: origin
+    postgres_column: origin
+    postgres_type: TEXT
+  - odoo_field: partner_ref
+    postgres_column: partner_ref
+    postgres_type: TEXT
+  - odoo_field: date_order
+    postgres_column: date_order
+    postgres_type: TIMESTAMP
+    nullable: false
+  - odoo_field: date_approve
+    postgres_column: date_approve
+    postgres_type: TIMESTAMP
+  - odoo_field: partner_id
+    postgres_column: partner_id
+    postgres_type: INTEGER
+    is_foreign_key: true
+    indexed: true
+    field_type: many2one
+    related_model: res.partner
+  - odoo_field: dest_address_id
+    postgres_column: dest_address_id
+    postgres_type: INTEGER
+    is_foreign_key: true
+    indexed: true
+    field_type: many2one
+    related_model: res.partner
+  - odoo_field: currency_id
+    postgres_column: currency_id
+    postgres_type: INTEGER
+    is_foreign_key: true
+    indexed: true
+    field_type: many2one
+    related_model: res.currency
+  - odoo_field: state
+    postgres_column: state
+    postgres_type: VARCHAR(255)
+  - odoo_field: notes
+    postgres_column: notes
+    postgres_type: TEXT
+  - odoo_field: partner_bill_count
+    postgres_column: partner_bill_count
+    postgres_type: INTEGER
+  - odoo_field: invoice_count
+    postgres_column: invoice_count
+    postgres_type: INTEGER
+  - odoo_field: invoice_status
+    postgres_column: invoice_status
+    postgres_type: VARCHAR(255)
+  - odoo_field: date_planned
+    postgres_column: date_planned
+    postgres_type: TIMESTAMP
+  - odoo_field: date_calendar_start
+    postgres_column: date_calendar_start
+    postgres_type: TIMESTAMP
+  - odoo_field: amount_untaxed
+    postgres_column: amount_untaxed
+    postgres_type: NUMERIC(20,4)
+  - odoo_field: amount_tax
+    postgres_column: amount_tax
+    postgres_type: NUMERIC(20,4)
+  - odoo_field: amount_total
+    postgres_column: amount_total
+    postgres_type: NUMERIC(20,4)
+  - odoo_field: amount_total_cc
+    postgres_column: amount_total_cc
+    postgres_type: NUMERIC(20,4)
+  - odoo_field: fiscal_position_id
+    postgres_column: fiscal_position_id
+    postgres_type: INTEGER
+    is_foreign_key: true
+    indexed: true
+    field_type: many2one
+    related_model: account.fiscal.position
+  - odoo_field: tax_country_id
+    postgres_column: tax_country_id
+    postgres_type: INTEGER
+    is_foreign_key: true
+    indexed: true
+    field_type: many2one
+    related_model: res.country
+  - odoo_field: tax_calculation_rounding_method
+    postgres_column: tax_calculation_rounding_method
+    postgres_type: VARCHAR(255)
+  - odoo_field: payment_term_id
+    postgres_column: payment_term_id
+    postgres_type: INTEGER
+    is_foreign_key: true
+    indexed: true
+    field_type: many2one
+    related_model: account.payment.term
+  - odoo_field: incoterm_id
+    postgres_column: incoterm_id
+    postgres_type: INTEGER
+    is_foreign_key: true
+    indexed: true
+    field_type: many2one
+    related_model: account.incoterms
+  - odoo_field: product_id
+    postgres_column: product_id
+    postgres_type: INTEGER
+    is_foreign_key: true
+    indexed: true
+    field_type: many2one
+    related_model: product.product
+  - odoo_field: user_id
+    postgres_column: user_id
+    postgres_type: INTEGER
+    is_foreign_key: true
+    indexed: true
+    field_type: many2one
+    related_model: res.users
+  - odoo_field: company_id
+    postgres_column: company_id
+    postgres_type: INTEGER
+    is_foreign_key: true
+    indexed: true
+    field_type: many2one
+    related_model: res.company
+  - odoo_field: company_currency_id
+    postgres_column: company_currency_id
+    postgres_type: INTEGER
+    is_foreign_key: true
+    indexed: true
+    field_type: many2one
+    related_model: res.currency
+  - odoo_field: country_code
+    postgres_column: country_code
+    postgres_type: TEXT
+  - odoo_field: company_price_include
+    postgres_column: company_price_include
+    postgres_type: VARCHAR(255)
+  - odoo_field: currency_rate
+    postgres_column: currency_rate
+    postgres_type: NUMERIC(20,4)
+  - odoo_field: mail_reminder_confirmed
+    postgres_column: mail_reminder_confirmed
+    postgres_type: BOOLEAN
+    nullable: true
+  - odoo_field: mail_reception_confirmed
+    postgres_column: mail_reception_confirmed
+    postgres_type: BOOLEAN
+    nullable: true
+  - odoo_field: mail_reception_declined
+    postgres_column: mail_reception_declined
+    postgres_type: BOOLEAN
+    nullable: true
+  - odoo_field: receipt_reminder_email
+    postgres_column: receipt_reminder_email
+    postgres_type: BOOLEAN
+    nullable: true
+  - odoo_field: reminder_date_before_receipt
+    postgres_column: reminder_date_before_receipt
+    postgres_type: INTEGER
+  - odoo_field: id
+    postgres_column: id
+    postgres_type: INTEGER
+    primary_key: true
+    nullable: false
+    indexed: true
+  - odoo_field: display_name
+    postgres_column: display_name
+    postgres_type: TEXT
+  - odoo_field: create_date
+    postgres_column: create_date
+    postgres_type: TIMESTAMP
+    is_sync_date: true
+    indexed: true
+  - odoo_field: write_date
+    postgres_column: write_date
+    postgres_type: TIMESTAMP
+    is_sync_date: true
+    indexed: true
+  - odoo_field: project_id
+    postgres_column: project_id
+    postgres_type: INTEGER
+    is_foreign_key: true
+    indexed: true
+    field_type: many2one
+    related_model: project.project
+  - odoo_field: requisition_id
+    postgres_column: requisition_id
+    postgres_type: INTEGER
+    is_foreign_key: true
+    indexed: true
+    field_type: many2one
+    related_model: purchase.requisition
+  - odoo_field: requisition_type
+    postgres_column: requisition_type
+    postgres_type: VARCHAR(255)
+  - odoo_field: purchase_group_id
+    postgres_column: purchase_group_id
+    postgres_type: INTEGER
+    is_foreign_key: true
+    indexed: true
+    field_type: many2one
+    related_model: purchase.order.group
+  - odoo_field: has_alternatives
+    postgres_column: has_alternatives
+    postgres_type: BOOLEAN
+    nullable: true
+  - odoo_field: incoterm_location
+    postgres_column: incoterm_location
+    postgres_type: TEXT
+  - odoo_field: incoming_picking_count
+    postgres_column: incoming_picking_count
+    postgres_type: INTEGER
+  - odoo_field: picking_type_id
+    postgres_column: picking_type_id
+    postgres_type: INTEGER
+    is_foreign_key: true
+    indexed: true
+    field_type: many2one
+    related_model: stock.picking.type
+  - odoo_field: default_location_dest_id_usage
+    postgres_column: default_location_dest_id_usage
+    postgres_type: VARCHAR(255)
+  - odoo_field: group_id
+    postgres_column: group_id
+    postgres_type: INTEGER
+    is_foreign_key: true
+    indexed: true
+    field_type: many2one
+    related_model: procurement.group
+  - odoo_field: is_shipped
+    postgres_column: is_shipped
+    postgres_type: BOOLEAN
+    nullable: true
+  - odoo_field: effective_date
+    postgres_column: effective_date
+    postgres_type: TIMESTAMP
+  - odoo_field: on_time_rate
+    postgres_column: on_time_rate
+    postgres_type: NUMERIC(20,4)
+  - odoo_field: receipt_status
+    postgres_column: receipt_status
+    postgres_type: VARCHAR(255)
+  - odoo_field: is_above_budget
+    postgres_column: is_above_budget
+    postgres_type: BOOLEAN
+    nullable: true
+  - odoo_field: is_analytic
+    postgres_column: is_analytic
+    postgres_type: BOOLEAN
+    nullable: true
+  - odoo_field: mrp_production_count
+    postgres_column: mrp_production_count
+    postgres_type: INTEGER
+  - odoo_field: on_time_rate_perc
+    postgres_column: on_time_rate_perc
+    postgres_type: NUMERIC(20,4)
+  - odoo_field: sale_order_count
+    postgres_column: sale_order_count
+    postgres_type: INTEGER
+  - odoo_field: subcontracting_resupply_picking_count
+    postgres_column: subcontracting_resupply_picking_count
+    postgres_type: INTEGER
+  - odoo_field: auto_generated
+    postgres_column: auto_generated
+    postgres_type: BOOLEAN
+    nullable: true
+  - odoo_field: auto_sale_order_id
+    postgres_column: auto_sale_order_id
+    postgres_type: INTEGER
+    is_foreign_key: true
+    indexed: true
+    field_type: many2one
+    related_model: sale.order
+  - odoo_field: x_studio_non_qc
+    postgres_column: x_studio_non_qc
+    postgres_type: BOOLEAN
+    nullable: true
+  - odoo_field: x_studio_purchaser
+    postgres_column: x_studio_purchaser
+    postgres_type: TEXT
+  - odoo_field: x_studio_special_instruction_1
+    postgres_column: x_studio_special_instruction_1
+    postgres_type: TEXT
+  - odoo_field: x_studio_delivery_time
+    postgres_column: x_studio_delivery_time
+    postgres_type: TEXT
+  - odoo_field: x_studio_purchaser_1
+    postgres_column: x_studio_purchaser_1
+    postgres_type: VARCHAR(255)
+  - odoo_field: x_studio_special_instruction
+    postgres_column: x_studio_special_instruction
+    postgres_type: TEXT
+  - odoo_field: x_studio_group_po
+    postgres_column: x_studio_group_po
+    postgres_type: VARCHAR(255)
+  - odoo_field: x_studio_currency_rate
+    postgres_column: x_studio_currency_rate
+    postgres_type: NUMERIC(20,4)
+  - odoo_field: x_studio_internal_note
+    postgres_column: x_studio_internal_note
+    postgres_type: TEXT
+  - odoo_field: x_studio_payment_terms_custom
+    postgres_column: x_studio_payment_terms_custom
+    postgres_type: TEXT
+  - odoo_field: x_studio_related_field_F0Urv
+    postgres_column: x_studio_related_field_F0Urv
+    postgres_type: TEXT
+  - odoo_field: x_studio_revision
+    postgres_column: x_studio_revision
+    postgres_type: TEXT
+  - odoo_field: x_studio_approver
+    postgres_column: x_studio_approver
+    postgres_type: INTEGER
+    is_foreign_key: true
+    indexed: true
+    field_type: many2one
+    related_model: res.users
+  - odoo_field: x_studio_cek_deliver_to
+    postgres_column: x_studio_cek_deliver_to
+    postgres_type: VARCHAR(255)
+  - odoo_field: x_studio_request_of_purchase
+    postgres_column: x_studio_request_of_purchase
+    postgres_type: VARCHAR(255)
+  - odoo_field: x_studio_requestor_rop
+    postgres_column: x_studio_requestor_rop
+    postgres_type: TEXT
+  - odoo_field: x_studio_po_description
+    postgres_column: x_studio_po_description
+    postgres_type: TEXT
+  - odoo_field: x_studio_received
+    postgres_column: x_studio_received
+    postgres_type: NUMERIC(20,4)
+  - odoo_field: x_studio_confirmation_date
+    postgres_column: x_studio_confirmation_date
+    postgres_type: TIMESTAMP
+  - odoo_field: x_studio_quantity
+    postgres_column: x_studio_quantity
+    postgres_type: NUMERIC(20,4)
+  - odoo_field: x_studio_uom
+    postgres_column: x_studio_uom
+    postgres_type: TEXT
+  - odoo_field: x_studio_curr_rate
+    postgres_column: x_studio_curr_rate
+    postgres_type: NUMERIC(20,4)
+  - odoo_field: x_studio_unit_price
+    postgres_column: x_studio_unit_price
+    postgres_type: NUMERIC(20,4)
+  - odoo_field: x_studio_last_update
+    postgres_column: x_studio_last_update
+    postgres_type: TIMESTAMP
+  - odoo_field: x_studio_io_po_line
+    postgres_column: x_studio_io_po_line
+    postgres_type: TEXT
+  - odoo_field: x_studio_related_field_svn1B
+    postgres_column: x_studio_related_field_svn1B
+    postgres_type: TEXT
+  - odoo_field: x_studio_related_field_r57nW
+    postgres_column: x_studio_related_field_r57nW
+    postgres_type: TEXT
+  - odoo_field: x_studio_source_document
+    postgres_column: x_studio_source_document
+    postgres_type: TEXT
+  - odoo_field: x_studio_jo_po_line
+    postgres_column: x_studio_jo_po_line
+    postgres_type: TEXT
+  - odoo_field: x_studio_related_field_rFb9V
+    postgres_column: x_studio_related_field_rFb9V
+    postgres_type: TEXT
+  - odoo_field: x_studio_related_field_34wu9_XJP
+    postgres_column: x_studio_related_field_34wu9_XJP
+    postgres_type: TIMESTAMP
+  - odoo_field: x_studio_related_field_4NSSs_XJP
+    postgres_column: x_studio_related_field_4NSSs_XJP
+    postgres_type: TEXT
+  - odoo_field: x_studio_related_field_WrPGb_XJP
+    postgres_column: x_studio_related_field_WrPGb_XJP
+    postgres_type: TEXT

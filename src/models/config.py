@@ -25,6 +25,7 @@ class FieldConfig(BaseModel):
         default="basic", description="Odoo field type for proper handling"
     )
     related_model: Optional[str] = Field(default=None, description="Related Odoo model for relational fields")
+    is_nested_path: bool = Field(default=False, description="Resolve this field using dot-notation traversal")
 
     def get_typed_default_value(self) -> any:
         """

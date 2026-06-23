@@ -212,6 +212,19 @@ class PathResolver:
             
             # If there are more parts to traverse and this is an ID, fetch the record
             if i < len(parts) - 1:
+                if isinstance(current_value, list) and current_value:
+                    if (
+                        len(current_value) >= 2
+                        and parts[i + 1] == "name"
+                        and i + 1 == len(parts) - 1
+                    ):
+                        return ResolutionResult(
+                            value=current_value[1],
+                            success=True,
+                            was_null=False,
+                        )
+                    current_value = current_value[0]
+
                 if isinstance(current_value, int):
                     # Need to fetch the related record for further traversal
                     related_model = self._get_related_model(
@@ -323,7 +336,7 @@ class PathResolver:
             return None
         
         try:
-            records = self._client.read([record_id], model, fields)
+            records = self._client.read(model, [record_id], fields)
             if records:
                 record = records[0]
                 self._cache.set(model, record_id, record)
