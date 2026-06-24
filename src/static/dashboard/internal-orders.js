@@ -186,8 +186,17 @@ function miniProgress(value) {
 function detailRow(row) {
   return `
     <tr class="detail-row">
-      <td colspan="21">
+      <td colspan="11">
         <div class="detail-grid">
+          <div class="detail-item"><span>Requester</span><strong>${safeText(row.requester)}</strong></div>
+          <div class="detail-item"><span>Need Date</span><strong>${formatDateRange(row.needed_date_from, row.needed_date_to)}</strong></div>
+          <div class="detail-item"><span>Accounting Lines</span><strong>${formatNumber(row.accounting_line_count)}</strong></div>
+          <div class="detail-item"><span>SO Ordered</span><strong>${formatQty(row.total_so_ordered_qty)}</strong></div>
+          <div class="detail-item"><span>SO Delivered</span><strong>${formatQty(row.total_so_delivered_qty)}</strong></div>
+          <div class="detail-item"><span>SO Invoiced</span><strong>${formatQty(row.total_so_invoiced_qty)}</strong></div>
+          <div class="detail-item"><span>PO Ordered</span><strong>${formatQty(row.total_po_ordered_qty)}</strong></div>
+          <div class="detail-item"><span>PO Received</span><strong>${formatQty(row.total_po_received_qty)}</strong></div>
+          <div class="detail-item"><span>PO Invoiced</span><strong>${formatQty(row.total_po_invoiced_qty)}</strong></div>
           <div class="detail-item"><span>SO Lines</span><strong>${formatNumber(row.linked_so_line_count)}</strong></div>
           <div class="detail-item"><span>SO Amount</span><strong>${formatNumber(row.total_so_amount, 2)}</strong></div>
           <div class="detail-item"><span>Delivery Status</span><strong>${safeText(row.delivery_status_summary)}</strong></div>
@@ -211,22 +220,13 @@ function tableRow(row) {
       <td><button class="row-action" type="button" data-io="${row.internal_order_number}" title="Toggle diagnostics" aria-label="Toggle diagnostics">${expanded ? "-" : "+"}</button></td>
       <td class="io-number">${safeText(row.internal_order_number)}</td>
       <td>${statusBadge(row.status_summary)}</td>
-      <td>${safeText(row.requester)}</td>
-      <td>${formatDateRange(row.needed_date_from, row.needed_date_to)}</td>
       <td class="num">${formatNumber(row.product_count)}</td>
       <td class="num">${formatNumber(row.linked_mo_count)}</td>
       <td class="num">${formatNumber(row.linked_so_count)}</td>
-      <td class="num">${formatQty(row.total_so_ordered_qty)}</td>
-      <td class="num">${formatQty(row.total_so_delivered_qty)}</td>
-      <td class="num">${formatQty(row.total_so_invoiced_qty)}</td>
       <td class="progress-cell">${miniProgress(row.so_delivery_progress_ratio)}</td>
       <td class="progress-cell">${miniProgress(row.so_invoice_progress_ratio)}</td>
-      <td class="num">${formatQty(row.total_po_ordered_qty)}</td>
-      <td class="num">${formatQty(row.total_po_received_qty)}</td>
-      <td class="num">${formatQty(row.total_po_invoiced_qty)}</td>
       <td class="progress-cell">${miniProgress(row.po_receipt_progress_ratio)}</td>
       <td class="progress-cell">${miniProgress(row.po_invoice_progress_ratio)}</td>
-      <td class="num">${formatNumber(row.accounting_line_count)}</td>
       <td>${statusBadge(row.traceability_status)}</td>
     </tr>
     ${expanded ? detailRow(row) : ""}
@@ -236,7 +236,7 @@ function tableRow(row) {
 function renderTable(rows) {
   els.rowCount.textContent = `${formatNumber(rows.length)} rows`;
   if (!rows.length) {
-    els.dashboardRows.innerHTML = '<tr><td colspan="21" class="empty-cell">No Internal Orders match the current filters.</td></tr>';
+    els.dashboardRows.innerHTML = '<tr><td colspan="11" class="empty-cell">No Internal Orders match the current filters.</td></tr>';
     return;
   }
   els.dashboardRows.innerHTML = rows.map(tableRow).join("");
@@ -299,7 +299,7 @@ async function loadDashboard() {
     els.lastLoaded.textContent = `Loaded ${new Date().toLocaleString()}`;
   } catch (error) {
     els.lastLoaded.textContent = "Failed to load";
-    els.dashboardRows.innerHTML = `<tr><td colspan="21" class="empty-cell">${error.message}</td></tr>`;
+    els.dashboardRows.innerHTML = `<tr><td colspan="11" class="empty-cell">${error.message}</td></tr>`;
   }
 }
 

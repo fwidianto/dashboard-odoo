@@ -1,0 +1,75 @@
+@import url("/static/dashboard/internal-orders.css");
+
+.sales-dashboard {
+  width: min(100%, 1760px);
+}
+
+.sales-dashboard .kpi-grid {
+  grid-template-columns: repeat(13, minmax(118px, 1fr));
+}
+
+.sales-dashboard table {
+  min-width: 1760px;
+}
+
+.sales-order-number {
+  color: var(--text);
+  font-weight: 760;
+}
+
+.status-danger {
+  border-color: rgba(169, 60, 50, 0.26);
+  background: #fff0ee;
+  color: var(--danger);
+}
+
+.detail-section {
+  grid-column: 1 / -1;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.detail-section h3 {
+  margin: 0;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.detail-table {
+  width: 100%;
+  min-width: 0;
+  border-collapse: collapse;
+}
+
+.detail-table th,
+.detail-table td {
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.detail-table th {
+  position: static;
+}
+
+.detail-empty {
+  padding: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 1480px) {
+  .sales-dashboard .kpi-grid {
+    grid-template-columns: repeat(4, minmax(150px, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .sales-dashboard .kpi-grid {
+    grid-template-columns: 1fr;
+  }
+}

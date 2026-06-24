@@ -113,6 +113,10 @@ def _json_safe(value):
         return float(value)
     if isinstance(value, (datetime, date)):
         return value.isoformat()
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
     return value
 
 
@@ -167,6 +171,68 @@ def _build_internal_order_filter_options(rows: list[dict]) -> dict:
     }
 
 
+def _build_sales_order_dashboard_summary(rows: list[dict]) -> dict:
+    active_rows = [row for row in rows if row.get("follow_up_status") != "CANCELLED_RECORD"]
+
+    ordered_qty = sum(float(row.get("ordered_qty") or 0) for row in active_rows)
+    delivered_qty = sum(float(row.get("delivered_qty") or 0) for row in active_rows)
+    invoiced_qty = sum(float(row.get("invoiced_qty") or 0) for row in active_rows)
+    ordered_amount = sum(float(row.get("ordered_amount") or 0) for row in active_rows)
+    delivered_amount = sum(float(row.get("delivered_amount") or 0) for row in active_rows)
+    invoiced_amount = sum(float(row.get("invoiced_amount") or 0) for row in active_rows)
+
+    return {
+        "active_sales_orders": len(active_rows),
+        "delivered_sales_orders": sum(1 for row in active_rows if row.get("has_delivered_qty")),
+        "invoiced_sales_orders": sum(1 for row in active_rows if row.get("has_invoiced_qty")),
+        "delayed_delivery_sales_orders": sum(
+            1 for row in active_rows if row.get("follow_up_status") == "DELAYED_DELIVERY"
+        ),
+        "waiting_invoice_sales_orders": sum(
+            1 for row in active_rows if row.get("follow_up_status") == "WAITING_INVOICE"
+        ),
+        "quantity_delivery_progress_ratio": _calculate_ratio(delivered_qty, ordered_qty),
+        "quantity_invoice_progress_ratio": _calculate_ratio(invoiced_qty, ordered_qty),
+        "amount_delivery_progress_ratio": _calculate_ratio(delivered_amount, ordered_amount),
+        "amount_invoice_progress_ratio": _calculate_ratio(invoiced_amount, ordered_amount),
+        "sales_orders_from_internal_order": sum(
+            1 for row in active_rows if row.get("source_type") == "FROM_INTERNAL_ORDER"
+        ),
+        "sales_orders_make_to_order": sum(
+            1 for row in active_rows if row.get("source_type") == "MAKE_TO_ORDER"
+        ),
+        "sales_orders_from_stock": sum(
+            1 for row in active_rows if row.get("source_type") == "FROM_STOCK"
+        ),
+        "unknown_source_sales_orders": sum(
+            1 for row in active_rows if row.get("source_type") == "UNKNOWN_SOURCE"
+        ),
+        "total_ordered_qty": ordered_qty,
+        "total_delivered_qty": delivered_qty,
+        "total_invoiced_qty": invoiced_qty,
+        "total_ordered_amount": ordered_amount,
+        "total_delivered_amount": delivered_amount,
+        "total_invoiced_amount": invoiced_amount,
+    }
+
+
+def _build_sales_order_filter_options(rows: list[dict]) -> dict:
+    def unique_values(key: str) -> list[str]:
+        values = {
+            str(row[key])
+            for row in rows
+            if row.get(key) is not None and str(row.get(key)).strip()
+        }
+        return sorted(values)
+
+    return {
+        "customers": unique_values("customer_name"),
+        "source_types": unique_values("source_type"),
+        "sales_order_statuses": unique_values("sales_order_state"),
+        "follow_up_statuses": unique_values("follow_up_status"),
+    }
+
+
 def get_sync_engine() -> SyncEngine:
     """Dependency to get sync engine instance."""
     engine = SyncEngine()
@@ -193,6 +259,12 @@ async def dashboard_home():
 async def internal_order_dashboard_page():
     """Serve the Internal Order Traceability Dashboard page."""
     return FileResponse(STATIC_DIR / "dashboard" / "internal-orders.html")
+
+
+@app.get("/dashboard/sales-orders", include_in_schema=False)
+async def sales_order_dashboard_page():
+    """Serve the Sales Order Traceability Dashboard page."""
+    return FileResponse(STATIC_DIR / "dashboard" / "sales-orders.html")
 
 
 @app.get("/api/dashboard/internal-orders", tags=["Dashboard"])
@@ -275,6 +347,100 @@ async def internal_order_dashboard_data():
         }
     except Exception as e:
         logger.error("Internal Order dashboard query failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        pg.close()
+
+
+@app.get("/api/dashboard/sales-orders", tags=["Dashboard"])
+async def sales_order_dashboard_data():
+    """
+    Return Phase 2A Sales Order traceability dashboard data.
+
+    This endpoint is read-only and uses the dashboard view:
+    vw_dashboard_sales_order_traceability.
+    """
+    sql = text("""
+        SELECT
+            sales_order_id,
+            sales_order_number,
+            customer_name,
+            order_date,
+            commitment_date,
+            sales_order_state,
+            normalized_status,
+            is_cancelled,
+            is_valid_for_metrics,
+            delivery_status,
+            invoice_status,
+            raw_internal_order_reference,
+            source_type,
+            source_link_status,
+            from_internal_order_line_count,
+            from_stock_line_count,
+            make_to_order_line_count,
+            mixed_source_line_count,
+            unknown_source_line_count,
+            sales_order_line_count,
+            ordered_qty,
+            delivered_qty,
+            invoiced_qty,
+            ordered_amount,
+            delivered_amount,
+            invoiced_amount,
+            qty_delivery_progress_ratio,
+            qty_invoice_progress_ratio,
+            amount_delivery_progress_ratio,
+            amount_invoice_progress_ratio,
+            is_fully_delivered_qty,
+            is_fully_invoiced_qty,
+            is_fully_delivered_amount,
+            is_fully_invoiced_amount,
+            has_delivered_qty,
+            has_invoiced_qty,
+            internal_order_count,
+            manufacturing_order_count,
+            job_order_mo_count,
+            accounting_line_count,
+            stock_movement_diagnostic_count,
+            unknown_movement_diagnostic_count,
+            follow_up_status,
+            follow_up_status_priority,
+            sales_order_lines,
+            internal_orders,
+            manufacturing_orders,
+            diagnostics
+        FROM vw_dashboard_sales_order_traceability
+        ORDER BY
+            follow_up_status_priority,
+            commitment_date NULLS LAST,
+            sales_order_number
+    """)
+
+    pg = PostgresClient()
+    try:
+        with pg.engine.connect() as conn:
+            result = conn.execute(sql)
+            rows = [
+                {key: _json_safe(value) for key, value in row._mapping.items()}
+                for row in result.fetchall()
+            ]
+
+        return {
+            "rows": rows,
+            "summary": _build_sales_order_dashboard_summary(rows),
+            "filters": _build_sales_order_filter_options(rows),
+            "meta": {
+                "source_view": "vw_dashboard_sales_order_traceability",
+                "row_count": len(rows),
+                "phase": "2A",
+                "profitability_included": False,
+                "accounting_ar_included": False,
+                "stock_movement_counts_are_diagnostic": True,
+            },
+        }
+    except Exception as e:
+        logger.error("Sales Order dashboard query failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         pg.close()

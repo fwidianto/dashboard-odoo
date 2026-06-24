@@ -86,6 +86,67 @@ V1 milestone closeout completed:
 - Confirmed the V1 checkpoint is Internal Order Traceability only.
 - Recommended repository tag: `v1-traceability`.
 
+Business usability review completed:
+
+- Created `docs/DASHBOARD_BUSINESS_REVIEW.md`.
+- Reviewed the dashboard from VP Operations, PPIC Manager, and Procurement Manager perspectives.
+- Recommended keeping KPI cards and filters, but simplifying the default table.
+- Recommended moving raw SO/PO quantities, accounting line count, and stock movement counts into diagnostics.
+- Confirmed profitability should still wait until the traceability page is reviewed and accepted by business users.
+
+Internal Order dashboard UI simplification completed:
+
+- KPI cards were left unchanged.
+- Filters were left unchanged.
+- The default main table now keeps only IO Number, Status, Product Count, MO Count, SO Count, Delivery %, Invoice %, Receipt %, Billing %, and Traceability Status.
+- Requester, Need Date, Accounting Lines, raw SO quantities, raw PO quantities, line counts, status summaries, and stock movement counts are now shown in expandable diagnostics.
+- No SQL views, API endpoints, Data Truth Layer logic, business relationships, or traceability logic were changed.
+
+Phase 2A Sales Order Traceability architecture started:
+
+- Created `docs/SALES_ORDER_TRACEABILITY_ARCHITECTURE.md`.
+- Confirmed Sales Order is now the primary management dashboard entity.
+- Documented business questions, data sources, SO source classification, KPIs, main table, drill-down design, follow-up statuses, and readiness.
+- Confirmed the Sales Order dashboard can be built as a traceability-only Phase 2A using current data.
+- No SQL, API, frontend, Data Truth Layer, business relationship, or profitability changes were made.
+
+Phase 2A Sales Order Traceability implementation completed:
+
+- Created `sql/05_sales_order_dashboard_views.sql`.
+- Added `vw_dashboard_sales_order_traceability`.
+- Added `/dashboard/sales-orders`.
+- Added `/api/dashboard/sales-orders`.
+- Added Sales Order dashboard static files under `src/static/dashboard/`.
+- Added quantity and amount progress metrics.
+- Delay logic uses `sale_order.commitment_date`.
+- Accounting / AR remains out of scope for status; accounting line count is diagnostic only.
+- Profitability was not calculated.
+
+Phase 2A validation snapshot:
+
+| Metric | Count / Value |
+| --- | ---: |
+| total_rows | 1,201 |
+| active_sales_orders | 1,175 |
+| delivered_sales_orders | 1,034 |
+| invoiced_sales_orders | 1,072 |
+| delayed_delivery_sales_orders | 61 |
+| waiting_invoice_sales_orders | 18 |
+| waiting_delivery_sales_orders | 82 |
+| completed_sales_orders | 938 |
+| quantity_delivery_progress_ratio | 75.7% |
+| quantity_invoice_progress_ratio | 16,264.2% |
+| amount_delivery_progress_ratio | 82.0% |
+| amount_invoice_progress_ratio | 127.7% |
+| sales_orders_from_internal_order | 211 |
+| sales_orders_make_to_order | 16 |
+| sales_orders_from_stock | 73 |
+| unknown_source_sales_orders | 76 |
+
+Important Phase 2A data note:
+
+- Quantity invoice progress is extremely high because current `sale_order_line.qty_invoiced` totals exceed ordered quantity totals by a large amount. The dashboard follows the approved formula and does not reinterpret the source data.
+
 First dashboard page build completed:
 
 - Added a read-only Internal Order Traceability Dashboard page.
@@ -122,15 +183,19 @@ Business confirmation from Fauzan:
 | `src/utils/config_loader.py` | Allowed dict-style column overrides so nested fields can define `postgres_column`, `postgres_type`, and `display_name`. |
 | `src/transform/path_resolver.py` | Optimized nested `.id` resolution for Odoo many2one values like `[14, '225IO001']`, avoiding one related-record read per row. |
 | `src/api.py` | Added static dashboard serving, the `/dashboard/internal-orders` page route, the `/api/dashboard/internal-orders` JSON endpoint, and KPI summary helpers. |
-| `src/static/dashboard/internal-orders.html` | Added the first read-only dashboard page structure. |
+| `src/static/dashboard/internal-orders.html` | Added the first read-only dashboard page structure and later simplified the default table columns for operational review. |
 | `src/static/dashboard/internal-orders.css` | Added dashboard styling for KPI cards, filters, status chips, table, progress bars, and responsive layout. |
-| `src/static/dashboard/internal-orders.js` | Added client-side data loading, filters, KPI recalculation, table rendering, and expandable diagnostics. |
+| `src/static/dashboard/internal-orders.js` | Added client-side data loading, filters, KPI recalculation, table rendering, expandable diagnostics, and later moved requester, need date, accounting, and raw quantity proof fields into diagnostics. |
+| `src/static/dashboard/sales-orders.html` | Added Phase 2A Sales Order Traceability Dashboard page. |
+| `src/static/dashboard/sales-orders.css` | Added Sales Order dashboard styling that reuses the existing dashboard design system. |
+| `src/static/dashboard/sales-orders.js` | Added Sales Order dashboard data loading, KPI recalculation, filters, table rendering, and drill-down diagnostics. |
 | `requirements.txt` | Enabled FastAPI dashboard/API runtime dependencies: `fastapi`, `uvicorn`, and `python-multipart`. |
 | `tests/test_dashboard_api.py` | Added KPI summary tests for cancelled-record exclusion and zero-denominator ratios. |
 | `sql/01_base_views.sql` | Added `vw_approval_product_line_context`, changed `vw_rkb_planning_lines` to an RKB-only compatibility view, added `vw_internal_order_context`, added `vw_manufacturing_flow_context`, added `vw_sale_order_internal_order_bridge`, added finished-goods store movement classification, and corrected Internal Order/SO linkage to use numeric approval request IDs. |
 | `sql/02_traceability_views.sql` | Updated data-quality exceptions to use all approval categories, added Internal Order exceptions, kept RKB-specific checks RKB-only. |
 | `sql/03_validation_queries.sql` | Added validation counts for approval categories, Internal Order lines, IO-to-MO coverage, MO without IO/SO, manufacturing movements, finished-goods store movements, delivery movements, out-of-scope Internal Use, SO-line dashboard delivery/invoice metrics, and PO-line receipt/billing metrics. |
 | `sql/04_dashboard_traceability_views.sql` | Added dashboard-ready `vw_dashboard_internal_order_traceability`, one row per Internal Order number, updated SO linkage to use the parsed many-to-many bridge, changed v1 delivery/invoice readiness to use linked SO line quantities, and added linked PO line receipt/billing progress. |
+| `sql/05_sales_order_dashboard_views.sql` | Added Phase 2A `vw_dashboard_sales_order_traceability` for SO-first traceability, quantity/amount progress, source classification, follow-up status, and drill-down JSON. |
 | `sql/README.md` | Documented the new approval category mapping, new views, Internal Order v1 source, SO-line delivery/invoice rule, PO-line receipt/billing rule, and updated caveats. |
 | `docs/BUSINESS_FLOW.md` | Updated business flow to define Internal Order as `approval_product_line` category `MANUFACTURE` for v1 and clarified RKB vs ROP/PEMBELIAN. |
 | `docs/DATA_TRUTH_LAYER_REVIEW.md` | Updated implemented rules, view list, validation snapshot, missing-field assessment, and JO-as-production-required-SO glossary. |
@@ -138,6 +203,8 @@ Business confirmation from Fauzan:
 | `docs/INTERNAL_ORDER_TRACEABILITY_INVESTIGATION.md` | Documents Odoo metadata, extractor behavior, sync changes, bridge fix, recalculated counts, and remaining notes. |
 | `docs/DASHBOARD_DATA_CONTRACT.md` | Defines the V1 dashboard data contract, separating required V1 fields, optional diagnostics, future profitability fields, and dashboard-facing SO/JO/IO glossary. |
 | `docs/DASHBOARD_PAGE_1_INTERNAL_ORDER_TRACEABILITY.md` | Defines Page 1 layout, table columns, KPI cards, filters, follow-up logic, and frontend readiness. |
+| `docs/DASHBOARD_BUSINESS_REVIEW.md` | Reviews Page 1 from VP Operations, PPIC Manager, and Procurement Manager perspectives, with recommended KPI cards, main-table columns, diagnostic-only fields, layout, follow-up actions, and the implemented table simplification. |
+| `docs/SALES_ORDER_TRACEABILITY_ARCHITECTURE.md` | Phase 2A blueprint and implementation summary for the Sales Order Traceability Dashboard, covering business questions, source data, source classification, KPIs, table design, drill-downs, follow-up logic, readiness, routes, formulas, and validation counts. |
 | `docs/CHATGPT_HANDOFF_REPORT.md` | Rewritten as this self-contained review handoff. |
 
 ## 3. Business Rule Changes
@@ -677,6 +744,8 @@ Important interpretation:
 8. Should `Pick Components` be classified as manufacturing movement or material issue/subcomponent consumption in a future version?
 9. Is `approval_product_line.x_studio_status = approved` enough for ROP readiness, or do we need `approval_request.state`?
 10. Which accounting accounts should count as revenue, AR, COGS, or other profitability components later?
+11. Phase 2A quantity invoice progress is extremely high because `qty_invoiced` greatly exceeds ordered quantity in current data. Should this be treated as valid business meaning, a unit-of-measure issue, or an Odoo data-quality issue?
+12. Should the Sales Order dashboard keep both raw quantities and raw amounts in the main table, or move one of them into drill-down after business review?
 
 ## 7. Suggestions for ChatGPT
 
@@ -689,6 +758,8 @@ ChatGPT should review:
 - Whether PO-line received/invoiced quantities are sufficient as the v1 proof for procurement receipt and billing.
 - Whether `Store Finished Product` should remain its own movement type.
 - Whether the remaining 28 dashboard Internal Orders without later SO are expected for v1.
+- Whether the implemented simplified main table is enough for daily operational review.
+- Whether the implemented Phase 2A Sales Order dashboard is usable for management review.
 
 Risk areas:
 
@@ -698,12 +769,15 @@ Risk areas:
 - Later SO linkage now uses a parsed many-to-many bridge from `sale_order.x_studio_io_1` matched to `approval_request_numeric_id`.
 - Accounting line mapping is corrected to SO name, but accounting category meaning still needs account/header classification.
 - Profitability is not ready until estimator cost, actual valuation, labor, overhead, and accounting categories are defined.
+- Sales Order delayed-status logic is implemented using `sale_order.commitment_date`, but the business should confirm whether commitment date is the right promise-date field.
+- Quantity invoice progress can exceed 100% by a large amount because the approved formula uses raw `qty_invoiced / product_uom_qty`.
 
 Frontend readiness:
 
-- A read-only Internal Order traceability dashboard can start from `vw_dashboard_internal_order_traceability`. It now has linked SO amount, SO ordered/delivered/invoiced quantities, SO delivery/invoice progress ratios, PO ordered/received/invoiced quantities, PO receipt/invoice progress ratios, and accounting link counts.
+- The read-only Internal Order traceability dashboard is implemented from `vw_dashboard_internal_order_traceability`. It now has linked SO amount, SO ordered/delivered/invoiced quantities, SO delivery/invoice progress ratios, PO ordered/received/invoiced quantities, PO receipt/invoice progress ratios, and accounting link counts.
 - A profitability dashboard is not ready.
-- The safest first page is an Internal Order / Manufacturing Traceability review page, with clear status labels and no profitability.
+- Page 1 is implemented and the default table has been simplified. The safest next step is business-user review of the simplified table before adding drill-downs or profitability.
+- Phase 2A Sales Order Traceability is implemented as a traceability-only dashboard at `/dashboard/sales-orders`.
 
 ## 8. Suggested Next Codex Task
 
@@ -712,19 +786,21 @@ Recommended next prompt:
 ```text
 Read docs/CHATGPT_HANDOFF_REPORT.md first.
 
-Review and refine the first read-only Internal Order Traceability Dashboard page after business-user feedback.
+Review the implemented Sales Order Traceability Dashboard with business users.
 
 Read:
 - docs/CHATGPT_HANDOFF_REPORT.md
-- docs/DASHBOARD_DATA_CONTRACT.md
-- docs/DASHBOARD_PAGE_1_INTERNAL_ORDER_TRACEABILITY.md
+- docs/SALES_ORDER_TRACEABILITY_ARCHITECTURE.md
+- docs/SALES_ORDER_DASHBOARD_CONCEPT.md
+- docs/DATA_TRUTH_LAYER_REVIEW.md
 
 Task:
-- Review the working dashboard page with business feedback.
-- Remove unused or confusing columns from the main table.
-- Keep removed fields available only in diagnostics if still useful.
-- Add the first drill-down only after the column set is confirmed.
+- Review whether the implemented SO KPIs, filters, main table columns, drill-down sections, and follow-up statuses are acceptable for Phase 2A.
+- Confirm whether `sale_order.commitment_date` is the correct delayed-delivery promise-date field.
+- Review the high quantity invoice progress and confirm whether it is valid, unit-related, or data-quality-related.
+- Confirm whether both raw quantities and raw amounts should stay in the main table.
 - Do not calculate profitability.
+- Do not revisit solved IO/MO/SO relationships.
 - Do not overwrite raw tables.
 
 Rules:
@@ -732,11 +808,11 @@ Rules:
 - Do not overwrite raw Odoo tables.
 - Do not calculate profitability.
 - Do not create new business relationships.
-- Mark optional diagnostic fields clearly.
-- Exclude cancelled rows from active metrics but keep cancelled status visible.
+- Keep Sales Order as the primary business entity.
+- Keep Internal Order as supporting production traceability.
 
 Also update:
 - docs/CHATGPT_HANDOFF_REPORT.md
 
-After the dashboard is reviewed, only then start the profitability phase.
+After the Sales Order dashboard is accepted, decide whether to refine columns/drill-downs or move to the next approved phase.
 ```

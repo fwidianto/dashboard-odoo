@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sales Order Traceability Dashboard</title>
+  <link rel="stylesheet" href="/static/dashboard/sales-orders.css">
+</head>
+<body>
+  <main class="page-shell sales-dashboard">
+    <header class="page-header">
+      <div>
+        <h1>Sales Order Traceability</h1>
+        <p>Sales Order -> source -> production -> delivery progress -> invoice progress</p>
+      </div>
+      <div class="header-actions">
+        <a class="secondary-button" href="/dashboard/internal-orders">Internal Orders</a>
+        <button class="icon-button" id="refreshButton" type="button" title="Refresh data" aria-label="Refresh data">
+          <span aria-hidden="true">R</span>
+        </button>
+      </div>
+    </header>
+
+    <section class="kpi-grid" aria-label="Sales Order KPI cards">
+      <article class="kpi-card"><span class="kpi-label">Active SO</span><strong id="kpiActiveSo">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">Delivered SO</span><strong id="kpiDeliveredSo">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">Invoiced SO</span><strong id="kpiInvoicedSo">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">Delayed Delivery</span><strong id="kpiDelayedDelivery">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">Waiting Invoice</span><strong id="kpiWaitingInvoice">-</strong></article>
+      <article class="kpi-card wide">
+        <span class="kpi-label">Qty Delivery</span>
+        <strong id="kpiQtyDelivery">-</strong>
+        <div class="progress-track"><span id="barQtyDelivery"></span></div>
+      </article>
+      <article class="kpi-card wide">
+        <span class="kpi-label">Qty Invoice</span>
+        <strong id="kpiQtyInvoice">-</strong>
+        <div class="progress-track"><span id="barQtyInvoice"></span></div>
+      </article>
+      <article class="kpi-card wide">
+        <span class="kpi-label">Amount Delivery</span>
+        <strong id="kpiAmountDelivery">-</strong>
+        <div class="progress-track"><span id="barAmountDelivery"></span></div>
+      </article>
+      <article class="kpi-card wide">
+        <span class="kpi-label">Amount Invoice</span>
+        <strong id="kpiAmountInvoice">-</strong>
+        <div class="progress-track"><span id="barAmountInvoice"></span></div>
+      </article>
+      <article class="kpi-card"><span class="kpi-label">From IO</span><strong id="kpiFromIo">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">Make To Order / JO</span><strong id="kpiMakeToOrder">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">From Stock</span><strong id="kpiFromStock">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">Unknown Source</span><strong id="kpiUnknownSource">-</strong></article>
+    </section>
+
+    <section class="filter-panel" aria-label="Sales Order filters">
+      <label>
+        <span>SO Number</span>
+        <input id="soFilter" type="search" placeholder="Search SO">
+      </label>
+      <label>
+        <span>Customer</span>
+        <select id="customerFilter">
+          <option value="">All customers</option>
+        </select>
+      </label>
+      <label>
+        <span>Commitment From</span>
+        <input id="commitmentFromFilter" type="date">
+      </label>
+      <label>
+        <span>Commitment To</span>
+        <input id="commitmentToFilter" type="date">
+      </label>
+      <label>
+        <span>Source Type</span>
+        <select id="sourceFilter">
+          <option value="">All sources</option>
+        </select>
+      </label>
+      <label>
+        <span>SO Status</span>
+        <select id="statusFilter">
+          <option value="">All statuses</option>
+        </select>
+      </label>
+      <label>
+        <span>Follow-Up</span>
+        <select id="followUpFilter">
+          <option value="">All follow-up</option>
+        </select>
+      </label>
+      <button class="secondary-button" id="clearFiltersButton" type="button">Clear</button>
+    </section>
+
+    <section class="status-strip" id="statusStrip" aria-label="Follow-up status counts"></section>
+
+    <section class="table-panel" aria-label="Sales Order traceability table">
+      <div class="table-toolbar">
+        <div>
+          <strong id="rowCount">- rows</strong>
+          <span id="lastLoaded">Loading...</span>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th></th>
+              <th>SO Number</th>
+              <th>Customer</th>
+              <th>Commitment Date</th>
+              <th>Source Type</th>
+              <th>SO Status</th>
+              <th>Follow-Up</th>
+              <th class="num">Ordered Qty</th>
+              <th class="num">Delivered Qty</th>
+              <th class="num">Invoiced Qty</th>
+              <th>Qty Delivery %</th>
+              <th>Qty Invoice %</th>
+              <th class="num">Ordered Amount</th>
+              <th class="num">Delivered Amount</th>
+              <th class="num">Invoiced Amount</th>
+              <th>Amount Delivery %</th>
+              <th>Amount Invoice %</th>
+            </tr>
+          </thead>
+          <tbody id="dashboardRows">
+            <tr>
+              <td colspan="17" class="empty-cell">Loading dashboard data...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/dashboard/sales-orders.js"></script>
+</body>
+</html>
