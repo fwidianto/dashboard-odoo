@@ -18,6 +18,26 @@ Business truth for V1:
 - Procurement receipt/billing progress comes from Purchase Order line quantities.
 - Stock movement counts are optional operational diagnostics only.
 
+## Glossary
+
+| Term | Meaning |
+| --- | --- |
+| SO | Sales Order. Customer demand and revenue document. |
+| JO | Job Order. Factory terminology for an SO that requires new production. Every JO is an SO, but not every SO is a JO. |
+| IO | Internal Order. Internal make-to-stock demand used to produce finished goods before customer SO exists. |
+| RKB | PPIC material planning for comparison. |
+| ROP / PEMBELIAN | Procurement request / Request of Purchase. |
+
+V1 source interpretation:
+
+| Source | Meaning |
+| --- | --- |
+| FROM_INTERNAL_ORDER | SO is linked to IO and uses finished goods already produced from Internal Order. |
+| MAKE_TO_ORDER / JO | SO requires new production and creates or links to MO. |
+| FROM_STOCK | SO is delivered from available stock without IO/MO. |
+
+JO should not be shown as a separate object beside SO. If JO is shown in future drill-downs, label it as a production-required SO/job-order reference.
+
 ## Required V1 Fields
 
 | Field Name | Business Meaning | Source View | Source Column | Calculation Rule | Display Format |

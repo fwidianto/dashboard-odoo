@@ -6,6 +6,24 @@ Review date: 2026-06-23
 
 The Data Truth Layer now classifies fulfillment/source at Sales Order line level first, then rolls that classification up to Sales Order header level.
 
+## Glossary
+
+| Term | Meaning |
+| --- | --- |
+| SO | Sales Order. Customer demand and revenue document. |
+| JO | Job Order. Factory terminology for an SO that requires new production. Every JO is an SO, but not every SO is a JO. |
+| IO | Internal Order. Internal make-to-stock demand used to produce finished goods before customer SO exists. |
+| RKB | PPIC material planning for comparison. |
+| ROP / PEMBELIAN | Procurement request / Request of Purchase. |
+
+Important business rule:
+
+- Do not treat JO as separate from SO.
+- Treat valid JO fields as SO/job-order references.
+- Keep IO separate from JO.
+- An SO linked to IO uses prior Internal Order stock and is not treated as JO.
+- An SO that requires production is MAKE_TO_ORDER / JO.
+
 Updated SQL files:
 - `sql/01_base_views.sql`
 - `sql/02_traceability_views.sql`
@@ -59,7 +77,7 @@ Line source classification is implemented in `vw_sales_order_line_source_context
 Rules:
 - `FROM_INTERNAL_ORDER`: `sale_order.x_studio_io_1` is filled.
 - `MIXED_SOURCE`: line has both inferred stock movement and inferred MO.
-- `MAKE_TO_ORDER`: line product has inferred MO from SO origin and product.
+- `MAKE_TO_ORDER`: line product has inferred MO from SO origin and product. This is the JO/business production-required SO path.
 - `FROM_STOCK`: line has inferred delivery movement and no inferred MO.
 - `NEEDS_MOVEMENT_CLASSIFICATION`: line has only unknown movement type evidence.
 - `UNKNOWN_SOURCE`: no IO, MO, or stock movement link is available.
@@ -85,12 +103,13 @@ Rules:
 - `INVALID_BOTH_SO_AND_IO`: origin matches SO and IO is filled.
 - `INVALID_BOTH_IO_AND_JO`: IO and JO are both filled.
 - `INVALID_JO_FORMAT`: JO is non-empty, not `New`, and not exactly 7 digits.
-- `JO_BASED_MO`: only JO is filled.
+- `JO_BASED_MO`: only JO is filled. This should be understood as an MO linked to a production-required SO/job-order reference, not a separate non-SO business object.
 - `UNKNOWN_OR_MANUAL_MO`: no clear source reference.
 
 JO normalization:
 - `New` is treated as no JO.
 - valid JO must be exactly 7 digits.
+- A valid JO is a Sales Order / job-order reference used by factory users for production demand.
 
 ### Approval Product Line
 
@@ -113,6 +132,8 @@ Rules:
 - `INVALID_JO_FORMAT`: JO is non-empty, not `New`, and not exactly 7 digits.
 - `UNLINKED_RKB`: neither IO nor JO is filled.
 
+For RKB context, JO means the RKB line is connected to a production-required SO/job-order reference. It should not be modeled as a third demand source separate from SO and IO.
+
 Internal Order v1 rule:
 - Internal Order is represented by `approval_product_line.x_studio_category = MANUFACTURE`.
 - `vw_internal_order_context` exposes MANUFACTURE approval lines and links them to MO primarily by `approval_product_line.approval_request_id = mrp_production.x_studio_nomor_io`; valid JO remains secondary context.
@@ -132,6 +153,8 @@ Rules:
 - `INVALID_BOTH_IO_AND_JO`: both IO and JO are filled.
 - `INVALID_JO_FORMAT`: JO is non-empty, not `New`, and not exactly 7 digits.
 - `UNLINKED_PO`: neither IO nor JO is filled.
+
+For procurement context, JO means the PO line is connected to a production-required SO/job-order reference. IO remains the separate Internal Order make-to-stock path.
 
 The real extracted IO field is `purchase_order_line.x_studio_many2one_field_ij0j0`.
 

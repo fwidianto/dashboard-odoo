@@ -1,5 +1,90 @@
 # Odoo to PostgreSQL Synchronization Platform
 
+## Current Status
+
+V1 traceability checkpoint is complete.
+
+Completed:
+
+* Internal Order Traceability
+* Manufacturing Traceability
+* Sales Order Traceability
+* Delivery Progress Tracking
+* Invoice Progress Tracking
+* Procurement Receipt Tracking
+* Procurement Billing Tracking
+* Dashboard Page 1
+
+Current Dashboard:
+
+* Internal Order Traceability Dashboard
+* KPI Cards
+* Filters
+* Drill-down Diagnostics
+* JSON API
+
+Confirmed V1 Traceability Flow:
+
+```text
+Internal Order
+-> Manufacturing Order
+-> Sales Order
+-> Delivery Progress
+-> Invoice Progress
+-> Accounting
+```
+
+Sales Order linkage:
+
+```text
+sale_order.x_studio_io_1
+-> approval_request.id
+-> approval_request.name
+-> approval_product_line
+```
+
+Progress sources:
+
+* Delivery progress: `sale_order_line.qty_delivered`
+* Invoice progress: `sale_order_line.qty_invoiced`
+* Procurement receipt progress: `purchase_order_line.qty_received`
+* Procurement billing progress: `purchase_order_line.qty_invoiced`
+* Stock movements: optional diagnostics only
+
+Business glossary:
+
+| Term | Meaning |
+| --- | --- |
+| SO | Sales Order |
+| JO | Job Order; factory terminology for a production-required Sales Order. Every JO is an SO, but not every SO is a JO. |
+| IO | Internal Order; internal make-to-stock production represented by `approval_product_line` where category = `MANUFACTURE`. |
+| RKB | PPIC material planning |
+| ROP / PEMBELIAN | Procurement request |
+
+Not Yet Implemented:
+
+* Profitability Engine
+* Estimator vs Actual
+* Cost Variance Analysis
+* Material Costing
+* Margin Analysis
+* Revenue Classification
+* COGS Classification
+
+Run the dashboard:
+
+```bash
+python -m uvicorn src.api:app --host 127.0.0.1 --port 8000
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8000/dashboard/internal-orders
+```
+
+---
+
 A production-ready, **model-based** synchronization platform that bridges Odoo ERP with PostgreSQL databases. Built with Python, SQLAlchemy, and designed for extensibility.
 
 ## 🎯 NEW: Model-Based Architecture

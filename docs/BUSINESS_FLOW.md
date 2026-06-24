@@ -15,6 +15,25 @@ The system must answer:
 
 ---
 
+# Glossary
+
+| Term | Meaning |
+| --- | --- |
+| SO | Sales Order. Customer demand and revenue document. |
+| JO | Job Order. Factory terminology for an SO that requires new production. Every JO is an SO, but not every SO is a JO. |
+| IO | Internal Order. Internal make-to-stock demand used to produce finished goods before a customer SO exists. |
+| RKB | PPIC material planning for comparison. It does not directly trigger purchasing. |
+| ROP / PEMBELIAN | Procurement request / Request of Purchase. |
+
+Important clarification:
+
+* JO is not a separate demand type from SO.
+* JO means the Sales Order requires production or represents production demand.
+* If an SO consumes finished goods already produced from Internal Order, it is not treated as JO.
+* Keep IO separate from JO.
+
+---
+
 # 1. Business Entities
 
 ## Sales Order (SO)
@@ -26,6 +45,14 @@ A Sales Order may:
 * Consume existing finished goods inventory
 * Trigger a Manufacturing Order
 * Be linked to a previous Internal Order
+
+Sales Order source types for V1:
+
+| SO source type | Business meaning |
+| --- | --- |
+| FROM_INTERNAL_ORDER | SO links to an IO and uses finished goods already produced from that IO. No new MO should be needed for this SO. |
+| MAKE_TO_ORDER / JO | SO requires new production and creates or links to MO. Factory users call this JO. |
+| FROM_STOCK | SO is delivered from available stock without IO/MO. |
 
 Sales Order is the primary revenue source.
 
@@ -95,8 +122,10 @@ Purpose:
 
 Manufacturing Orders may originate from:
 
-1. Sales Orders
+1. Sales Orders that require production, also called JO by factory users
 2. Internal Orders
+
+JO fields in Odoo should be interpreted as Sales Order / job-order references where valid, not as a separate entity competing with SO.
 
 ---
 

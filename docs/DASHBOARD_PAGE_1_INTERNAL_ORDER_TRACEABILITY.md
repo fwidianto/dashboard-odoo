@@ -135,11 +135,11 @@ Rows that require attention:
 | `linked_po_line_count > 0 AND po_receipt_progress_ratio < 1` | Procurement not fully received. |
 | `linked_po_line_count > 0 AND po_invoice_progress_ratio < 1` | Procurement not fully billed. |
 
-## Can Frontend Start?
+## Frontend Status
 
-YES.
+YES. Page 1 has been implemented as the first read-only Internal Order Traceability Dashboard.
 
-The frontend can start for Page 1 because:
+The page is ready for business-user review because:
 
 - The V1 Data Truth Layer is stable.
 - The page has one primary source view.
@@ -160,4 +160,4 @@ Required backend changes before frontend:
 
 Recommended next milestone:
 
-Create the frontend page using `vw_dashboard_internal_order_traceability`, starting with KPI cards, filters, and the main Internal Order table. Keep detail drill-down and profitability for later milestones.
+Review the working dashboard with business users, remove unused or confusing columns, then add the first drill-down. Start profitability only after the traceability page is accepted.

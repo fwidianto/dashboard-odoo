@@ -10,6 +10,33 @@ Fauzan clarified the approval-module business roles for the Odoo manufacturing d
 - `MANUFACTURE` means Internal Order.
 - `INTERNAL USE` is out of current dashboard scope.
 
+Fauzan also clarified JO terminology:
+
+- JO means Job Order.
+- Every JO is an SO.
+- Not every SO is a JO.
+- JO is factory terminology for a Sales Order that requires production.
+- If an SO uses finished goods already produced from Internal Order, then it is not treated as JO.
+- If an SO requires new production, factory users call it JO.
+
+Glossary:
+
+| Term | Meaning |
+| --- | --- |
+| SO | Sales Order. Customer demand and revenue document. |
+| JO | Job Order. Production-required SO. |
+| IO | Internal Order. Internal make-to-stock production before customer SO exists. |
+| RKB | PPIC material planning. |
+| ROP / PEMBELIAN | Procurement request / Request of Purchase. |
+
+SO source interpretation:
+
+| SO source | Meaning |
+| --- | --- |
+| FROM_INTERNAL_ORDER | SO linked to IO, no new MO should be needed. |
+| MAKE_TO_ORDER / JO | SO requires production and creates or links to MO. |
+| FROM_STOCK | SO delivered from available stock without IO/MO. |
+
 The Data Truth Layer was updated so Internal Order is no longer treated as a missing master table for v1. Instead, Internal Order is represented by `approval_product_line` rows where `x_studio_category = MANUFACTURE`.
 
 Correction applied after validation: for MANUFACTURE approval lines, `approval_request_id` displays the Internal Order number. The primary bridge to Manufacturing Order is now:
@@ -24,7 +51,7 @@ New traceability views were added to connect:
 
 Internal Order approval lines -> Manufacturing Orders -> stock movements -> later Sales Order if inferable -> accounting if linked.
 
-No frontend was built. No profitability calculation was added. Raw Odoo tables were not overwritten.
+Frontend Page 1 was later built as a read-only Internal Order Traceability Dashboard. No profitability calculation was added. Raw Odoo tables were not overwritten.
 
 Latest addition: created `vw_dashboard_internal_order_traceability` in `sql/04_dashboard_traceability_views.sql`. It is dashboard-ready traceability at one row per Internal Order number.
 
@@ -49,8 +76,15 @@ Dashboard contract/design pass completed:
 
 - Created `docs/DASHBOARD_DATA_CONTRACT.md`.
 - Created `docs/DASHBOARD_PAGE_1_INTERNAL_ORDER_TRACEABILITY.md`.
-- Confirmed frontend development can start for Page 1 using `vw_dashboard_internal_order_traceability`.
-- Page 1 remains traceability-only. No profitability calculation and no frontend code were added.
+- Confirmed Page 1 should use `vw_dashboard_internal_order_traceability`.
+- Page 1 remains traceability-only. No profitability calculation was added.
+
+V1 milestone closeout completed:
+
+- Updated `README.md` with the current project status.
+- Created `docs/MILESTONE_V1_TRACEABILITY_COMPLETE.md`.
+- Confirmed the V1 checkpoint is Internal Order Traceability only.
+- Recommended repository tag: `v1-traceability`.
 
 First dashboard page build completed:
 
@@ -99,10 +133,10 @@ Business confirmation from Fauzan:
 | `sql/04_dashboard_traceability_views.sql` | Added dashboard-ready `vw_dashboard_internal_order_traceability`, one row per Internal Order number, updated SO linkage to use the parsed many-to-many bridge, changed v1 delivery/invoice readiness to use linked SO line quantities, and added linked PO line receipt/billing progress. |
 | `sql/README.md` | Documented the new approval category mapping, new views, Internal Order v1 source, SO-line delivery/invoice rule, PO-line receipt/billing rule, and updated caveats. |
 | `docs/BUSINESS_FLOW.md` | Updated business flow to define Internal Order as `approval_product_line` category `MANUFACTURE` for v1 and clarified RKB vs ROP/PEMBELIAN. |
-| `docs/DATA_TRUTH_LAYER_REVIEW.md` | Updated implemented rules, view list, validation snapshot, and missing-field assessment. |
+| `docs/DATA_TRUTH_LAYER_REVIEW.md` | Updated implemented rules, view list, validation snapshot, missing-field assessment, and JO-as-production-required-SO glossary. |
 | `docs/DATA_QUALITY_INVESTIGATION.md` | Documented why `MANUFACTURE` is no longer `OTHER_APPROVAL_CATEGORY` and added current Internal Order / movement counts. |
 | `docs/INTERNAL_ORDER_TRACEABILITY_INVESTIGATION.md` | Documents Odoo metadata, extractor behavior, sync changes, bridge fix, recalculated counts, and remaining notes. |
-| `docs/DASHBOARD_DATA_CONTRACT.md` | Defines the V1 dashboard data contract, separating required V1 fields, optional diagnostics, and future profitability fields. |
+| `docs/DASHBOARD_DATA_CONTRACT.md` | Defines the V1 dashboard data contract, separating required V1 fields, optional diagnostics, future profitability fields, and dashboard-facing SO/JO/IO glossary. |
 | `docs/DASHBOARD_PAGE_1_INTERNAL_ORDER_TRACEABILITY.md` | Defines Page 1 layout, table columns, KPI cards, filters, follow-up logic, and frontend readiness. |
 | `docs/CHATGPT_HANDOFF_REPORT.md` | Rewritten as this self-contained review handoff. |
 
@@ -259,6 +293,13 @@ Status fields currently used:
 
 JO fields often contain `New`, which is a placeholder and must be treated as null.
 
+Business meaning:
+
+- JO means Job Order.
+- JO is a production-required Sales Order, not a separate demand object outside SO.
+- Valid JO fields should be interpreted as SO/job-order references.
+- IO remains separate from JO.
+
 Valid JO:
 
 - not null
@@ -272,6 +313,28 @@ Applies to:
 - `mrp_production.x_studio_nomor_jo`
 - `approval_product_line.x_studio_nomor_jo`
 - `purchase_order_line.x_studio_jo`
+
+### SQL Naming Review After JO Clarification
+
+No SQL was changed in this documentation pass.
+
+Recommended future SQL/label cleanup before expanding the frontend:
+
+| Current SQL name/label | Suggested clearer meaning | Recommendation |
+| --- | --- | --- |
+| `job_order_number` | Production-required SO / JO reference | Keep for compatibility, consider adding alias `production_so_number` or `job_order_sales_order_number` in future views. |
+| `has_job_order` | Has valid production-required SO reference | Keep for now, consider alias `has_production_so_reference`. |
+| `JO_BASED_MO` | MO linked by production-required SO/job-order field | Keep status value for now, document as SO/JO-based production demand. |
+| `JO_BASED_RKB` | RKB linked to production-required SO/job-order field | Keep status value for now, document as SO/JO planning context. |
+| `JO_BASED_PO` | PO line linked to production-required SO/job-order field | Keep status value for now, document as SO/JO procurement context. |
+| `INVALID_BOTH_IO_AND_JO` | Record has both Internal Order and production-required SO reference | Keep exception logic because IO and JO/SO production paths should remain separate. |
+| `MISSING_IO_AND_JO` | Missing Internal Order and missing production-required SO reference | Keep for internal validation, consider UI label "Missing IO/SO production reference." |
+
+Frontend label guidance:
+
+- Show `JO` only as "JO / Production SO" or "Job Order (production SO)" in drill-downs.
+- Do not add a top-level JO dashboard entity separate from SO.
+- Keep current V1 dashboard focused on Internal Order traceability.
 
 ### Accounting / SO Mapping
 
@@ -371,11 +434,11 @@ Filters:
 | Status | `status_summary` |
 | Traceability Status | `traceability_status` |
 
-Can frontend start?
+Frontend status
 
-YES for Page 1. No backend changes are required before building the first read-only Internal Order Traceability Dashboard. Profitability and product-level drill-down remain later milestones.
+Page 1 is implemented as the first read-only Internal Order Traceability Dashboard. No backend changes are required for the V1 review. Profitability and product-level drill-down remain later milestones.
 
-Frontend Page 1 has now started and the first read-only implementation is working locally.
+Frontend Page 1 is working locally.
 
 Implemented screen areas:
 
@@ -608,7 +671,7 @@ Important interpretation:
 2. Should `sale_order.delivery_status` and `sale_order.invoice_status` override quantity-based flags when they disagree?
 3. Should `purchase_order_line.state` be enough for PO readiness, or should purchase header status be synced later?
 4. 28 dashboard Internal Orders still have no later SO after the numeric bridge fix. Are these expected old/new/abandoned records, or should some have SO links?
-5. Why do active Internal Order lines have zero valid JO values? Is JO not used for this flow, or is another JO field needed?
+5. Active Internal Order lines have zero valid JO values. This may be correct because JO is a production-required SO path, while IO is the make-to-stock path; confirm no IO dashboard field needs to show JO by default.
 6. Should `approval_product_line.x_studio_nomor_io` still be used for any MANUFACTURE logic, or only displayed as secondary/raw context?
 7. Should `Store Finished Product` / delivery stock movement diagnostics be investigated later as advanced traceability, or ignored for v1?
 8. Should `Pick Components` be classified as manufacturing movement or material issue/subcomponent consumption in a future version?
