@@ -20,10 +20,10 @@ APScheduler>=3.10.4
 # Logging & Monitoring
 structlog>=24.1.0
 
-# Optional: FastAPI (for future integration)
-# fastapi>=0.109.0
-# uvicorn>=0.27.0
-# python-multipart>=0.0.6
+# FastAPI dashboard/API
+fastapi>=0.109.0
+uvicorn>=0.27.0
+python-multipart>=0.0.6
 
 # Testing
 pytest>=7.4.4

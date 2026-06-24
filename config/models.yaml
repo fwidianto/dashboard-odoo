@@ -222,6 +222,10 @@ models:
       write_date: Last Updated on
       create_date: Created on
       approval_request_id: Approval Request
+      approval_request_id.id:
+        postgres_column: approval_request_numeric_id
+        postgres_type: INTEGER
+        display_name: Approval Request Numeric ID
       x_studio_nomor_io: IO Number
       x_studio_nomor_jo: JO Number
       x_studio_status: Status
@@ -236,6 +240,19 @@ models:
       x_studio_date_of_need: Date of Need
       company_id: Company
       x_studio_category: Category
+
+  approval.request:
+    columns:
+      id: ID
+      name: Approval Subject
+      display_name: Display Name
+      request_status: Request Status
+      category_id: Category
+      request_owner_id: Request Owner
+      create_date: Created on
+      write_date: Last Updated on
+      date_confirmed: Date Confirmed
+      company_id: Company
 
 
 # =============================================================================

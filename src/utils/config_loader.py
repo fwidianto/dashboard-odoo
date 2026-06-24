@@ -551,7 +551,16 @@ class ConfigLoader:
         # Handle new dict format: { technical_name: display_name }
         if isinstance(explicit_fields, dict):
             for tech_name, display_name in explicit_fields.items():
-                if isinstance(tech_name, str) and isinstance(display_name, str):
+                if not isinstance(tech_name, str):
+                    continue
+
+                field_overrides = {}
+                resolved_display_name = display_name
+                if isinstance(display_name, dict):
+                    field_overrides = dict(display_name)
+                    resolved_display_name = field_overrides.pop("display_name", tech_name)
+
+                if isinstance(resolved_display_name, str):
                     base_field = get_base_field(tech_name)
                     
                     if is_nested_path(tech_name):
@@ -559,11 +568,12 @@ class ConfigLoader:
                         if base_field in auto_lookup:
                             field_config = {**auto_lookup[base_field]}
                             field_config['odoo_field'] = tech_name
-                            field_config['postgres_column'] = base_field
+                            field_config['postgres_column'] = tech_name.replace('.', '_')
                             field_config['postgres_type'] = 'TEXT'
                             field_config['is_foreign_key'] = False
-                            field_config['display_name'] = display_name
+                            field_config['display_name'] = resolved_display_name
                             field_config['is_nested_path'] = True
+                            field_config.update(field_overrides)
                             result.append(field_config)
                         else:
                             # Base field not found - still include with warning
@@ -575,7 +585,8 @@ class ConfigLoader:
                     elif tech_name in auto_lookup:
                         # Simple field - validate normally
                         field_config = {**auto_lookup[tech_name]}
-                        field_config['display_name'] = display_name
+                        field_config['display_name'] = resolved_display_name
+                        field_config.update(field_overrides)
                         result.append(field_config)
                     else:
                         # Field not found - include with warning but don't skip
@@ -584,12 +595,14 @@ class ConfigLoader:
                             f"Field '{tech_name}' not found in Odoo. "
                             f"Including anyway - may be custom field."
                         )
-                        result.append({
+                        field_config = {
                             'odoo_field': tech_name,
                             'postgres_column': tech_name.replace('.', '_'),
                             'postgres_type': 'TEXT',
                             'nullable': True,
-                        })
+                        }
+                        field_config.update(field_overrides)
+                        result.append(field_config)
             return result
 
         for field in explicit_fields:

@@ -4,12 +4,17 @@ This module provides a REST API for managing synchronization tasks.
 Designed for production deployment with uvicorn.
 """
 
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 
 from src.engine.sync_engine import SyncEngine
 from src.engine.scheduler import SyncScheduler
@@ -37,6 +42,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Global instances
 _scheduler: Optional[SyncScheduler] = None
@@ -99,6 +107,66 @@ class ResetRequest(BaseModel):
     models: list[str] = Field(..., description="Models to reset")
 
 
+def _json_safe(value):
+    """Convert database values into JSON-friendly primitives."""
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    return value
+
+
+def _calculate_ratio(numerator: float, denominator: float) -> Optional[float]:
+    if not denominator:
+        return None
+    return numerator / denominator
+
+
+def _build_internal_order_dashboard_summary(rows: list[dict]) -> dict:
+    active_rows = [row for row in rows if row.get("traceability_status") != "CANCELLED_RECORD"]
+
+    so_ordered = sum(float(row.get("total_so_ordered_qty") or 0) for row in active_rows)
+    so_delivered = sum(float(row.get("total_so_delivered_qty") or 0) for row in active_rows)
+    so_invoiced = sum(float(row.get("total_so_invoiced_qty") or 0) for row in active_rows)
+    po_ordered = sum(float(row.get("total_po_ordered_qty") or 0) for row in active_rows)
+    po_received = sum(float(row.get("total_po_received_qty") or 0) for row in active_rows)
+    po_invoiced = sum(float(row.get("total_po_invoiced_qty") or 0) for row in active_rows)
+
+    return {
+        "active_internal_orders": len(active_rows),
+        "internal_orders_with_mo": sum(1 for row in active_rows if row.get("linked_mo_count", 0) > 0),
+        "internal_orders_with_so": sum(1 for row in active_rows if row.get("linked_so_count", 0) > 0),
+        "internal_orders_delivered": sum(1 for row in active_rows if row.get("has_delivered_so")),
+        "internal_orders_invoiced": sum(1 for row in active_rows if row.get("has_invoiced_so")),
+        "delivery_progress_ratio": _calculate_ratio(so_delivered, so_ordered),
+        "invoice_progress_ratio": _calculate_ratio(so_invoiced, so_ordered),
+        "procurement_receipt_progress_ratio": _calculate_ratio(po_received, po_ordered),
+        "procurement_billing_progress_ratio": _calculate_ratio(po_invoiced, po_ordered),
+        "total_so_ordered_qty": so_ordered,
+        "total_so_delivered_qty": so_delivered,
+        "total_so_invoiced_qty": so_invoiced,
+        "total_po_ordered_qty": po_ordered,
+        "total_po_received_qty": po_received,
+        "total_po_invoiced_qty": po_invoiced,
+    }
+
+
+def _build_internal_order_filter_options(rows: list[dict]) -> dict:
+    def unique_values(key: str) -> list[str]:
+        values = {
+            str(row[key])
+            for row in rows
+            if row.get(key) is not None and str(row.get(key)).strip()
+        }
+        return sorted(values)
+
+    return {
+        "requesters": unique_values("requester"),
+        "statuses": unique_values("status_summary"),
+        "traceability_statuses": unique_values("traceability_status"),
+    }
+
+
 def get_sync_engine() -> SyncEngine:
     """Dependency to get sync engine instance."""
     engine = SyncEngine()
@@ -114,6 +182,103 @@ def get_scheduler() -> Optional[SyncScheduler]:
 # ============================================
 # Health Endpoints
 # ============================================
+
+@app.get("/", include_in_schema=False)
+async def dashboard_home():
+    """Open the first dashboard page by default."""
+    return FileResponse(STATIC_DIR / "dashboard" / "internal-orders.html")
+
+
+@app.get("/dashboard/internal-orders", include_in_schema=False)
+async def internal_order_dashboard_page():
+    """Serve the Internal Order Traceability Dashboard page."""
+    return FileResponse(STATIC_DIR / "dashboard" / "internal-orders.html")
+
+
+@app.get("/api/dashboard/internal-orders", tags=["Dashboard"])
+async def internal_order_dashboard_data():
+    """
+    Return V1 Internal Order traceability dashboard data.
+
+    This endpoint is read-only and uses the validated dashboard view:
+    vw_dashboard_internal_order_traceability.
+    """
+    sql = text("""
+        SELECT
+            internal_order_number,
+            traceability_status,
+            status_summary,
+            requester,
+            needed_date_from,
+            needed_date_to,
+            line_count,
+            product_count,
+            linked_mo_count,
+            linked_so_count,
+            linked_so_line_count,
+            total_so_amount,
+            total_so_ordered_qty,
+            total_so_delivered_qty,
+            total_so_invoiced_qty,
+            so_delivery_progress_ratio,
+            so_invoice_progress_ratio,
+            has_delivered_so,
+            has_invoiced_so,
+            delivery_status_summary,
+            invoice_status_summary,
+            linked_po_line_count,
+            total_po_ordered_qty,
+            total_po_received_qty,
+            total_po_invoiced_qty,
+            po_receipt_progress_ratio,
+            po_invoice_progress_ratio,
+            purchase_status_summary,
+            accounting_line_count,
+            manufacturing_movement_count,
+            finished_goods_store_count,
+            delivery_movement_count
+        FROM vw_dashboard_internal_order_traceability
+        ORDER BY
+            CASE traceability_status
+                WHEN 'HAS_ACCOUNTING_LINK' THEN 1
+                WHEN 'HAS_INVOICED_SO' THEN 2
+                WHEN 'HAS_DELIVERED_SO' THEN 3
+                WHEN 'HAS_LINKED_SO' THEN 4
+                WHEN 'HAS_MO_NO_SO_YET' THEN 5
+                WHEN 'NEW_OR_TO_SUBMIT_NO_MO' THEN 6
+                WHEN 'OLD_OR_UNLINKED_NO_MO' THEN 7
+                WHEN 'CANCELLED_RECORD' THEN 8
+                ELSE 9
+            END,
+            internal_order_number
+    """)
+
+    pg = PostgresClient()
+    try:
+        with pg.engine.connect() as conn:
+            result = conn.execute(sql)
+            rows = [
+                {key: _json_safe(value) for key, value in row._mapping.items()}
+                for row in result.fetchall()
+            ]
+
+        return {
+            "rows": rows,
+            "summary": _build_internal_order_dashboard_summary(rows),
+            "filters": _build_internal_order_filter_options(rows),
+            "meta": {
+                "source_view": "vw_dashboard_internal_order_traceability",
+                "row_count": len(rows),
+                "profitability_included": False,
+                "stock_movement_counts_are_diagnostic": True,
+            },
+        }
+    except Exception as e:
+        logger.error("Internal Order dashboard query failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        pg.close()
+
 
 @app.get("/health", response_model=HealthResponse, tags=["Health"])
 async def health_check():

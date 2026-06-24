@@ -48,6 +48,31 @@ Purpose:
 
 Internal Orders generate Manufacturing Orders before customer Sales Orders exist.
 
+For dashboard v1, Internal Order is not a separate missing master table.
+Internal Order exists inside the approval module:
+
+* `approval_product_line`
+* `x_studio_category = MANUFACTURE`
+
+For MANUFACTURE approval lines, `approval_request_id` displays the Internal Order number.
+The primary bridge to Manufacturing Order is:
+
+* `approval_product_line.approval_request_id = mrp_production.x_studio_nomor_io`
+
+`approval_product_line.x_studio_nomor_io` is secondary context and should not be the primary Internal Order bridge for v1.
+
+Later Sales Orders produced from Internal Order stock are linked by the Sales Order IO field:
+
+* `sale_order.x_studio_io_1`
+
+This field is stored as set/list text, for example `{1081}` or `{1361,1578}`.
+It must be parsed into individual numeric approval request IDs.
+
+One Sales Order may reference multiple Internal Orders.
+One Internal Order may be referenced by multiple Sales Orders.
+
+Do not infer the Internal Order to Sales Order relationship directly from MO.
+
 Once a customer order arrives:
 
 * Sales Order references Internal Order
@@ -197,9 +222,15 @@ Stored in:
 
 approval_product_line
 
-Category:
+Approval categories:
 
-RKB
+| Category | Business role |
+| --- | --- |
+| RKB | Material planning / PPIC comparison |
+| PEMBELIAN | ROP / Request of Purchase |
+| ROP | Same business meaning as PEMBELIAN |
+| MANUFACTURE | Internal Order |
+| INTERNAL USE | Out of current dashboard scope |
 
 (Custom module)
 
@@ -207,21 +238,28 @@ RKB
 
 # 5. RKB Purpose
 
-RKB is the detailed material requirement list.
+RKB is the detailed material requirement list for PPIC planning and comparison.
 
 It serves as:
 
 * Production planning document
-* Procurement planning document
 * Cost comparison document
 
 RKB is significantly more detailed than Estimator data.
 
 Because RKB contains actual material requirements, it can be matched directly against Manufacturing Orders.
 
+RKB does not directly trigger purchasing. Procurement request flow comes from ROP/PEMBELIAN approval lines.
+
 ---
 
 # 6. Procurement & Inventory Flow
+
+Important v1 rule:
+
+* RKB is planning/comparison only and does not directly trigger purchasing.
+* ROP / PEMBELIAN is the approval-based Request of Purchase flow.
+* MANUFACTURE approval lines represent Internal Order flow into Manufacturing Order.
 
 RKB
 → Check Inventory

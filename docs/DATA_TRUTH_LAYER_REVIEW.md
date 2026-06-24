@@ -16,9 +16,12 @@ Updated or created views:
 - `vw_sales_order_revenue`
 - `vw_mrp_order_context`
 - `vw_stock_movement_context`
+- `vw_approval_product_line_context`
 - `vw_rkb_planning_lines`
+- `vw_internal_order_context`
 - `vw_procurement_lines`
 - `vw_accounting_sales_lines`
+- `vw_manufacturing_flow_context`
 - `vw_sales_order_line_source_context`
 - `vw_sales_order_source_summary`
 - `vw_so_traceability`
@@ -89,13 +92,17 @@ JO normalization:
 - `New` is treated as no JO.
 - valid JO must be exactly 7 digits.
 
-### RKB / Approval Product Line
+### Approval Product Line
 
-Implemented in `vw_rkb_planning_lines`.
+Implemented in `vw_approval_product_line_context`.
+
+`vw_rkb_planning_lines` is retained as a compatibility view filtered to RKB-only rows.
 
 Approval category rules:
 - `RKB` -> `RKB_PLANNING`
 - `ROP` / `PEMBELIAN` -> `ROP_PROCUREMENT_REQUEST`
+- `MANUFACTURE` -> `INTERNAL_ORDER`
+- `INTERNAL USE` -> `OUT_OF_SCOPE_INTERNAL_USE`
 - empty/null/`New`/`{}` -> `UNKNOWN_APPROVAL_CATEGORY`
 - other values -> `OTHER_APPROVAL_CATEGORY`
 
@@ -105,6 +112,15 @@ Rules:
 - `INVALID_BOTH_IO_AND_JO`: both IO and JO are filled.
 - `INVALID_JO_FORMAT`: JO is non-empty, not `New`, and not exactly 7 digits.
 - `UNLINKED_RKB`: neither IO nor JO is filled.
+
+Internal Order v1 rule:
+- Internal Order is represented by `approval_product_line.x_studio_category = MANUFACTURE`.
+- `vw_internal_order_context` exposes MANUFACTURE approval lines and links them to MO primarily by `approval_product_line.approval_request_id = mrp_production.x_studio_nomor_io`; valid JO remains secondary context.
+- A separate Internal Order master table is not required for v1.
+
+Manufacturing flow rule:
+- `vw_manufacturing_flow_context` connects Internal Order approval lines -> MO -> stock movement classification -> later SO if inferable -> accounting if linked.
+- SO is not forced; missing later SO is marked as no SO link yet.
 
 ### Purchase Order Line
 
@@ -154,57 +170,67 @@ Latest validation run after cancelled-record exclusion:
 | --- | ---: |
 | total_so_active | 1,175 |
 | total_so_cancelled | 26 |
-| total_so_lines_active | 11,960 |
+| total_so_lines_active | 11,967 |
 | total_so_lines_cancelled | 286 |
 | active_so_with_mo | 790 |
 | active_so_without_mo | 385 |
 | active_so_with_stock_movement | 1,059 |
-| active_so_with_accounting_line | 1,074 |
-| active_so_mixed_source | 799 |
-| active_so_unknown_source | 79 |
+| active_so_with_accounting_line | 1,077 |
+| active_so_mixed_source | 797 |
+| active_so_unknown_source | 80 |
 | active_so_line_from_internal_order | 1,026 |
-| active_so_line_from_stock | 621 |
-| active_so_line_make_to_order | 1,348 |
-| active_so_line_mixed_source | 6,406 |
-| active_so_line_unknown_source | 2,559 |
+| active_so_line_from_stock | 620 |
+| active_so_line_make_to_order | 1,353 |
+| active_so_line_mixed_source | 6,401 |
+| active_so_line_unknown_source | 2,567 |
 | active_so_line_needs_movement_classification | 0 |
 | active_rkb_count | 27,374 |
-| active_rop_count | 14,182 |
+| active_rop_count | 14,184 |
+| active_internal_order_lines | 1,023 |
+| active_internal_order_lines_with_io_number | 1,023 |
+| active_internal_order_lines_with_valid_jo | 0 |
+| active_internal_order_lines_linked_to_mo | 817 |
+| active_internal_order_lines_not_linked_to_mo | 206 |
+| active_out_of_scope_internal_use_count | 50 |
 | unknown_approval_category_count | 24 |
-| other_approval_category_count | 1,073 |
-| active_mo_count | 10,041 |
+| other_approval_category_count | 0 |
+| active_mo_count | 10,048 |
 | cancelled_mo_count | 763 |
 | active_mo_with_io | 1,205 |
-| active_mo_without_so | 1,607 |
+| active_mo_linked_to_internal_order | 1,204 |
+| active_mo_not_linked_to_internal_order_or_so | 243 |
+| active_mo_without_so | 1,609 |
 | active_mo_invalid_both_so_and_io | 0 |
 | active_mo_invalid_both_io_and_jo | 31 |
 | active_mo_invalid_jo_format | 1 |
-| active_rkb_count | 42,653 |
-| cancelled_rkb_count | 270 |
-| active_rkb_lines_with_io_or_jo | 37,833 |
-| active_rkb_invalid_both_io_and_jo | 16 |
-| active_rkb_invalid_jo_format | 23 |
-| active_rkb_unlinked | 4,797 |
-| active_po_count | 18,458 |
+| cancelled_rkb_count | 59 |
+| active_rkb_lines_with_io_or_jo | 26,973 |
+| active_rkb_invalid_both_io_and_jo | 0 |
+| active_rkb_invalid_jo_format | 0 |
+| active_rkb_unlinked | 402 |
+| active_po_count | 18,468 |
 | cancelled_po_count | 2,488 |
-| active_po_lines_with_io_or_jo | 10,830 |
+| active_po_lines_with_io_or_jo | 10,836 |
 | active_po_invalid_both_io_and_jo | 11 |
 | active_po_invalid_jo_format | 0 |
-| active_po_unlinked | 7,628 |
-| active_stock_move_line_count | 225,031 |
+| active_po_unlinked | 7,632 |
+| active_stock_move_line_count | 225,420 |
 | cancelled_stock_move_line_count | 340 |
-| active_accounting_line_count | 416,775 |
-| active_accounting_lines_linked_to_so | 28,759 |
-| accounting_lines_x_studio_sales_order_new | 389,197 |
+| delivery_movement_count | 8,584 |
+| finished_goods_store_movement_count | 8,110 |
+| manufacturing_movement_count | 163,635 |
+| active_accounting_line_count | 417,947 |
+| active_accounting_lines_linked_to_so | 28,956 |
+| accounting_lines_x_studio_sales_order_new | 390,172 |
 | active_accounting_lines_unmatched_non_new_so_number | 26 |
-| cancelled_accounting_line_count | 3,695 |
+| cancelled_accounting_line_count | 3,698 |
 
 ## Still Lacking
 
 For accurate fulfillment and profitability, these fields/tables are still needed:
 - `sale_order_line.x_studio_io_1` or another line-level IO field, if line-specific IO exists in Odoo.
-- Internal Order master table.
-- `approval_request` or approval category field to confirm category = RKB.
+- Stronger Internal Order to later Sales Order bridge after make-to-stock fulfillment.
+- `approval_request.state` for header-level approval state.
 - `stock_move`, `stock_picking`, and `stock_location` for reliable delivery and stock source classification.
 - `account_move` for invoice header/payment state.
 - Accounting SO mapping now uses normalized `account_move_line.x_studio_sales_order = sale_order.name`, not `sale_order.id`.

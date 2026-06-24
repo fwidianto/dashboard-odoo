@@ -288,45 +288,70 @@ WHERE rkb_source_type IN ('INVALID_BOTH_IO_AND_JO', 'INVALID_JO_FORMAT')
 UNION ALL
 SELECT
     'APPROVAL_PRODUCT_LINE' AS record_type,
-    rkb_line_id::text AS record_id,
+    approval_line_id::text AS record_id,
     approval_request_id AS business_reference,
     approval_business_type AS exception_type,
     CASE
         WHEN approval_business_type = 'UNKNOWN_APPROVAL_CATEGORY' THEN 'Approval product line has missing/empty approval category.'
-        ELSE 'Approval product line has approval category outside confirmed RKB/ROP categories.'
+        ELSE 'Approval product line has approval category outside confirmed RKB/ROP/MANUFACTURE/INTERNAL USE categories.'
     END AS exception_message,
     'UNKNOWN' AS exception_status,
     'MEDIUM' AS severity
-FROM vw_rkb_planning_lines
+FROM vw_approval_product_line_context
 WHERE is_valid_for_metrics
   AND approval_business_type IN ('UNKNOWN_APPROVAL_CATEGORY', 'OTHER_APPROVAL_CATEGORY')
 
 UNION ALL
 SELECT
     'APPROVAL_PRODUCT_LINE' AS record_type,
-    rkb_line_id::text AS record_id,
+    approval_line_id::text AS record_id,
     approval_request_id AS business_reference,
     'CANCELLED_APPROVAL_LINKED_TO_FLOW' AS exception_type,
     'Cancelled approval product line is still linked to IO/JO flow.' AS exception_message,
     'CANCELLED_RECORD' AS exception_status,
     'INFO' AS severity
-FROM vw_rkb_planning_lines
+FROM vw_approval_product_line_context
 WHERE is_cancelled
   AND (has_internal_order OR has_job_order)
 
 UNION ALL
 SELECT
     'APPROVAL_PRODUCT_LINE' AS record_type,
-    rkb_line_id::text AS record_id,
+    approval_line_id::text AS record_id,
     approval_request_id AS business_reference,
     'ROP_WITHOUT_APPROVED_STATUS' AS exception_type,
     'ROP/PEMBELIAN procurement request is not approved yet.' AS exception_message,
     'POSSIBLE' AS exception_status,
     'MEDIUM' AS severity
-FROM vw_rkb_planning_lines
+FROM vw_approval_product_line_context
 WHERE is_valid_for_metrics
   AND is_rop
   AND LOWER(COALESCE(approval_status, '')) <> 'approved'
+
+UNION ALL
+SELECT
+    'INTERNAL_ORDER_LINE' AS record_type,
+    internal_order_line_id::text AS record_id,
+    approval_request_id AS business_reference,
+    internal_order_link_status AS exception_type,
+    CASE
+        WHEN internal_order_link_status = 'MISSING_IO_AND_JO' THEN 'Internal Order approval line has neither IO nor valid JO, so it cannot be linked to MO.'
+        WHEN internal_order_link_status = 'INVALID_JO_FORMAT' THEN 'Internal Order approval line has invalid JO format.'
+        WHEN internal_order_link_status = 'INVALID_BOTH_IO_AND_JO' THEN 'Internal Order approval line has both IO and JO.'
+        ELSE 'Internal Order approval line needs follow-up.'
+    END AS exception_message,
+    CASE
+        WHEN internal_order_link_status IN ('INVALID_JO_FORMAT', 'INVALID_BOTH_IO_AND_JO') THEN 'INVALID'
+        ELSE 'UNKNOWN'
+    END AS exception_status,
+    'MEDIUM' AS severity
+FROM vw_internal_order_context
+WHERE is_valid_for_internal_order_flow
+  AND internal_order_link_status IN (
+      'MISSING_IO_AND_JO',
+      'INVALID_JO_FORMAT',
+      'INVALID_BOTH_IO_AND_JO'
+  )
 
 UNION ALL
 SELECT
@@ -426,6 +451,18 @@ SELECT
     'CANCELLED_RECORD' AS exception_status,
     'INFO' AS severity
 FROM vw_rkb_planning_lines
+WHERE is_cancelled
+
+UNION ALL
+SELECT
+    'INTERNAL_ORDER_LINE' AS record_type,
+    internal_order_line_id::text AS record_id,
+    approval_request_id AS business_reference,
+    'CANCELLED_RECORD' AS exception_type,
+    'Internal Order approval line is cancelled and excluded from active manufacturing flow metrics.' AS exception_message,
+    'CANCELLED_RECORD' AS exception_status,
+    'INFO' AS severity
+FROM vw_internal_order_context
 WHERE is_cancelled
 
 UNION ALL

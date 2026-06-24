@@ -132,19 +132,40 @@ New fields confirmed:
 Business category mapping:
 - `RKB` is internal PPIC planning.
 - `ROP` and `PEMBELIAN` are the same business category and represent procurement request flow.
+- `MANUFACTURE` is Internal Order for dashboard v1.
+- `INTERNAL USE` is out of current dashboard scope.
+
+`MANUFACTURE` was previously counted as `OTHER_APPROVAL_CATEGORY`. Fauzan clarified that this is the Internal Order source in the approval module, so the Data Truth Layer now maps it to `INTERNAL_ORDER`.
 
 Current validation highlights:
 
 | Metric | Count |
 | --- | ---: |
-| active_rkb_count | 27,374 |
-| active_rop_count | 14,182 |
+| active_rkb_count | 27,375 |
+| active_rop_count | 14,184 |
+| active_internal_order_lines | 1,023 |
+| active_internal_order_lines_with_io_number | 1,023 |
+| active_internal_order_lines_with_valid_jo | 0 |
+| active_internal_order_lines_linked_to_mo | 817 |
+| active_internal_order_lines_not_linked_to_mo | 206 |
+| active_out_of_scope_internal_use_count | 50 |
 | unknown_approval_category_count | 24 |
-| other_approval_category_count | 1,073 |
+| other_approval_category_count | 0 |
 | active_so_line_from_stock | 620 |
 | active_so_line_needs_movement_classification | 0 |
-| stock_movement_type_delivery | 8,551 |
-| stock_movement_type_unknown_movement_type | 31,603 |
+| stock_movement_type_delivery | 8,584 |
+| stock_movement_type_finished_goods_store | 8,110 |
+| stock_movement_type_manufacturing | 163,635 |
+| stock_movement_type_unknown_movement_type | 23,521 |
+
+Manufacturing flow highlights:
+
+| Metric | Count |
+| --- | ---: |
+| active_mo_linked_to_internal_order | 1,204 |
+| active_mo_not_linked_to_internal_order_or_so | 243 |
+| finished_goods_store_movement_count | 8,110 |
+| delivery_movement_count | 8,584 |
 
 Remaining stock blocker:
 - `stock_picking_type` or `stock_picking` should still be extracted later for stable movement classification by operation type, warehouse, and route.

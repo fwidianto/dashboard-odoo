@@ -214,6 +214,16 @@ class PathResolver:
             if i < len(parts) - 1:
                 if isinstance(current_value, list) and current_value:
                     if (
+                        len(current_value) >= 1
+                        and parts[i + 1] == "id"
+                        and i + 1 == len(parts) - 1
+                    ):
+                        return ResolutionResult(
+                            value=current_value[0],
+                            success=True,
+                            was_null=False,
+                        )
+                    if (
                         len(current_value) >= 2
                         and parts[i + 1] == "name"
                         and i + 1 == len(parts) - 1

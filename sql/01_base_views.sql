@@ -23,12 +23,16 @@
 -- =============================================================================
 
 DROP VIEW IF EXISTS vw_data_quality_exceptions CASCADE;
+DROP VIEW IF EXISTS vw_manufacturing_flow_context CASCADE;
+DROP VIEW IF EXISTS vw_internal_order_context CASCADE;
 DROP VIEW IF EXISTS vw_so_traceability CASCADE;
 DROP VIEW IF EXISTS vw_sales_order_source_summary CASCADE;
 DROP VIEW IF EXISTS vw_sales_order_line_source_context CASCADE;
+DROP VIEW IF EXISTS vw_sale_order_internal_order_bridge CASCADE;
 DROP VIEW IF EXISTS vw_accounting_sales_lines CASCADE;
 DROP VIEW IF EXISTS vw_procurement_lines CASCADE;
 DROP VIEW IF EXISTS vw_rkb_planning_lines CASCADE;
+DROP VIEW IF EXISTS vw_approval_product_line_context CASCADE;
 DROP VIEW IF EXISTS vw_stock_movement_context CASCADE;
 DROP VIEW IF EXISTS vw_mrp_order_context CASCADE;
 DROP VIEW IF EXISTS vw_sales_order_revenue CASCADE;
@@ -217,6 +221,10 @@ SELECT
     (LOWER(COALESCE(sml.state, '')) NOT IN ('cancel', 'cancelled')) AS is_valid_for_metrics,
     sml.picking_type_id AS picking_type_raw,
     CASE
+        WHEN sml.picking_type_id ILIKE '%%Store Finished Product%%'
+          OR sml.picking_type_id ILIKE '%%Finished Goods%%'
+          OR sml.picking_type_id ILIKE '%%Finished Product%%'
+            THEN 'FINISHED_GOODS_STORE'
         WHEN sml.picking_type_id ILIKE '%%OUT%%'
           OR sml.picking_type_id ILIKE '%%Delivery%%'
           OR sml.picking_type_id ILIKE '%%Customer%%'
@@ -245,6 +253,11 @@ SELECT
         OR sml.picking_type_id ILIKE '%%Keluar%%'
     ) AS is_delivery_movement,
     (
+        sml.picking_type_id ILIKE '%%Store Finished Product%%'
+        OR sml.picking_type_id ILIKE '%%Finished Goods%%'
+        OR sml.picking_type_id ILIKE '%%Finished Product%%'
+    ) AS is_finished_goods_store_movement,
+    (
         sml.picking_type_id ILIKE '%%Receipt%%'
         OR sml.picking_type_id ILIKE '%%Vendor%%'
         OR sml.picking_type_id ILIKE '%%Terima%%'
@@ -265,6 +278,9 @@ SELECT
         sml.picking_type_id IS NULL
         OR NOT (
             sml.picking_type_id ILIKE '%%OUT%%'
+            OR sml.picking_type_id ILIKE '%%Store Finished Product%%'
+            OR sml.picking_type_id ILIKE '%%Finished Goods%%'
+            OR sml.picking_type_id ILIKE '%%Finished Product%%'
             OR sml.picking_type_id ILIKE '%%Delivery%%'
             OR sml.picking_type_id ILIKE '%%Customer%%'
             OR sml.picking_type_id ILIKE '%%Keluar%%'
@@ -324,18 +340,41 @@ LEFT JOIN sale_order line_so
 COMMENT ON VIEW vw_stock_movement_context IS
     'Stock movement traceability view. Uses MO reference, SO source document, and SO line custom reference where available.';
 
-CREATE OR REPLACE VIEW vw_rkb_planning_lines AS
+CREATE OR REPLACE VIEW vw_approval_product_line_context AS
 SELECT
+    apl.id AS approval_line_id,
     apl.id AS rkb_line_id,
     apl.approval_request_id,
+    apl.approval_request_id AS approval_request_display_name,
+    apl.approval_request_numeric_id,
     apl.product_id AS product_name,
+    apl.description AS approval_line_description,
     apl.description AS rkb_line_description,
     apl.quantity AS planned_quantity,
     apl.product_uom_id AS unit_of_measure,
     apl.x_studio_unit_price AS planned_unit_price,
     apl.x_studio_subtotal AS planned_subtotal,
     apl.x_studio_date_of_need AS date_of_need,
-    apl.x_studio_nomor_io AS internal_order_number,
+    apl.x_studio_nomor_io AS approval_line_internal_order_number,
+    CASE
+        WHEN UPPER(BTRIM(COALESCE(apl.x_studio_category::text, ''))) = 'MANUFACTURE'
+          AND NULLIF(BTRIM(COALESCE(apl.approval_request_id::text, '')), '') IS NOT NULL
+            THEN BTRIM(apl.approval_request_id::text)
+        WHEN NULLIF(BTRIM(COALESCE(apl.x_studio_nomor_io, '')), '') IS NOT NULL
+            THEN BTRIM(apl.x_studio_nomor_io)
+        ELSE NULL
+    END AS internal_order_number,
+    CASE
+        WHEN UPPER(BTRIM(COALESCE(apl.x_studio_category::text, ''))) = 'MANUFACTURE'
+            THEN apl.approval_request_numeric_id
+        ELSE NULL
+    END AS internal_order_id,
+    CASE
+        WHEN UPPER(BTRIM(COALESCE(apl.x_studio_category::text, ''))) = 'MANUFACTURE'
+          AND NULLIF(BTRIM(COALESCE(apl.approval_request_id::text, '')), '') IS NOT NULL
+            THEN BTRIM(apl.approval_request_id::text)
+        ELSE NULL
+    END AS primary_internal_order_number,
     apl.x_studio_nomor_jo AS raw_job_order_number,
     CASE
         WHEN BTRIM(COALESCE(apl.x_studio_nomor_jo, '')) ~ '^[0-9]{7}$'
@@ -363,10 +402,14 @@ SELECT
             THEN 'UNKNOWN_APPROVAL_CATEGORY'
         WHEN UPPER(BTRIM(apl.x_studio_category::text)) = 'RKB' THEN 'RKB_PLANNING'
         WHEN UPPER(BTRIM(apl.x_studio_category::text)) IN ('ROP', 'PEMBELIAN') THEN 'ROP_PROCUREMENT_REQUEST'
+        WHEN UPPER(BTRIM(apl.x_studio_category::text)) = 'MANUFACTURE' THEN 'INTERNAL_ORDER'
+        WHEN UPPER(BTRIM(apl.x_studio_category::text)) = 'INTERNAL USE' THEN 'OUT_OF_SCOPE_INTERNAL_USE'
         ELSE 'OTHER_APPROVAL_CATEGORY'
     END AS approval_business_type,
     (UPPER(BTRIM(COALESCE(apl.x_studio_category::text, ''))) = 'RKB') AS is_rkb,
     (UPPER(BTRIM(COALESCE(apl.x_studio_category::text, ''))) IN ('ROP', 'PEMBELIAN')) AS is_rop,
+    (UPPER(BTRIM(COALESCE(apl.x_studio_category::text, ''))) = 'MANUFACTURE') AS is_internal_order,
+    (UPPER(BTRIM(COALESCE(apl.x_studio_category::text, ''))) = 'INTERNAL USE') AS is_out_of_scope,
     (
         LOWER(COALESCE(apl.x_studio_status, '')) NOT IN ('cancel', 'cancelled')
         AND UPPER(BTRIM(COALESCE(apl.x_studio_category::text, ''))) = 'RKB'
@@ -375,9 +418,25 @@ SELECT
         LOWER(COALESCE(apl.x_studio_status, '')) NOT IN ('cancel', 'cancelled')
         AND UPPER(BTRIM(COALESCE(apl.x_studio_category::text, ''))) IN ('ROP', 'PEMBELIAN')
     ) AS is_valid_for_procurement_request,
+    (
+        LOWER(COALESCE(apl.x_studio_status, '')) NOT IN ('cancel', 'cancelled')
+        AND UPPER(BTRIM(COALESCE(apl.x_studio_category::text, ''))) = 'MANUFACTURE'
+    ) AS is_valid_for_internal_order_flow,
     apl.x_studio_reqestor AS requester_name,
     apl.company_id AS company_name,
-    (NULLIF(BTRIM(apl.x_studio_nomor_io), '') IS NOT NULL) AS has_internal_order,
+    (
+        CASE
+            WHEN UPPER(BTRIM(COALESCE(apl.x_studio_category::text, ''))) = 'MANUFACTURE'
+              AND apl.approval_request_numeric_id IS NOT NULL
+                THEN apl.approval_request_numeric_id::text
+            WHEN UPPER(BTRIM(COALESCE(apl.x_studio_category::text, ''))) = 'MANUFACTURE'
+              AND NULLIF(BTRIM(COALESCE(apl.approval_request_id::text, '')), '') IS NOT NULL
+                THEN BTRIM(apl.approval_request_id::text)
+            WHEN NULLIF(BTRIM(COALESCE(apl.x_studio_nomor_io, '')), '') IS NOT NULL
+                THEN BTRIM(apl.x_studio_nomor_io)
+            ELSE NULL
+        END
+    ) IS NOT NULL AS has_internal_order,
     (BTRIM(COALESCE(apl.x_studio_nomor_jo, '')) ~ '^[0-9]{7}$') AS has_valid_jo,
     (BTRIM(COALESCE(apl.x_studio_nomor_jo, '')) ~ '^[0-9]{7}$') AS has_job_order,
     (
@@ -386,11 +445,29 @@ SELECT
         AND BTRIM(COALESCE(apl.x_studio_nomor_jo, '')) !~ '^[0-9]{7}$'
     ) AS invalid_jo_format,
     (
-        NULLIF(BTRIM(apl.x_studio_nomor_io), '') IS NOT NULL
+        (
+            CASE
+                WHEN UPPER(BTRIM(COALESCE(apl.x_studio_category::text, ''))) = 'MANUFACTURE'
+                  AND NULLIF(BTRIM(COALESCE(apl.approval_request_id::text, '')), '') IS NOT NULL
+                    THEN BTRIM(apl.approval_request_id::text)
+                WHEN NULLIF(BTRIM(COALESCE(apl.x_studio_nomor_io, '')), '') IS NOT NULL
+                    THEN BTRIM(apl.x_studio_nomor_io)
+                ELSE NULL
+            END
+        ) IS NOT NULL
         AND BTRIM(COALESCE(apl.x_studio_nomor_jo, '')) ~ '^[0-9]{7}$'
     ) AS invalid_both_io_and_jo,
     (
-        NULLIF(BTRIM(apl.x_studio_nomor_io), '') IS NULL
+        (
+            CASE
+                WHEN UPPER(BTRIM(COALESCE(apl.x_studio_category::text, ''))) = 'MANUFACTURE'
+                  AND NULLIF(BTRIM(COALESCE(apl.approval_request_id::text, '')), '') IS NOT NULL
+                    THEN BTRIM(apl.approval_request_id::text)
+                WHEN NULLIF(BTRIM(COALESCE(apl.x_studio_nomor_io, '')), '') IS NOT NULL
+                    THEN BTRIM(apl.x_studio_nomor_io)
+                ELSE NULL
+            END
+        ) IS NULL
         AND (
             NULLIF(BTRIM(COALESCE(apl.x_studio_nomor_jo, '')), '') IS NULL
             OR BTRIM(COALESCE(apl.x_studio_nomor_jo, '')) IN ('{}', '[]', 'False', 'false', 'None', 'none', 'New', 'new')
@@ -401,10 +478,58 @@ SELECT
           AND BTRIM(COALESCE(apl.x_studio_nomor_jo, '')) NOT IN ('{}', '[]', 'False', 'false', 'None', 'none', 'New', 'new')
           AND BTRIM(COALESCE(apl.x_studio_nomor_jo, '')) !~ '^[0-9]{7}$'
             THEN 'INVALID_JO_FORMAT'
-        WHEN NULLIF(BTRIM(apl.x_studio_nomor_io), '') IS NOT NULL
+        WHEN (
+            CASE
+                WHEN UPPER(BTRIM(COALESCE(apl.x_studio_category::text, ''))) = 'MANUFACTURE'
+                  AND NULLIF(BTRIM(COALESCE(apl.approval_request_id::text, '')), '') IS NOT NULL
+                    THEN BTRIM(apl.approval_request_id::text)
+                WHEN NULLIF(BTRIM(COALESCE(apl.x_studio_nomor_io, '')), '') IS NOT NULL
+                    THEN BTRIM(apl.x_studio_nomor_io)
+                ELSE NULL
+            END
+        ) IS NOT NULL
           AND BTRIM(COALESCE(apl.x_studio_nomor_jo, '')) ~ '^[0-9]{7}$'
             THEN 'INVALID_BOTH_IO_AND_JO'
-        WHEN NULLIF(BTRIM(apl.x_studio_nomor_io), '') IS NOT NULL THEN 'IO_BASED_RKB'
+        WHEN (
+            CASE
+                WHEN UPPER(BTRIM(COALESCE(apl.x_studio_category::text, ''))) = 'MANUFACTURE'
+                  AND NULLIF(BTRIM(COALESCE(apl.approval_request_id::text, '')), '') IS NOT NULL
+                    THEN BTRIM(apl.approval_request_id::text)
+                WHEN NULLIF(BTRIM(COALESCE(apl.x_studio_nomor_io, '')), '') IS NOT NULL
+                    THEN BTRIM(apl.x_studio_nomor_io)
+                ELSE NULL
+            END
+        ) IS NOT NULL THEN 'IO_BASED_APPROVAL'
+        WHEN BTRIM(COALESCE(apl.x_studio_nomor_jo, '')) ~ '^[0-9]{7}$' THEN 'JO_BASED_APPROVAL'
+        ELSE 'UNLINKED_APPROVAL'
+    END AS approval_source_type,
+    CASE
+        WHEN NULLIF(BTRIM(COALESCE(apl.x_studio_nomor_jo, '')), '') IS NOT NULL
+          AND BTRIM(COALESCE(apl.x_studio_nomor_jo, '')) NOT IN ('{}', '[]', 'False', 'false', 'None', 'none', 'New', 'new')
+          AND BTRIM(COALESCE(apl.x_studio_nomor_jo, '')) !~ '^[0-9]{7}$'
+            THEN 'INVALID_JO_FORMAT'
+        WHEN (
+            CASE
+                WHEN UPPER(BTRIM(COALESCE(apl.x_studio_category::text, ''))) = 'MANUFACTURE'
+                  AND NULLIF(BTRIM(COALESCE(apl.approval_request_id::text, '')), '') IS NOT NULL
+                    THEN BTRIM(apl.approval_request_id::text)
+                WHEN NULLIF(BTRIM(COALESCE(apl.x_studio_nomor_io, '')), '') IS NOT NULL
+                    THEN BTRIM(apl.x_studio_nomor_io)
+                ELSE NULL
+            END
+        ) IS NOT NULL
+          AND BTRIM(COALESCE(apl.x_studio_nomor_jo, '')) ~ '^[0-9]{7}$'
+            THEN 'INVALID_BOTH_IO_AND_JO'
+        WHEN (
+            CASE
+                WHEN UPPER(BTRIM(COALESCE(apl.x_studio_category::text, ''))) = 'MANUFACTURE'
+                  AND NULLIF(BTRIM(COALESCE(apl.approval_request_id::text, '')), '') IS NOT NULL
+                    THEN BTRIM(apl.approval_request_id::text)
+                WHEN NULLIF(BTRIM(COALESCE(apl.x_studio_nomor_io, '')), '') IS NOT NULL
+                    THEN BTRIM(apl.x_studio_nomor_io)
+                ELSE NULL
+            END
+        ) IS NOT NULL THEN 'IO_BASED_RKB'
         WHEN BTRIM(COALESCE(apl.x_studio_nomor_jo, '')) ~ '^[0-9]{7}$' THEN 'JO_BASED_RKB'
         ELSE 'UNLINKED_RKB'
     END AS rkb_source_type,
@@ -416,12 +541,127 @@ SELECT
             THEN 'UNKNOWN_APPROVAL_CATEGORY'
         WHEN UPPER(BTRIM(apl.x_studio_category::text)) = 'RKB' THEN 'RKB_CONFIRMED_BY_CATEGORY'
         WHEN UPPER(BTRIM(apl.x_studio_category::text)) IN ('ROP', 'PEMBELIAN') THEN 'ROP_CONFIRMED_BY_CATEGORY'
+        WHEN UPPER(BTRIM(apl.x_studio_category::text)) = 'MANUFACTURE' THEN 'INTERNAL_ORDER_CONFIRMED_BY_CATEGORY'
+        WHEN UPPER(BTRIM(apl.x_studio_category::text)) = 'INTERNAL USE' THEN 'OUT_OF_SCOPE_INTERNAL_USE'
         ELSE 'OTHER_APPROVAL_CATEGORY'
     END AS rkb_category_status
 FROM approval_product_line apl;
 
+COMMENT ON VIEW vw_approval_product_line_context IS
+    'Approval product line context. Category maps RKB to planning, PEMBELIAN/ROP to procurement request, MANUFACTURE to Internal Order, and INTERNAL USE to out of scope.';
+
+CREATE OR REPLACE VIEW vw_rkb_planning_lines AS
+SELECT *
+FROM vw_approval_product_line_context
+WHERE is_rkb;
+
 COMMENT ON VIEW vw_rkb_planning_lines IS
-    'RKB candidate planning line classification. Category = RKB is unconfirmed until approval_request/category is extracted.';
+    'Compatibility view for RKB-only planning lines. Full approval category context is in vw_approval_product_line_context.';
+
+CREATE OR REPLACE VIEW vw_internal_order_context AS
+SELECT
+    apl.approval_line_id AS internal_order_line_id,
+    apl.approval_request_id,
+    apl.approval_category_raw,
+    apl.approval_category_normalized,
+    apl.approval_business_type,
+    apl.approval_request_display_name,
+    apl.approval_request_numeric_id,
+    apl.primary_internal_order_number,
+    apl.internal_order_number,
+    apl.internal_order_id,
+    apl.approval_line_internal_order_number,
+    apl.raw_job_order_number,
+    apl.normalized_jo_number,
+    apl.job_order_number,
+    apl.product_name,
+    apl.approval_line_description,
+    apl.planned_quantity,
+    apl.unit_of_measure,
+    apl.planned_unit_price,
+    apl.planned_subtotal,
+    apl.approval_status,
+    apl.normalized_status,
+    apl.is_cancelled,
+    apl.is_valid_for_metrics,
+    apl.requester_name,
+    apl.date_of_need AS planned_or_needed_date,
+    apl.company_name,
+    apl.has_internal_order,
+    apl.has_valid_jo,
+    apl.has_job_order,
+    apl.invalid_jo_format,
+    apl.invalid_both_io_and_jo,
+    apl.missing_internal_order_and_job_order,
+    apl.is_valid_for_internal_order_flow,
+    COUNT(DISTINCT mo.manufacturing_order_id) FILTER (WHERE mo.is_valid_for_metrics) AS linked_manufacturing_order_count,
+    COUNT(DISTINCT mo.manufacturing_order_id) FILTER (WHERE mo.is_cancelled) AS cancelled_linked_manufacturing_order_count,
+    BOOL_OR(mo.manufacturing_order_id IS NOT NULL AND mo.is_valid_for_metrics) AS has_linked_manufacturing_order,
+    CASE
+        WHEN NOT apl.is_valid_for_internal_order_flow THEN 'NOT_ACTIVE_INTERNAL_ORDER_FLOW'
+        WHEN apl.invalid_jo_format THEN 'INVALID_JO_FORMAT'
+        WHEN apl.invalid_both_io_and_jo THEN 'INVALID_BOTH_IO_AND_JO'
+        WHEN NOT apl.has_internal_order AND NOT apl.has_valid_jo THEN 'MISSING_IO_AND_JO'
+        WHEN COUNT(DISTINCT mo.manufacturing_order_id) FILTER (WHERE mo.is_valid_for_metrics) > 0 THEN 'INTERNAL_ORDER_TO_MO_LINKED'
+        ELSE 'INTERNAL_ORDER_WITHOUT_MO_LINK'
+    END AS internal_order_link_status,
+    CASE
+        WHEN apl.invalid_jo_format OR apl.invalid_both_io_and_jo THEN 'INVALID'
+        WHEN COUNT(DISTINCT mo.manufacturing_order_id) FILTER (WHERE mo.is_valid_for_metrics) > 0 THEN 'INFERRED'
+        WHEN apl.has_internal_order OR apl.has_valid_jo THEN 'POSSIBLE'
+        ELSE 'UNKNOWN'
+    END AS internal_order_match_confidence
+FROM vw_approval_product_line_context apl
+LEFT JOIN vw_mrp_order_context mo
+    ON (
+        apl.has_internal_order
+        AND NULLIF(BTRIM(mo.internal_order_number), '') IS NOT NULL
+        AND apl.internal_order_number = mo.internal_order_number
+    )
+    OR (
+        apl.has_valid_jo
+        AND mo.has_valid_jo
+        AND apl.job_order_number = mo.job_order_number
+    )
+WHERE apl.is_internal_order
+GROUP BY
+    apl.approval_line_id,
+    apl.approval_request_id,
+    apl.approval_category_raw,
+    apl.approval_category_normalized,
+    apl.approval_business_type,
+    apl.approval_request_display_name,
+    apl.approval_request_numeric_id,
+    apl.primary_internal_order_number,
+    apl.internal_order_number,
+    apl.internal_order_id,
+    apl.approval_line_internal_order_number,
+    apl.raw_job_order_number,
+    apl.normalized_jo_number,
+    apl.job_order_number,
+    apl.product_name,
+    apl.approval_line_description,
+    apl.planned_quantity,
+    apl.unit_of_measure,
+    apl.planned_unit_price,
+    apl.planned_subtotal,
+    apl.approval_status,
+    apl.normalized_status,
+    apl.is_cancelled,
+    apl.is_valid_for_metrics,
+    apl.requester_name,
+    apl.date_of_need,
+    apl.company_name,
+    apl.has_internal_order,
+    apl.has_valid_jo,
+    apl.has_job_order,
+    apl.invalid_jo_format,
+    apl.invalid_both_io_and_jo,
+    apl.missing_internal_order_and_job_order,
+    apl.is_valid_for_internal_order_flow;
+
+COMMENT ON VIEW vw_internal_order_context IS
+    'Internal Order context for v1. Internal Order is approval_product_line category MANUFACTURE. approval_request_id is the primary IO number and links to mrp_production.x_studio_nomor_io; valid JO is secondary.';
 
 CREATE OR REPLACE VIEW vw_procurement_lines AS
 SELECT
@@ -552,6 +792,129 @@ LEFT JOIN sale_order so
 COMMENT ON VIEW vw_accounting_sales_lines IS
     'Accounting traceability view. SO link is inferred by normalized account_move_line.x_studio_sales_order = sale_order.name::text. New is treated as null.';
 
+CREATE OR REPLACE VIEW vw_sale_order_internal_order_bridge AS
+SELECT
+    so.id AS so_id,
+    so.name AS so_number,
+    io_token.internal_order_id,
+    so.x_studio_io_1 AS raw_x_studio_io_1
+FROM sale_order so
+CROSS JOIN LATERAL (
+    SELECT (match_token[1])::bigint AS internal_order_id
+    FROM regexp_matches(COALESCE(so.x_studio_io_1::text, ''), '([0-9]+)', 'g') AS match_token
+) io_token
+WHERE so.x_studio_io_1 IS NOT NULL
+  AND BTRIM(so.x_studio_io_1::text) NOT IN ('', '{}', '[]', 'New', 'new', 'False', 'false', 'None', 'none');
+
+COMMENT ON VIEW vw_sale_order_internal_order_bridge IS
+    'Many-to-many bridge parsed from sale_order.x_studio_io_1 set/list text such as {1081} or {1361,1578}. internal_order_id is approval_request_id / Internal Order reference.';
+
+CREATE OR REPLACE VIEW vw_manufacturing_flow_context AS
+WITH stock_agg AS (
+    SELECT
+        inferred_manufacturing_order_id AS manufacturing_order_id,
+        COUNT(DISTINCT stock_move_line_id) AS stock_movement_count,
+        COUNT(DISTINCT stock_move_line_id) FILTER (WHERE is_manufacturing_movement) AS manufacturing_movement_count,
+        COUNT(DISTINCT stock_move_line_id) FILTER (WHERE is_finished_goods_store_movement) AS finished_goods_store_movement_count,
+        COUNT(DISTINCT stock_move_line_id) FILTER (WHERE is_delivery_movement) AS delivery_movement_count,
+        COUNT(DISTINCT stock_move_line_id) FILTER (WHERE is_unknown_movement_type) AS unknown_movement_type_count,
+        COALESCE(SUM(moved_quantity), 0) AS moved_quantity_total
+    FROM vw_stock_movement_context
+    WHERE inferred_manufacturing_order_id IS NOT NULL
+      AND is_valid_for_metrics
+    GROUP BY inferred_manufacturing_order_id
+),
+accounting_agg AS (
+    SELECT
+        inferred_sales_order_id AS sales_order_id,
+        COUNT(DISTINCT accounting_line_id) AS accounting_line_count,
+        COUNT(DISTINCT accounting_move_id) AS accounting_move_count
+    FROM vw_accounting_sales_lines
+    WHERE inferred_sales_order_id IS NOT NULL
+      AND is_valid_for_metrics
+    GROUP BY inferred_sales_order_id
+)
+SELECT
+    io.internal_order_line_id,
+    io.approval_request_id,
+    io.approval_request_display_name,
+    io.approval_request_numeric_id,
+    io.primary_internal_order_number,
+    io.internal_order_number,
+    io.internal_order_id,
+    io.approval_line_internal_order_number,
+    io.raw_job_order_number,
+    io.normalized_jo_number,
+    io.job_order_number,
+    io.product_name AS internal_order_product_name,
+    io.planned_quantity AS internal_order_quantity,
+    io.approval_status AS internal_order_status,
+    io.normalized_status AS internal_order_normalized_status,
+    io.is_cancelled AS internal_order_is_cancelled,
+    io.is_valid_for_metrics AS internal_order_is_valid_for_metrics,
+    io.requester_name,
+    io.planned_or_needed_date,
+    io.company_name,
+    mo.manufacturing_order_id,
+    mo.manufacturing_order_number,
+    mo.manufactured_product_name,
+    mo.manufacturing_quantity,
+    mo.manufacturing_order_state,
+    mo.normalized_status AS manufacturing_normalized_status,
+    mo.is_cancelled AS manufacturing_is_cancelled,
+    mo.is_valid_for_metrics AS manufacturing_is_valid_for_metrics,
+    mo.manufacturing_source_type,
+    mo.manufacturing_source_link_status,
+    mo.inferred_sales_order_id,
+    mo.inferred_sales_order_number,
+    (mo.inferred_sales_order_id IS NOT NULL) AS has_later_sales_order,
+    COALESCE(stock.stock_movement_count, 0) AS stock_movement_count,
+    COALESCE(stock.manufacturing_movement_count, 0) AS manufacturing_movement_count,
+    COALESCE(stock.finished_goods_store_movement_count, 0) AS finished_goods_store_movement_count,
+    COALESCE(stock.delivery_movement_count, 0) AS delivery_movement_count,
+    COALESCE(stock.unknown_movement_type_count, 0) AS unknown_movement_type_count,
+    COALESCE(stock.moved_quantity_total, 0) AS moved_quantity_total,
+    COALESCE(accounting.accounting_line_count, 0) AS accounting_line_count,
+    COALESCE(accounting.accounting_move_count, 0) AS accounting_move_count,
+    (mo.manufacturing_order_id IS NOT NULL AND mo.is_valid_for_metrics) AS has_manufacturing_order,
+    (COALESCE(stock.stock_movement_count, 0) > 0) AS has_stock_movement,
+    (COALESCE(stock.finished_goods_store_movement_count, 0) > 0) AS has_finished_goods_store_movement,
+    (COALESCE(stock.delivery_movement_count, 0) > 0) AS has_delivery_movement,
+    (COALESCE(accounting.accounting_line_count, 0) > 0) AS has_accounting_line,
+    CASE
+        WHEN io.is_cancelled OR COALESCE(mo.is_cancelled, FALSE) THEN 'CANCELLED_RECORD'
+        WHEN mo.manufacturing_order_id IS NULL THEN 'INTERNAL_ORDER_WITHOUT_MO_LINK'
+        WHEN mo.inferred_sales_order_id IS NULL THEN 'IO_TO_MO_NO_SO_LINK_YET'
+        WHEN COALESCE(stock.stock_movement_count, 0) = 0 THEN 'IO_TO_MO_SO_WITHOUT_STOCK_MOVEMENT'
+        WHEN COALESCE(accounting.accounting_line_count, 0) = 0 THEN 'IO_TO_MO_SO_STOCK_WITHOUT_ACCOUNTING'
+        ELSE 'IO_MO_SO_STOCK_ACCOUNTING_TRACE'
+    END AS manufacturing_flow_status,
+    CASE
+        WHEN io.invalid_jo_format OR io.invalid_both_io_and_jo THEN 'INVALID'
+        WHEN mo.manufacturing_order_id IS NOT NULL AND mo.inferred_sales_order_id IS NOT NULL THEN 'INFERRED'
+        WHEN mo.manufacturing_order_id IS NOT NULL THEN 'PARTIAL'
+        ELSE 'UNKNOWN'
+    END AS manufacturing_flow_confidence
+FROM vw_internal_order_context io
+LEFT JOIN vw_mrp_order_context mo
+    ON (
+        io.has_internal_order
+        AND NULLIF(BTRIM(mo.internal_order_number), '') IS NOT NULL
+        AND io.internal_order_number = mo.internal_order_number
+    )
+    OR (
+        io.has_valid_jo
+        AND mo.has_valid_jo
+        AND io.job_order_number = mo.job_order_number
+    )
+LEFT JOIN stock_agg stock
+    ON stock.manufacturing_order_id = mo.manufacturing_order_id
+LEFT JOIN accounting_agg accounting
+    ON accounting.sales_order_id = mo.inferred_sales_order_id;
+
+COMMENT ON VIEW vw_manufacturing_flow_context IS
+    'Manufacturing flow context from Internal Order approval lines (MANUFACTURE) to MO, stock movement, later SO, and accounting. approval_request_id is the primary IO bridge to MO. SO link is not forced when unavailable.';
+
 CREATE OR REPLACE VIEW vw_sales_order_line_source_context AS
 WITH mo_by_so_product AS (
     SELECT
@@ -604,6 +967,13 @@ unknown_movement_by_so_product AS (
       AND is_valid_for_metrics
       AND is_unknown_movement_type
     GROUP BY inferred_sales_order_id, product_name
+),
+so_internal_order_bridge AS (
+    SELECT
+        so_id AS sales_order_id,
+        COUNT(DISTINCT internal_order_id) AS internal_order_reference_count
+    FROM vw_sale_order_internal_order_bridge
+    GROUP BY so_id
 )
 SELECT
     sor.sales_order_id,
@@ -623,7 +993,8 @@ SELECT
     sor.invoice_status,
     sor.sales_order_io_number,
     sor.sales_order_line_io_number,
-    sor.has_confirmed_sales_order_io AS has_internal_order,
+    (COALESCE(so_internal_order_bridge.internal_order_reference_count, 0) > 0) AS has_internal_order,
+    COALESCE(so_internal_order_bridge.internal_order_reference_count, 0) AS internal_order_reference_count,
     COALESCE(mo_by_so_product.matching_mo_count, 0) AS matching_mo_count,
     COALESCE(delivery_by_line.matching_stock_movement_count, delivery_by_so_product.matching_stock_movement_count, 0) AS matching_stock_movement_count,
     COALESCE(unknown_movement_by_line.unknown_movement_count, unknown_movement_by_so_product.unknown_movement_count, 0) AS unknown_movement_count,
@@ -632,7 +1003,7 @@ SELECT
     (COALESCE(unknown_movement_by_line.unknown_movement_count, unknown_movement_by_so_product.unknown_movement_count, 0) > 0) AS needs_movement_classification,
     CASE
         WHEN NOT sor.is_valid_for_metrics THEN 'CANCELLED_RECORD'
-        WHEN sor.has_confirmed_sales_order_io THEN 'FROM_INTERNAL_ORDER'
+        WHEN COALESCE(so_internal_order_bridge.internal_order_reference_count, 0) > 0 THEN 'FROM_INTERNAL_ORDER'
         WHEN COALESCE(mo_by_so_product.matching_mo_count, 0) > 0
           AND COALESCE(delivery_by_line.matching_stock_movement_count, delivery_by_so_product.matching_stock_movement_count, 0) > 0
             THEN 'MIXED_SOURCE'
@@ -643,7 +1014,7 @@ SELECT
     END AS line_source_type,
     CASE
         WHEN NOT sor.is_valid_for_metrics THEN 'CANCELLED_RECORD'
-        WHEN sor.has_confirmed_sales_order_io THEN 'CONFIRMED_IO_FIELD'
+        WHEN COALESCE(so_internal_order_bridge.internal_order_reference_count, 0) > 0 THEN 'CONFIRMED_IO_BRIDGE'
         WHEN COALESCE(mo_by_so_product.matching_mo_count, 0) > 0
           AND COALESCE(delivery_by_line.matching_stock_movement_count, delivery_by_so_product.matching_stock_movement_count, 0) > 0
             THEN 'POSSIBLE_PARTIAL_STOCK_AND_MO'
@@ -654,7 +1025,7 @@ SELECT
     END AS line_source_link_status,
     CASE
         WHEN NOT sor.is_valid_for_metrics THEN 'CANCELLED'
-        WHEN sor.has_confirmed_sales_order_io THEN 'CONFIRMED'
+        WHEN COALESCE(so_internal_order_bridge.internal_order_reference_count, 0) > 0 THEN 'CONFIRMED'
         WHEN COALESCE(mo_by_so_product.matching_mo_count, 0) > 0
           OR COALESCE(delivery_by_line.matching_stock_movement_count, delivery_by_so_product.matching_stock_movement_count, 0) > 0
             THEN 'INFERRED'
@@ -677,6 +1048,8 @@ LEFT JOIN unknown_movement_by_line
 LEFT JOIN unknown_movement_by_so_product
     ON unknown_movement_by_so_product.sales_order_id = sor.sales_order_id
    AND unknown_movement_by_so_product.product_name = sor.product_name
+LEFT JOIN so_internal_order_bridge
+    ON so_internal_order_bridge.sales_order_id = sor.sales_order_id
 WHERE sor.sales_order_line_id IS NOT NULL;
 
 COMMENT ON VIEW vw_sales_order_line_source_context IS

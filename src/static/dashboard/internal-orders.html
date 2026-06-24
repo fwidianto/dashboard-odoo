@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Internal Order Traceability Dashboard</title>
+  <link rel="stylesheet" href="/static/dashboard/internal-orders.css">
+</head>
+<body>
+  <main class="page-shell">
+    <header class="page-header">
+      <div>
+        <h1>Internal Order Traceability</h1>
+        <p>Internal Order -> MO -> SO -> delivery, invoice, procurement, accounting</p>
+      </div>
+      <div class="header-actions">
+        <button class="icon-button" id="refreshButton" type="button" title="Refresh data" aria-label="Refresh data">
+          <span aria-hidden="true">R</span>
+        </button>
+      </div>
+    </header>
+
+    <section class="kpi-grid" aria-label="Dashboard KPI cards">
+      <article class="kpi-card">
+        <span class="kpi-label">Active IO</span>
+        <strong id="kpiActiveIo">-</strong>
+      </article>
+      <article class="kpi-card">
+        <span class="kpi-label">With MO</span>
+        <strong id="kpiWithMo">-</strong>
+      </article>
+      <article class="kpi-card">
+        <span class="kpi-label">With SO</span>
+        <strong id="kpiWithSo">-</strong>
+      </article>
+      <article class="kpi-card">
+        <span class="kpi-label">Delivered</span>
+        <strong id="kpiDelivered">-</strong>
+      </article>
+      <article class="kpi-card">
+        <span class="kpi-label">Invoiced</span>
+        <strong id="kpiInvoiced">-</strong>
+      </article>
+      <article class="kpi-card wide">
+        <span class="kpi-label">Delivery Progress</span>
+        <strong id="kpiDeliveryProgress">-</strong>
+        <div class="progress-track"><span id="barDelivery"></span></div>
+      </article>
+      <article class="kpi-card wide">
+        <span class="kpi-label">Invoice Progress</span>
+        <strong id="kpiInvoiceProgress">-</strong>
+        <div class="progress-track"><span id="barInvoice"></span></div>
+      </article>
+      <article class="kpi-card wide">
+        <span class="kpi-label">PO Receipt</span>
+        <strong id="kpiPoReceipt">-</strong>
+        <div class="progress-track"><span id="barReceipt"></span></div>
+      </article>
+      <article class="kpi-card wide">
+        <span class="kpi-label">PO Billing</span>
+        <strong id="kpiPoBilling">-</strong>
+        <div class="progress-track"><span id="barBilling"></span></div>
+      </article>
+    </section>
+
+    <section class="filter-panel" aria-label="Dashboard filters">
+      <label>
+        <span>Date From</span>
+        <input id="dateFromFilter" type="date">
+      </label>
+      <label>
+        <span>Date To</span>
+        <input id="dateToFilter" type="date">
+      </label>
+      <label>
+        <span>Internal Order</span>
+        <input id="ioFilter" type="search" placeholder="Search IO">
+      </label>
+      <label>
+        <span>Requester</span>
+        <select id="requesterFilter">
+          <option value="">All requesters</option>
+        </select>
+      </label>
+      <label>
+        <span>Status</span>
+        <select id="statusFilter">
+          <option value="">All statuses</option>
+        </select>
+      </label>
+      <label>
+        <span>Traceability</span>
+        <select id="traceabilityFilter">
+          <option value="">All traceability</option>
+        </select>
+      </label>
+      <button class="secondary-button" id="clearFiltersButton" type="button">Clear</button>
+    </section>
+
+    <section class="status-strip" id="statusStrip" aria-label="Traceability status counts"></section>
+
+    <section class="table-panel" aria-label="Internal Order traceability table">
+      <div class="table-toolbar">
+        <div>
+          <strong id="rowCount">- rows</strong>
+          <span id="lastLoaded">Loading...</span>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th></th>
+              <th>IO Number</th>
+              <th>Status</th>
+              <th>Requester</th>
+              <th>Need Date</th>
+              <th class="num">Products</th>
+              <th class="num">MO</th>
+              <th class="num">SO</th>
+              <th class="num">SO Ordered</th>
+              <th class="num">SO Delivered</th>
+              <th class="num">SO Invoiced</th>
+              <th>Delivery %</th>
+              <th>Invoice %</th>
+              <th class="num">PO Ordered</th>
+              <th class="num">PO Received</th>
+              <th class="num">PO Invoiced</th>
+              <th>Receipt %</th>
+              <th>Billing %</th>
+              <th class="num">Accounting</th>
+              <th>Traceability</th>
+            </tr>
+          </thead>
+          <tbody id="dashboardRows">
+            <tr>
+              <td colspan="21" class="empty-cell">Loading dashboard data...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/dashboard/internal-orders.js"></script>
+</body>
+</html>
