@@ -1,0 +1,61 @@
+﻿# Internal Order Cost Rekap Validation
+
+## SQL Execution Status
+
+Passed.
+
+Executed:
+- `sql/07_internal_order_cost_rekap_views.sql`
+
+No existing SO/JO Rekap views were modified.
+
+## Validation Summary
+
+- `vw_internal_order_rekap_summary` row count: `87`
+- `426IO026` summary row: present
+- `vw_sale_order_internal_order_bridge` link for `426IO026`: none found
+- `mixed_uom_count` for `426IO026`: `0`
+
+## `426IO026` Summary Values
+
+- `company_name`: `Nobi Putra Angkasa, PT`
+- `has_sales_order_link`: `false`
+- `product_count`: `418`
+- `rkb_actual_product_count`: `414`
+- `rop_product_count`: `179`
+- `po_product_count`: `172`
+- `rkb_actual_amount`: `9,078,236,100.61`
+- `rop_amount`: `6,428,714,005.63`
+- `po_amount`: `6,111,147,209.98`
+- `not_yet_rop_amount`: `2,873,734,605.26`
+- `excess_rop_amount`: `223,771,394.36`
+- `po_received_qty`: `3,940.00`
+- `po_invoiced_qty`: `8,446.00`
+- `comparison_basis`: `ODOO_RKB_ACTUAL_BASELINE`
+
+## Product Presence Distribution for `426IO026`
+
+- `PO_ONLY`: `2`
+- `RKB_ONLY`: `236`
+- `RKB_PO`: `1`
+- `RKB_ROP`: `9`
+- `RKB_ROP_PO`: `168`
+- `ROP_ONLY`: `1`
+- `ROP_PO`: `1`
+
+## Top IOs by Amount
+
+- `426IO026` remains the largest IO in the current summary view
+- next highest examples include `325IO078`, `425IO016`, `125IO076`, and `226IO003`
+
+## Known Limitations
+
+- No UoM conversion is performed
+- Mixed UoM is only flagged, not resolved
+- Product matching is conservative and prefers bracketed product code extraction
+- RKB PPIC is still outside PostgreSQL and remains a future upload/import workflow
+- This layer is operational reconciliation only, not profitability, margin, COGS, or accounting profit
+
+## Recommended Next Step
+
+Validate the PO rows for the few unmatched or weakly matched items in `426IO026`, then keep the Internal Order Rekap layer separate from the SO/JO Rekap layer.

@@ -10,6 +10,8 @@ This workbook is an Internal Order case, not a Sales Order / Job Order case.
 - The related Sales Order does not exist yet for this case
 - The previous comparison against SO/JO report keys `4260306` through `4260317` was only a product-overlap clue, not the correct business anchor
 - The large gap seen before is expected because the comparison grain was wrong
+- This workbook now belongs to [INTERNAL_ORDER_COST_REKAP_DESIGN.md](INTERNAL_ORDER_COST_REKAP_DESIGN.md)
+- SO/JO Rekap remains the separate report mode for cases where a Sales Order already exists
 
 ## 2. Correct Comparison Grain
 
