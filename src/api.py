@@ -285,6 +285,12 @@ async def sales_order_dashboard_page():
     return FileResponse(STATIC_DIR / "dashboard" / "sales-orders.html")
 
 
+@app.get("/dashboard/internal-order-rekap", include_in_schema=False)
+async def internal_order_rekap_dashboard_page():
+    """Serve the Internal Order Rekap Dashboard page."""
+    return FileResponse(STATIC_DIR / "dashboard" / "internal-order-rekap.html")
+
+
 @app.get("/api/dashboard/internal-orders", tags=["Dashboard"])
 async def internal_order_dashboard_data():
     """

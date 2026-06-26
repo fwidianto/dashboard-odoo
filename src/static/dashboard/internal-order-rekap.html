@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Internal Order Rekap</title>
+  <link rel="stylesheet" href="/static/dashboard/internal-order-rekap.css">
+</head>
+<body>
+  <main class="page-shell io-rekap-dashboard">
+    <header class="page-header">
+      <div>
+        <div class="page-title-row">
+          <h1>Internal Order Rekap</h1>
+          <div class="title-badges">
+            <span class="status-badge status-progress">Internal Order-first</span>
+            <span class="status-badge status-followup">Operational reconciliation</span>
+            <span class="status-badge status-muted">Not profitability</span>
+          </div>
+        </div>
+        <p>RKB Actual vs ROP vs PO reconciliation</p>
+      </div>
+      <div class="header-actions">
+        <a class="secondary-button" href="/dashboard/internal-orders">Internal Orders</a>
+        <a class="secondary-button" href="/dashboard/sales-orders">Sales Orders</a>
+        <button class="icon-button" id="refreshButton" type="button" title="Reload current Internal Order" aria-label="Reload current Internal Order">
+          <span aria-hidden="true">R</span>
+        </button>
+      </div>
+    </header>
+
+    <section class="search-panel panel" aria-label="Internal Order search">
+      <label class="search-field">
+        <span>Internal Order Number</span>
+        <input id="internalOrderInput" type="search" value="426IO026" placeholder="Enter Internal Order number">
+      </label>
+      <button class="secondary-button primary-action" id="loadButton" type="button">Load Internal Order</button>
+      <div class="search-status" id="loadStatus">Ready</div>
+    </section>
+
+    <section class="error-banner" id="errorBanner" hidden aria-live="polite"></section>
+
+    <section class="warning-area panel" id="warningPanel" hidden aria-label="Dashboard warnings">
+      <strong>Warnings</strong>
+      <ul id="warningList"></ul>
+    </section>
+
+    <section class="kpi-grid kpi-grid-io" aria-label="Internal Order KPI cards">
+      <article class="kpi-card"><span class="kpi-label">Internal Order Number</span><strong id="kpiInternalOrderNumber">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">Company</span><strong id="kpiCompany">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">Sales Order Link Status</span><strong id="kpiSalesOrderLink">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">Product Count</span><strong id="kpiProductCount">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">Full RKB Actual</span><strong id="kpiFullRkb">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">Trackable RKB Actual</span><strong id="kpiTrackableRkb">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">Non-Trackable RKB</span><strong id="kpiNonTrackableRkb">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">ROP Amount</span><strong id="kpiRopAmount">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">PO Amount</span><strong id="kpiPoAmount">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">Not Yet ROP Amount</span><strong id="kpiNotYetRopAmount">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">Excess ROP Amount</span><strong id="kpiExcessRopAmount">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">PO Received Ratio</span><strong id="kpiReceivedRatio">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">PO Invoiced Ratio</span><strong id="kpiInvoicedRatio">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">Mixed UoM Count</span><strong id="kpiMixedUomCount">-</strong></article>
+    </section>
+
+    <section class="panel explanation-panel" aria-label="Dashboard explanation">
+      <strong>How to read this view</strong>
+      <ul>
+        <li>Full RKB Actual includes all Odoo RKB rows.</li>
+        <li>Trackable RKB Actual is the normal product/material subset.</li>
+        <li>Non-Trackable RKB includes valid `!! - OTHERS`, budget/service, and adjustment rows.</li>
+        <li>Non-trackable rows are valid operational data, not an error.</li>
+      </ul>
+    </section>
+
+    <section class="breakdown-grid">
+      <section class="panel breakdown-panel">
+        <div class="panel-head">
+          <strong>Trackability Breakdown</strong>
+          <span id="trackabilitySummary">-</span>
+        </div>
+        <div class="table-scroll compact-scroll">
+          <table class="compact-table">
+            <thead>
+              <tr>
+                <th>Class</th>
+                <th>Reason</th>
+                <th>Trackable</th>
+                <th class="num">Count</th>
+                <th class="num">RKB</th>
+                <th class="num">ROP</th>
+                <th class="num">PO</th>
+              </tr>
+            </thead>
+            <tbody id="trackabilityBreakdownBody">
+              <tr><td colspan="7" class="empty-cell">Loading breakdown...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel breakdown-panel">
+        <div class="panel-head">
+          <strong>Presence Breakdown</strong>
+          <span id="presenceSummary">-</span>
+        </div>
+        <div class="table-scroll compact-scroll">
+          <table class="compact-table">
+            <thead>
+              <tr>
+                <th>Presence</th>
+                <th class="num">Count</th>
+                <th class="num">RKB</th>
+                <th class="num">ROP</th>
+                <th class="num">PO</th>
+              </tr>
+            </thead>
+            <tbody id="presenceBreakdownBody">
+              <tr><td colspan="5" class="empty-cell">Loading breakdown...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section class="panel tabs-panel" aria-label="Internal Order line filters">
+      <div class="tab-bar" id="tabBar"></div>
+    </section>
+
+    <section class="table-panel" aria-label="Internal Order Rekap table">
+      <div class="table-toolbar">
+        <div>
+          <strong id="lineCount">- lines</strong>
+          <span id="tableSubtitle">Loading Internal Order...</span>
+        </div>
+        <div class="toolbar-meta" id="tableMeta">-</div>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Product Key</th>
+              <th>Product Name</th>
+              <th>Trackability</th>
+              <th>Presence</th>
+              <th>UoM</th>
+              <th class="num">RKB Qty</th>
+              <th class="num">RKB Amount</th>
+              <th class="num">ROP Qty</th>
+              <th class="num">ROP Amount</th>
+              <th class="num">PO Qty</th>
+              <th class="num">PO Amount</th>
+              <th class="num">PO Received Qty</th>
+              <th class="num">PO Invoiced Qty</th>
+              <th class="num">Not Yet ROP Amount</th>
+              <th class="num">Excess ROP Amount</th>
+              <th>Flags</th>
+            </tr>
+          </thead>
+          <tbody id="lineTableBody">
+            <tr>
+              <td colspan="16" class="empty-cell">Loading Internal Order data...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/dashboard/internal-order-rekap.js"></script>
+</body>
+</html>

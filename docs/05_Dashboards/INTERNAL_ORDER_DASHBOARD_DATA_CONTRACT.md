@@ -416,7 +416,10 @@ Explicitly out of scope:
 ## 16. Implementation Status
 
 - API endpoint implemented: `/api/dashboard/internal-order-rekap`
+- Frontend route implemented: `/dashboard/internal-order-rekap`
 - Required parameter: `internal_order_number`
-- Frontend is not implemented yet
+- Frontend uses the API, not direct SQL
 - Response follows the `summary`, `breakdowns`, `lines`, and `metadata` shape defined above
+- Charts can be improved later
+- Product trackability still uses the temporary 5-digit heuristic until the Odoo field is fetched into PostgreSQL
 
