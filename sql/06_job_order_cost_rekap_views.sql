@@ -88,9 +88,12 @@ WITH mapped AS (
     FROM vw_rkb_planning_lines rkb
     LEFT JOIN sale_order so_jo
         ON so_jo.name::text = rkb.job_order_number::text
+    -- TODO: confirm whether any non-MANUFACTURE RKB rows can safely use approval_request_numeric_id as IO.
+    -- For now, IO mapping only uses explicit RKB internal_order_number to avoid treating
+    -- the RKB approval request itself as an Internal Order.
     LEFT JOIN vw_sale_order_internal_order_bridge bridge
-        ON bridge.internal_order_id = rkb.approval_request_numeric_id
-        OR bridge.internal_order_id::text = rkb.internal_order_number::text
+        ON NULLIF(BTRIM(COALESCE(rkb.internal_order_number::text, '')), '') IS NOT NULL
+       AND bridge.internal_order_id::text = rkb.internal_order_number::text
     WHERE rkb.is_valid_for_metrics
       AND NULLIF(BTRIM(COALESCE(rkb.product_name::text, '')), '') IS NOT NULL
 )
@@ -129,9 +132,12 @@ WITH mapped AS (
     FROM vw_approval_product_line_context apl
     LEFT JOIN sale_order so_jo
         ON so_jo.name::text = apl.job_order_number::text
+    -- TODO: confirm whether any ROP/PEMBELIAN rows can safely use approval_request_numeric_id as IO.
+    -- For now, IO mapping only uses explicit ROP/PEMBELIAN internal_order_number to avoid
+    -- treating the procurement approval request itself as an Internal Order.
     LEFT JOIN vw_sale_order_internal_order_bridge bridge
-        ON bridge.internal_order_id = apl.approval_request_numeric_id
-        OR bridge.internal_order_id::text = apl.internal_order_number::text
+        ON NULLIF(BTRIM(COALESCE(apl.internal_order_number::text, '')), '') IS NOT NULL
+       AND bridge.internal_order_id::text = apl.internal_order_number::text
     WHERE apl.approval_business_type = 'ROP_PROCUREMENT_REQUEST'
       AND apl.is_valid_for_metrics
       AND NULLIF(BTRIM(COALESCE(apl.product_name::text, '')), '') IS NOT NULL
@@ -413,3 +419,80 @@ GROUP BY report_key;
 
 COMMENT ON VIEW vw_job_order_rekap_summary IS
     'Phase 1 Rekap 2-style summary by report_key. Uses Odoo RKB Actual baseline and excludes profitability, COGS, valuation, and accounting profit.';
+
+-- =============================================================================
+-- Validation queries for Phase 1 review
+-- =============================================================================
+-- Duplicate grain check: expected 0 rows.
+-- SELECT report_key, product_key, COUNT(*) AS row_count
+-- FROM vw_job_order_rekap_lines
+-- GROUP BY report_key, product_key
+-- HAVING COUNT(*) > 1;
+--
+-- Unmapped RKB Actual check: review rows with no report_key.
+-- WITH mapped AS (
+--     SELECT
+--         rkb.approval_line_id,
+--         COALESCE(so_jo.name::text, bridge.so_number::text, rkb.job_order_number::text) AS report_key
+--     FROM vw_rkb_planning_lines rkb
+--     LEFT JOIN sale_order so_jo
+--         ON so_jo.name::text = rkb.job_order_number::text
+--     LEFT JOIN vw_sale_order_internal_order_bridge bridge
+--         ON NULLIF(BTRIM(COALESCE(rkb.internal_order_number::text, '')), '') IS NOT NULL
+--        AND bridge.internal_order_id::text = rkb.internal_order_number::text
+--     WHERE rkb.is_valid_for_metrics
+-- )
+-- SELECT * FROM mapped WHERE report_key IS NULL;
+--
+-- Unmapped ROP/PEMBELIAN check: review rows with no report_key.
+-- WITH mapped AS (
+--     SELECT
+--         apl.approval_line_id,
+--         COALESCE(so_jo.name::text, bridge.so_number::text, apl.job_order_number::text) AS report_key
+--     FROM vw_approval_product_line_context apl
+--     LEFT JOIN sale_order so_jo
+--         ON so_jo.name::text = apl.job_order_number::text
+--     LEFT JOIN vw_sale_order_internal_order_bridge bridge
+--         ON NULLIF(BTRIM(COALESCE(apl.internal_order_number::text, '')), '') IS NOT NULL
+--        AND bridge.internal_order_id::text = apl.internal_order_number::text
+--     WHERE apl.approval_business_type = 'ROP_PROCUREMENT_REQUEST'
+--       AND apl.is_valid_for_metrics
+-- )
+-- SELECT * FROM mapped WHERE report_key IS NULL;
+--
+-- Unmapped PO check: review rows with no report_key.
+-- WITH mapped AS (
+--     SELECT
+--         po.procurement_line_id,
+--         COALESCE(so_jo.name::text, bridge.so_number::text, po.job_order_number::text) AS report_key
+--     FROM vw_procurement_lines po
+--     LEFT JOIN sale_order so_jo
+--         ON so_jo.name::text = po.job_order_number::text
+--     LEFT JOIN vw_sale_order_internal_order_bridge bridge
+--         ON NULLIF(BTRIM(COALESCE(po.internal_order_number::text, '')), '') IS NOT NULL
+--        AND bridge.internal_order_id::text = po.internal_order_number::text
+--     WHERE po.is_valid_for_metrics
+-- )
+-- SELECT * FROM mapped WHERE report_key IS NULL;
+--
+-- Mixed UoM check.
+-- SELECT report_key, product_key, uom_summary
+-- FROM vw_job_order_rekap_lines
+-- WHERE uom_summary ILIKE '%,%';
+--
+-- PO without ROP check.
+-- SELECT *
+-- FROM vw_job_order_rekap_lines
+-- WHERE po_qty > 0
+--   AND COALESCE(rop_qty, 0) = 0;
+--
+-- ROP without PO check.
+-- SELECT *
+-- FROM vw_job_order_rekap_lines
+-- WHERE rop_qty > 0
+--   AND COALESCE(po_qty, 0) = 0;
+--
+-- Cancelled record exclusion check: expected 0 rows.
+-- SELECT *
+-- FROM vw_job_order_report_scope
+-- WHERE NOT is_valid_for_metrics;
