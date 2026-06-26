@@ -1,5 +1,22 @@
 # Odoo to PostgreSQL Synchronization Platform
 
+## Documentation Structure
+
+Project documentation is organized under `docs/` by purpose:
+
+| Folder | Purpose |
+| --- | --- |
+| `docs/01_Project_Management/` | Planning, migration, and next-step documents. |
+| `docs/02_Architecture/` | System architecture and analytics architecture documents. |
+| `docs/03_Data_Model/` | Data catalog, field mapping, schema evolution, and table audit documents. |
+| `docs/04_Business_Rules/` | Business flow, Data Truth Layer rules, and implementation gap documents. |
+| `docs/05_Dashboards/` | Dashboard contracts, concepts, reviews, and page architecture. |
+| `docs/06_Investigations/` | Data-quality checks, field investigations, and issue reports. |
+| `docs/07_Deliverables/` | Completed milestone and handoff-ready deliverables. |
+| `docs/99_Unsorted/` | Temporary location for documents that do not yet have a clear category. |
+
+See `INDEX.md` for the full document list and current locations.
+
 ## Current Status
 
 V1 traceability checkpoint is complete.

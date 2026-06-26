@@ -122,30 +122,52 @@ Phase 2A Sales Order Traceability implementation completed:
 - Accounting / AR remains out of scope for status; accounting line count is diagnostic only.
 - Profitability was not calculated.
 
+Latest Phase 2A scope update:
+
+- Sales Order Traceability Dashboard is now scoped to PT Nobi Putra Angkasa only.
+- PT Nobi Elektrika Sejahtera is excluded at SQL view level.
+- The filter is applied using the extracted `sale_order.company_id` field.
+- In the current PostgreSQL extraction, `sale_order.company_id` stores display text, not a numeric company ID. The value used is `Nobi Putra Angkasa, PT`.
+- `sale_order.x_studio_product_type` exists and is now exposed as `product_type_raw` and normalized `product_type_label`.
+- Product Type is visible in the Sales Order dashboard as a filter, main table column, and count chip strip.
+
 Phase 2A validation snapshot:
 
 | Metric | Count / Value |
 | --- | ---: |
-| total_rows | 1,201 |
-| active_sales_orders | 1,175 |
-| delivered_sales_orders | 1,034 |
-| invoiced_sales_orders | 1,072 |
-| delayed_delivery_sales_orders | 61 |
-| waiting_invoice_sales_orders | 18 |
-| waiting_delivery_sales_orders | 82 |
-| completed_sales_orders | 938 |
-| quantity_delivery_progress_ratio | 75.7% |
-| quantity_invoice_progress_ratio | 16,264.2% |
-| amount_delivery_progress_ratio | 82.0% |
-| amount_invoice_progress_ratio | 127.7% |
-| sales_orders_from_internal_order | 211 |
-| sales_orders_make_to_order | 16 |
-| sales_orders_from_stock | 73 |
-| unknown_source_sales_orders | 76 |
+| SO count before company filter | 1,201 |
+| SO count after company filter | 1,114 |
+| active_sales_orders after company filter | 1,090 |
+| excluded PT Nobi Elektrika Sejahtera rows | 87 |
+| API row_count | 1,114 |
+| API company values returned | `Nobi Putra Angkasa, PT` only |
+| product_type_filter_available | Yes |
+
+Product type validation snapshot:
+
+| Product type | SO count |
+| --- | ---: |
+| Empty Panel | 571 |
+| Cable Tray | 330 |
+| Electrical Panel | 173 |
+| Pole/Structure | 17 |
+| Lamp | 16 |
+| Unknown Product Type | 6 |
+| Scaffolding | 1 |
+| Other Product Type | 0 |
 
 Important Phase 2A data note:
 
 - Quantity invoice progress is extremely high because current `sale_order_line.qty_invoiced` totals exceed ordered quantity totals by a large amount. The dashboard follows the approved formula and does not reinterpret the source data.
+
+Documentation cleanup completed:
+
+- Created the numbered documentation folder structure under `docs/`.
+- Moved architecture, data model, business rules, dashboard, investigation, and deliverable documents into the new folders.
+- Added root `INDEX.md` listing current documentation locations.
+- Added root `CHANGELOG.md` with the cleanup entry.
+- Updated root `README.md` with the documentation structure.
+- Kept this handoff file at `docs/CHATGPT_HANDOFF_REPORT.md` by project convention.
 
 First dashboard page build completed:
 
@@ -189,13 +211,17 @@ Business confirmation from Fauzan:
 | `src/static/dashboard/sales-orders.html` | Added Phase 2A Sales Order Traceability Dashboard page. |
 | `src/static/dashboard/sales-orders.css` | Added Sales Order dashboard styling that reuses the existing dashboard design system. |
 | `src/static/dashboard/sales-orders.js` | Added Sales Order dashboard data loading, KPI recalculation, filters, table rendering, and drill-down diagnostics. |
+| `src/static/dashboard/sales-orders.html` | Updated Sales Order dashboard with Product Type filter, Product Type column, and Product Type count strip. |
+| `src/static/dashboard/sales-orders.css` | Widened Sales Order table and styled Product Type chips. |
+| `src/static/dashboard/sales-orders.js` | Added Product Type filtering, count chips, table display, and diagnostics. |
+| `src/api.py` | Added Product Type filter options and selected `company_id`, `product_type_raw`, and `product_type_label` from the SO dashboard view. |
 | `requirements.txt` | Enabled FastAPI dashboard/API runtime dependencies: `fastapi`, `uvicorn`, and `python-multipart`. |
 | `tests/test_dashboard_api.py` | Added KPI summary tests for cancelled-record exclusion and zero-denominator ratios. |
 | `sql/01_base_views.sql` | Added `vw_approval_product_line_context`, changed `vw_rkb_planning_lines` to an RKB-only compatibility view, added `vw_internal_order_context`, added `vw_manufacturing_flow_context`, added `vw_sale_order_internal_order_bridge`, added finished-goods store movement classification, and corrected Internal Order/SO linkage to use numeric approval request IDs. |
 | `sql/02_traceability_views.sql` | Updated data-quality exceptions to use all approval categories, added Internal Order exceptions, kept RKB-specific checks RKB-only. |
 | `sql/03_validation_queries.sql` | Added validation counts for approval categories, Internal Order lines, IO-to-MO coverage, MO without IO/SO, manufacturing movements, finished-goods store movements, delivery movements, out-of-scope Internal Use, SO-line dashboard delivery/invoice metrics, and PO-line receipt/billing metrics. |
 | `sql/04_dashboard_traceability_views.sql` | Added dashboard-ready `vw_dashboard_internal_order_traceability`, one row per Internal Order number, updated SO linkage to use the parsed many-to-many bridge, changed v1 delivery/invoice readiness to use linked SO line quantities, and added linked PO line receipt/billing progress. |
-| `sql/05_sales_order_dashboard_views.sql` | Added Phase 2A `vw_dashboard_sales_order_traceability` for SO-first traceability, quantity/amount progress, source classification, follow-up status, and drill-down JSON. |
+| `sql/05_sales_order_dashboard_views.sql` | Added Phase 2A `vw_dashboard_sales_order_traceability` for SO-first traceability, quantity/amount progress, source classification, follow-up status, and drill-down JSON. Later updated to filter PT Nobi Putra Angkasa only and expose normalized Product Type. |
 | `sql/README.md` | Documented the new approval category mapping, new views, Internal Order v1 source, SO-line delivery/invoice rule, PO-line receipt/billing rule, and updated caveats. |
 | `docs/BUSINESS_FLOW.md` | Updated business flow to define Internal Order as `approval_product_line` category `MANUFACTURE` for v1 and clarified RKB vs ROP/PEMBELIAN. |
 | `docs/DATA_TRUTH_LAYER_REVIEW.md` | Updated implemented rules, view list, validation snapshot, missing-field assessment, and JO-as-production-required-SO glossary. |
@@ -204,7 +230,7 @@ Business confirmation from Fauzan:
 | `docs/DASHBOARD_DATA_CONTRACT.md` | Defines the V1 dashboard data contract, separating required V1 fields, optional diagnostics, future profitability fields, and dashboard-facing SO/JO/IO glossary. |
 | `docs/DASHBOARD_PAGE_1_INTERNAL_ORDER_TRACEABILITY.md` | Defines Page 1 layout, table columns, KPI cards, filters, follow-up logic, and frontend readiness. |
 | `docs/DASHBOARD_BUSINESS_REVIEW.md` | Reviews Page 1 from VP Operations, PPIC Manager, and Procurement Manager perspectives, with recommended KPI cards, main-table columns, diagnostic-only fields, layout, follow-up actions, and the implemented table simplification. |
-| `docs/SALES_ORDER_TRACEABILITY_ARCHITECTURE.md` | Phase 2A blueprint and implementation summary for the Sales Order Traceability Dashboard, covering business questions, source data, source classification, KPIs, table design, drill-downs, follow-up logic, readiness, routes, formulas, and validation counts. |
+| `docs/SALES_ORDER_TRACEABILITY_ARCHITECTURE.md` | Phase 2A blueprint and implementation summary for the Sales Order Traceability Dashboard, covering business questions, source data, source classification, KPIs, table design, drill-downs, follow-up logic, readiness, routes, formulas, validation counts, PT Nobi Putra Angkasa company scope, and Product Type normalization. |
 | `docs/CHATGPT_HANDOFF_REPORT.md` | Rewritten as this self-contained review handoff. |
 
 ## 3. Business Rule Changes

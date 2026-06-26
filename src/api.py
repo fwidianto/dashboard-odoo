@@ -227,6 +227,7 @@ def _build_sales_order_filter_options(rows: list[dict]) -> dict:
 
     return {
         "customers": unique_values("customer_name"),
+        "product_types": unique_values("product_type_label"),
         "source_types": unique_values("source_type"),
         "sales_order_statuses": unique_values("sales_order_state"),
         "follow_up_statuses": unique_values("follow_up_status"),
@@ -364,6 +365,7 @@ async def sales_order_dashboard_data():
         SELECT
             sales_order_id,
             sales_order_number,
+            company_id,
             customer_name,
             order_date,
             commitment_date,
@@ -373,6 +375,8 @@ async def sales_order_dashboard_data():
             is_valid_for_metrics,
             delivery_status,
             invoice_status,
+            product_type_raw,
+            product_type_label,
             raw_internal_order_reference,
             source_type,
             source_link_status,

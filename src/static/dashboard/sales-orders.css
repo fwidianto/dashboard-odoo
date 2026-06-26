@@ -9,7 +9,7 @@
 }
 
 .sales-dashboard table {
-  min-width: 1760px;
+  min-width: 1880px;
 }
 
 .sales-order-number {
@@ -21,6 +21,16 @@
   border-color: rgba(169, 60, 50, 0.26);
   background: #fff0ee;
   color: var(--danger);
+}
+
+.product-type-strip {
+  margin-top: -8px;
+}
+
+.product-type-chip {
+  background: #f7faf8;
+  border-color: rgba(45, 92, 78, 0.18);
+  color: var(--text);
 }
 
 .detail-section {

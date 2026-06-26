@@ -65,6 +65,12 @@
         </select>
       </label>
       <label>
+        <span>Product Type</span>
+        <select id="productTypeFilter">
+          <option value="">All product types</option>
+        </select>
+      </label>
+      <label>
         <span>Commitment From</span>
         <input id="commitmentFromFilter" type="date">
       </label>
@@ -94,6 +100,7 @@
     </section>
 
     <section class="status-strip" id="statusStrip" aria-label="Follow-up status counts"></section>
+    <section class="status-strip product-type-strip" id="productTypeStrip" aria-label="Product type counts"></section>
 
     <section class="table-panel" aria-label="Sales Order traceability table">
       <div class="table-toolbar">
@@ -109,6 +116,7 @@
               <th></th>
               <th>SO Number</th>
               <th>Customer</th>
+              <th>Product Type</th>
               <th>Commitment Date</th>
               <th>Source Type</th>
               <th>SO Status</th>
@@ -127,7 +135,7 @@
           </thead>
           <tbody id="dashboardRows">
             <tr>
-              <td colspan="17" class="empty-cell">Loading dashboard data...</td>
+              <td colspan="18" class="empty-cell">Loading dashboard data...</td>
             </tr>
           </tbody>
         </table>

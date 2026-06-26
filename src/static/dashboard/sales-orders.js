@@ -9,12 +9,14 @@ const els = {
   clearFiltersButton: document.getElementById("clearFiltersButton"),
   soFilter: document.getElementById("soFilter"),
   customerFilter: document.getElementById("customerFilter"),
+  productTypeFilter: document.getElementById("productTypeFilter"),
   commitmentFromFilter: document.getElementById("commitmentFromFilter"),
   commitmentToFilter: document.getElementById("commitmentToFilter"),
   sourceFilter: document.getElementById("sourceFilter"),
   statusFilter: document.getElementById("statusFilter"),
   followUpFilter: document.getElementById("followUpFilter"),
   statusStrip: document.getElementById("statusStrip"),
+  productTypeStrip: document.getElementById("productTypeStrip"),
   dashboardRows: document.getElementById("dashboardRows"),
   rowCount: document.getElementById("rowCount"),
   lastLoaded: document.getElementById("lastLoaded"),
@@ -223,6 +225,24 @@ function renderStatusStrip(rows) {
     .join("");
 }
 
+function renderProductTypeStrip(rows) {
+  const counts = rows.reduce((acc, row) => {
+    const label = row.product_type_label || "Unknown Product Type";
+    acc[label] = (acc[label] || 0) + 1;
+    return acc;
+  }, {});
+
+  els.productTypeStrip.innerHTML = Object.entries(counts)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([label, count]) => `
+      <span class="status-chip product-type-chip">
+        ${safeText(label)}
+        <strong>${formatNumber(count)}</strong>
+      </span>
+    `)
+    .join("");
+}
+
 function renderLineRows(lines) {
   if (!lines || !lines.length) {
     return '<div class="detail-empty">No SO lines found.</div>';
@@ -307,8 +327,10 @@ function detailRow(row) {
   const diagnostics = row.diagnostics || {};
   return `
     <tr class="detail-row">
-      <td colspan="17">
+      <td colspan="18">
         <div class="detail-grid">
+          <div class="detail-item"><span>Company</span><strong>${safeText(row.company_id)}</strong></div>
+          <div class="detail-item"><span>Raw Product Type</span><strong>${safeText(row.product_type_raw)}</strong></div>
           <div class="detail-item"><span>Delivery Status</span><strong>${safeText(row.delivery_status)}</strong></div>
           <div class="detail-item"><span>Invoice Status</span><strong>${safeText(row.invoice_status)}</strong></div>
           <div class="detail-item"><span>IO Count</span><strong>${formatNumber(row.internal_order_count)}</strong></div>
@@ -342,6 +364,7 @@ function tableRow(row) {
       <td><button class="row-action" type="button" data-so="${row.sales_order_id}" title="Toggle details" aria-label="Toggle details">${expanded ? "-" : "+"}</button></td>
       <td class="sales-order-number">${safeText(row.sales_order_number)}</td>
       <td>${safeText(row.customer_name)}</td>
+      <td>${safeText(row.product_type_label)}</td>
       <td>${formatDate(row.commitment_date)}</td>
       <td>${sourceBadge(row.source_type)}</td>
       <td>${badge(row.sales_order_state, row.is_cancelled ? "status-muted" : "status-progress")}</td>
@@ -364,7 +387,7 @@ function tableRow(row) {
 function renderTable(rows) {
   els.rowCount.textContent = `${formatNumber(rows.length)} rows`;
   if (!rows.length) {
-    els.dashboardRows.innerHTML = '<tr><td colspan="17" class="empty-cell">No Sales Orders match the current filters.</td></tr>';
+    els.dashboardRows.innerHTML = '<tr><td colspan="18" class="empty-cell">No Sales Orders match the current filters.</td></tr>';
     return;
   }
   els.dashboardRows.innerHTML = rows.map(tableRow).join("");
@@ -377,6 +400,7 @@ function populateSelect(select, values) {
 
 function populateFilters(filters) {
   populateSelect(els.customerFilter, filters.customers || []);
+  populateSelect(els.productTypeFilter, filters.product_types || []);
   populateSelect(els.sourceFilter, filters.source_types || []);
   populateSelect(els.statusFilter, filters.sales_order_statuses || []);
   populateSelect(els.followUpFilter, filters.follow_up_statuses || []);
@@ -394,6 +418,7 @@ function dateOverlaps(row, fromFilter, toFilter) {
 function applyFilters() {
   const soTerm = els.soFilter.value.trim().toLowerCase();
   const customer = els.customerFilter.value;
+  const productType = els.productTypeFilter.value;
   const source = els.sourceFilter.value;
   const status = els.statusFilter.value;
   const followUp = els.followUpFilter.value;
@@ -403,14 +428,16 @@ function applyFilters() {
   state.filteredRows = state.rows.filter((row) => {
     const matchesSo = !soTerm || safeText(row.sales_order_number).toLowerCase().includes(soTerm);
     const matchesCustomer = !customer || row.customer_name === customer;
+    const matchesProductType = !productType || row.product_type_label === productType;
     const matchesSource = !source || row.source_type === source;
     const matchesStatus = !status || row.sales_order_state === status;
     const matchesFollowUp = !followUp || row.follow_up_status === followUp;
-    return matchesSo && matchesCustomer && matchesSource && matchesStatus && matchesFollowUp && dateOverlaps(row, commitmentFrom, commitmentTo);
+    return matchesSo && matchesCustomer && matchesProductType && matchesSource && matchesStatus && matchesFollowUp && dateOverlaps(row, commitmentFrom, commitmentTo);
   });
 
   renderKpis(state.filteredRows);
   renderStatusStrip(state.filteredRows);
+  renderProductTypeStrip(state.filteredRows);
   renderTable(state.filteredRows);
 }
 
@@ -436,6 +463,7 @@ async function loadDashboard() {
 function clearFilters() {
   els.soFilter.value = "";
   els.customerFilter.value = "";
+  els.productTypeFilter.value = "";
   els.commitmentFromFilter.value = "";
   els.commitmentToFilter.value = "";
   els.sourceFilter.value = "";
@@ -447,6 +475,7 @@ function clearFilters() {
 [
   els.soFilter,
   els.customerFilter,
+  els.productTypeFilter,
   els.commitmentFromFilter,
   els.commitmentToFilter,
   els.sourceFilter,

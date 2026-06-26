@@ -21,7 +21,7 @@ This dashboard is traceability-only. Profitability, margin, COGS, estimator cost
 
 | Source | Purpose | Key Fields | Readiness |
 | --- | --- | --- | --- |
-| `sale_order` | Sales Order header, customer-facing demand, commercial status. | `id`, `name`, `partner_id`, `date_order`, `state`, `delivery_status`, `invoice_status`, `x_studio_io_1` | Ready |
+| `sale_order` | Sales Order header, customer-facing demand, commercial status, company scope, and product type. | `id`, `name`, `partner_id`, `date_order`, `state`, `delivery_status`, `invoice_status`, `company_id`, `x_studio_io_1`, `x_studio_product_type` | Ready |
 | `sale_order_line` | SO line quantities for ordered, delivered, and invoiced progress. | `id`, `order_id`, `product_id`, `product_uom_qty`, `qty_delivered`, `qty_invoiced`, `price_subtotal` | Ready |
 | `vw_sales_order_line_source_context` | Line-level source classification. | SO number/id, product, ordered/delivered/invoiced quantities, line source type, source evidence flags | Ready |
 | `vw_sales_order_source_summary` | SO header rollup of line source classification. | SO id/number, source type, line counts, source counts, status validity | Ready |
@@ -230,6 +230,14 @@ YES, for a traceability-only Phase 2A dashboard.
 
 Phase 2A has been implemented as the first Sales Order Traceability Dashboard.
 
+Phase 2A company scope:
+
+```text
+PT Nobi Putra Angkasa only
+```
+
+The SQL view filters at the `sale_order.company_id` level. In the current extracted PostgreSQL data, `sale_order.company_id` stores the Odoo display value `Nobi Putra Angkasa, PT`, not a numeric company ID. The filter is still applied to the `company_id` field in SQL, not in the frontend.
+
 Routes:
 
 | Route | Purpose |
@@ -248,6 +256,26 @@ SQL file:
 ```text
 sql/05_sales_order_dashboard_views.sql
 ```
+
+Product type source:
+
+```text
+sale_order.x_studio_product_type
+```
+
+Product type normalization:
+
+| Raw value | Product type label |
+| --- | --- |
+| `1` | Cable Tray |
+| `2` | Empty Panel |
+| `3` | Pole/Structure |
+| `4` | Electrical Panel |
+| `5` | Lamp |
+| `6` | Scaffolding |
+| `Electrical Service` | Electrical Service |
+| null, empty, `{}`, `New` | Unknown Product Type |
+| anything else | Other Product Type |
 
 Implemented progress formulas:
 
@@ -285,35 +313,32 @@ Validation snapshot:
 
 | Metric | Count |
 | --- | ---: |
-| total_rows | 1,201 |
-| active_so | 1,175 |
-| delayed_delivery | 61 |
-| waiting_invoice | 18 |
-| waiting_production | 0 |
-| waiting_delivery | 82 |
-| completed | 938 |
-| from_internal_order | 211 |
-| make_to_order | 16 |
-| from_stock | 73 |
-| unknown_source | 76 |
+| SO count before company filter | 1,201 |
+| SO count after company filter | 1,114 |
+| active_so | 1,090 |
+| excluded PT Nobi Elektrika Sejahtera rows | 87 |
+
+Product type validation:
+
+| Product type | SO count |
+| --- | ---: |
+| Empty Panel | 571 |
+| Cable Tray | 330 |
+| Electrical Panel | 173 |
+| Pole/Structure | 17 |
+| Lamp | 16 |
+| Unknown Product Type | 6 |
+| Scaffolding | 1 |
+| Other Product Type | 0 |
 
 Dashboard API summary snapshot:
 
 | Metric | Value |
 | --- | ---: |
-| active_sales_orders | 1,175 |
-| delivered_sales_orders | 1,034 |
-| invoiced_sales_orders | 1,072 |
-| delayed_delivery_sales_orders | 61 |
-| waiting_invoice_sales_orders | 18 |
-| quantity_delivery_progress_ratio | 75.7% |
-| quantity_invoice_progress_ratio | 16,264.2% |
-| amount_delivery_progress_ratio | 82.0% |
-| amount_invoice_progress_ratio | 127.7% |
-| sales_orders_from_internal_order | 211 |
-| sales_orders_make_to_order | 16 |
-| sales_orders_from_stock | 73 |
-| unknown_source_sales_orders | 76 |
+| row_count | 1,114 |
+| active_sales_orders | 1,090 |
+| company values returned | `Nobi Putra Angkasa, PT` only |
+| product_type_filter_available | Yes |
 
 Important data note:
 

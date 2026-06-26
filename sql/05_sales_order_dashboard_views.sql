@@ -3,6 +3,7 @@
 -- =============================================================================
 -- Purpose:
 --   Dashboard-ready Sales Order traceability view.
+--   Phase 2A is scoped to PT Nobi Putra Angkasa only.
 --
 -- Scope:
 --   Traceability, delivery progress, invoice progress, source classification,
@@ -11,6 +12,11 @@
 -- Explicitly out of scope:
 --   Profitability, AR/payment state, COGS, margin, estimator cost, and
 --   accounting-based status.
+--
+-- Company scope:
+--   The current extracted sale_order.company_id column stores the Odoo display
+--   value, not a numeric company ID. The view still filters on company_id at
+--   SQL level using the extracted company_id value for PT Nobi Putra Angkasa.
 -- =============================================================================
 
 DROP VIEW IF EXISTS vw_dashboard_sales_order_traceability CASCADE;
@@ -145,6 +151,7 @@ so_base AS (
     SELECT
         so.id AS sales_order_id,
         so.name AS sales_order_number,
+        so.company_id AS company_id,
         so.partner_id AS customer_name,
         so.date_order AS order_date,
         so.commitment_date,
@@ -154,12 +161,27 @@ so_base AS (
         (LOWER(COALESCE(so.state, '')) NOT IN ('cancel', 'cancelled')) AS is_valid_for_metrics,
         so.delivery_status,
         so.invoice_status,
+        so.x_studio_product_type AS product_type_raw,
+        CASE
+            WHEN so.x_studio_product_type IS NULL THEN 'Unknown Product Type'
+            WHEN TRIM(so.x_studio_product_type::text) IN ('', '{}', 'New') THEN 'Unknown Product Type'
+            WHEN TRIM(so.x_studio_product_type::text) = '1' THEN 'Cable Tray'
+            WHEN TRIM(so.x_studio_product_type::text) = '2' THEN 'Empty Panel'
+            WHEN TRIM(so.x_studio_product_type::text) = '3' THEN 'Pole/Structure'
+            WHEN TRIM(so.x_studio_product_type::text) = '4' THEN 'Electrical Panel'
+            WHEN TRIM(so.x_studio_product_type::text) = '5' THEN 'Lamp'
+            WHEN TRIM(so.x_studio_product_type::text) = '6' THEN 'Scaffolding'
+            WHEN TRIM(so.x_studio_product_type::text) = 'Electrical Service' THEN 'Electrical Service'
+            ELSE 'Other Product Type'
+        END AS product_type_label,
         so.x_studio_io_1 AS raw_internal_order_reference
     FROM sale_order so
+    WHERE so.company_id::text = 'Nobi Putra Angkasa, PT'
 )
 SELECT
     so.sales_order_id,
     so.sales_order_number,
+    so.company_id,
     so.customer_name,
     so.order_date,
     so.commitment_date,
@@ -169,6 +191,8 @@ SELECT
     so.is_valid_for_metrics,
     so.delivery_status,
     so.invoice_status,
+    so.product_type_raw,
+    so.product_type_label,
     so.raw_internal_order_reference,
     COALESCE(source.sales_order_source_type, 'UNKNOWN_SOURCE') AS source_type,
     COALESCE(source.sales_order_source_link_status, 'UNKNOWN_NO_MATCHED_LINES') AS source_link_status,
@@ -234,6 +258,9 @@ SELECT
     COALESCE(io.internal_orders, '[]'::jsonb) AS internal_orders,
     COALESCE(mo.manufacturing_orders, '[]'::jsonb) AS manufacturing_orders,
     JSONB_BUILD_OBJECT(
+        'company_id', so.company_id,
+        'product_type_raw', so.product_type_raw,
+        'product_type_label', so.product_type_label,
         'delivery_status', so.delivery_status,
         'invoice_status', so.invoice_status,
         'source_link_status', COALESCE(source.sales_order_source_link_status, 'UNKNOWN_NO_MATCHED_LINES'),
@@ -254,4 +281,4 @@ LEFT JOIN accounting_agg accounting
     ON accounting.sales_order_id = so.sales_order_id;
 
 COMMENT ON VIEW vw_dashboard_sales_order_traceability IS
-    'Phase 2A dashboard-ready Sales Order traceability view. Quantity progress uses SO line quantities; amount progress uses qty * price_unit. Delay uses sale_order.commitment_date. Accounting/AR and profitability are out of scope; accounting count is diagnostic only.';
+    'Phase 2A dashboard-ready Sales Order traceability view for PT Nobi Putra Angkasa only. Quantity progress uses SO line quantities; amount progress uses qty * price_unit. Delay uses sale_order.commitment_date. Accounting/AR and profitability are out of scope; accounting count is diagnostic only.';
