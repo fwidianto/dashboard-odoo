@@ -150,6 +150,7 @@ Thumbs.db
 
 # Project specific
 logs/
+private_reference/
 *.log
 sync.log
 debug.log
