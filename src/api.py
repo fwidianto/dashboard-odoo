@@ -234,6 +234,23 @@ def _build_sales_order_filter_options(rows: list[dict]) -> dict:
     }
 
 
+def _build_internal_order_rekap_warnings(summary_row: dict) -> list[str]:
+    warnings: list[str] = []
+
+    if not summary_row.get("has_sales_order_link"):
+        warnings.append("Pre-SO Internal Order: no linked Sales Order found.")
+    if int(summary_row.get("mixed_uom_count") or 0) > 0:
+        warnings.append("Mixed UoM detected; quantity comparison may be unreliable.")
+    if Decimal(str(summary_row.get("rkb_actual_unknown_class_amount") or 0)) != 0:
+        warnings.append("Unknown product classification amount exists; review product classification.")
+    if int(summary_row.get("po_without_rop_count") or 0) > 0:
+        warnings.append("Some PO rows exist without linked ROP.")
+    if int(summary_row.get("rop_without_po_count") or 0) > 0:
+        warnings.append("Some ROP rows exist without linked PO.")
+
+    return warnings
+
+
 def get_sync_engine() -> SyncEngine:
     """Dependency to get sync engine instance."""
     engine = SyncEngine()
@@ -445,6 +462,217 @@ async def sales_order_dashboard_data():
         }
     except Exception as e:
         logger.error("Sales Order dashboard query failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        pg.close()
+
+
+@app.get("/api/dashboard/internal-order-rekap", tags=["Dashboard"])
+async def internal_order_rekap_dashboard_data(
+    internal_order_number: Optional[str] = Query(default=None)
+):
+    """
+    Return Internal Order Rekap operational reconciliation data.
+
+    This endpoint is read-only and uses:
+    vw_internal_order_rekap_summary
+    vw_internal_order_rekap_lines
+    """
+    if internal_order_number is None or not internal_order_number.strip():
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "internal_order_number query parameter is required."},
+        )
+
+    normalized_internal_order_number = internal_order_number.strip()
+
+    summary_sql = text("""
+        SELECT
+            internal_order_number,
+            company_name,
+            has_sales_order_link,
+            product_count,
+            rkb_actual_product_count,
+            rop_product_count,
+            po_product_count,
+            rkb_actual_amount,
+            rkb_actual_trackable_amount,
+            rkb_actual_non_trackable_amount,
+            rkb_actual_unknown_class_amount,
+            rop_amount,
+            rop_trackable_amount,
+            rop_non_trackable_amount,
+            rop_unknown_class_amount,
+            po_amount,
+            po_trackable_amount,
+            po_non_trackable_amount,
+            po_unknown_class_amount,
+            not_yet_rop_amount,
+            excess_rop_amount,
+            po_received_qty,
+            po_invoiced_qty,
+            mixed_uom_count,
+            rkb_only_count,
+            rop_only_count,
+            po_only_count,
+            rkb_rop_po_count,
+            po_without_rop_count,
+            rop_without_po_count,
+            received_ratio,
+            invoiced_ratio,
+            rop_progress_ratio,
+            not_yet_rop_ratio,
+            comparison_basis,
+            summary_scope
+        FROM vw_internal_order_rekap_summary
+        WHERE internal_order_number = :internal_order_number
+    """)
+
+    breakdown_trackability_sql = text("""
+        SELECT
+            product_trackability_class,
+            product_classification_reason,
+            is_trackable_product,
+            COUNT(*) AS product_count,
+            SUM(rkb_actual_subtotal) AS rkb_actual_amount,
+            SUM(rop_subtotal) AS rop_amount,
+            SUM(po_subtotal) AS po_amount
+        FROM vw_internal_order_rekap_lines
+        WHERE internal_order_number = :internal_order_number
+        GROUP BY
+            product_trackability_class,
+            product_classification_reason,
+            is_trackable_product
+        ORDER BY
+            product_trackability_class,
+            product_classification_reason,
+            is_trackable_product
+    """)
+
+    breakdown_presence_sql = text("""
+        SELECT
+            product_presence_status,
+            COUNT(*) AS product_count,
+            SUM(rkb_actual_subtotal) AS rkb_actual_amount,
+            SUM(rop_subtotal) AS rop_amount,
+            SUM(po_subtotal) AS po_amount
+        FROM vw_internal_order_rekap_lines
+        WHERE internal_order_number = :internal_order_number
+        GROUP BY product_presence_status
+        ORDER BY product_presence_status
+    """)
+
+    lines_sql = text("""
+        SELECT
+            internal_order_number,
+            company_name,
+            has_sales_order_link,
+            product_key,
+            product_name,
+            product_trackability_class,
+            product_classification_reason,
+            is_trackable_product,
+            product_presence_status,
+            uom_summary,
+            rkb_actual_uom_summary,
+            rop_uom_summary,
+            po_uom_summary,
+            mixed_uom_flag,
+            rkb_actual_qty,
+            rkb_actual_unit_price,
+            rkb_actual_subtotal,
+            rop_qty,
+            rop_unit_price,
+            rop_subtotal,
+            po_qty,
+            po_unit_price,
+            po_subtotal,
+            po_received_qty,
+            po_invoiced_qty,
+            not_yet_rop_qty,
+            not_yet_rop_amount,
+            excess_rop_qty,
+            excess_rop_amount,
+            po_without_rop_flag,
+            rop_without_po_flag,
+            comparison_scope
+        FROM vw_internal_order_rekap_lines
+        WHERE internal_order_number = :internal_order_number
+        ORDER BY
+            product_trackability_class,
+            product_presence_status,
+            COALESCE(rkb_actual_subtotal, 0) DESC,
+            product_key
+    """)
+
+    pg = PostgresClient()
+    try:
+        with pg.engine.connect() as conn:
+            summary_result = conn.execute(
+                summary_sql,
+                {"internal_order_number": normalized_internal_order_number},
+            ).fetchone()
+            if summary_result is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail={
+                        "error": "Internal Order not found.",
+                        "internal_order_number": normalized_internal_order_number,
+                    },
+                )
+
+            summary = {
+                key: _json_safe(value)
+                for key, value in summary_result._mapping.items()
+            }
+
+            trackability_breakdowns = [
+                {key: _json_safe(value) for key, value in row._mapping.items()}
+                for row in conn.execute(
+                    breakdown_trackability_sql,
+                    {"internal_order_number": normalized_internal_order_number},
+                ).fetchall()
+            ]
+
+            presence_breakdowns = [
+                {key: _json_safe(value) for key, value in row._mapping.items()}
+                for row in conn.execute(
+                    breakdown_presence_sql,
+                    {"internal_order_number": normalized_internal_order_number},
+                ).fetchall()
+            ]
+
+            lines = [
+                {key: _json_safe(value) for key, value in row._mapping.items()}
+                for row in conn.execute(
+                    lines_sql,
+                    {"internal_order_number": normalized_internal_order_number},
+                ).fetchall()
+            ]
+
+        metadata = {
+            "generated_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+            "comparison_basis": summary.get("comparison_basis"),
+            "summary_scope": summary.get("summary_scope"),
+            "line_count": len(lines),
+            "warnings": _build_internal_order_rekap_warnings(summary),
+        }
+
+        return {
+            "status": "success",
+            "internal_order_number": normalized_internal_order_number,
+            "summary": summary,
+            "breakdowns": {
+                "by_trackability_class": trackability_breakdowns,
+                "by_product_presence_status": presence_breakdowns,
+            },
+            "lines": lines,
+            "metadata": metadata,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Internal Order Rekap API query failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         pg.close()

@@ -412,3 +412,11 @@ Explicitly out of scope:
 - No SQL logic changes
 - No API/frontend implementation
 - No private files committed
+
+## 16. Implementation Status
+
+- API endpoint implemented: `/api/dashboard/internal-order-rekap`
+- Required parameter: `internal_order_number`
+- Frontend is not implemented yet
+- Response follows the `summary`, `breakdowns`, `lines`, and `metadata` shape defined above
+
