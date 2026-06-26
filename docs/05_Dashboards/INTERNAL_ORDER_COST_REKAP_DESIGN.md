@@ -71,6 +71,36 @@ No unit conversion is performed.
 The SQL layer only flags mixed UoM situations.
 Quantity comparison is reliable only when the UoM is consistent.
 
+## Trackable vs Non-Trackable Product Classification
+
+The full Odoo RKB Actual total must be preserved.
+Some valid RKB rows are not normal material/product rows and should not be treated as errors.
+
+Examples seen in `426IO026`:
+- `!! - OTHERS (RKB)`
+- `Sisa Budget Estimator`
+- `Jasa NES 2% (Nilai PO)`
+- `Jasa Machining UPGM`
+
+The IO-first layer should therefore surface both:
+- full totals for operational reconciliation
+- trackable-only totals for product-level comparison
+
+Classification intent:
+- `TRACKABLE_PRODUCT` for normal bracketed product-code rows
+- `NON_TRACKABLE_OTHERS` for `!!` / `OTHERS` budget buckets
+- `BUDGET_SERVICE_ADJUSTMENT` for service or budget adjustment text such as `Sisa Budget`, `Estimator`, `Jasa`, or `Machining`
+- `UNKNOWN_PRODUCT_CLASS` only when the row does not fit the conservative rules above
+
+Current validation for `426IO026`:
+- full `rkb_actual_amount`: `9,078,236,100.61`
+- trackable `rkb_actual_trackable_amount`: `7,476,666,216.61`
+- non-trackable `rkb_actual_non_trackable_amount`: `1,601,569,884.00`
+- unknown-class `rkb_actual_unknown_class_amount`: `0.00`
+
+This explains why an earlier trackable-only comparison landed around `7.477B` while the full Odoo approval total is `9.078B`.
+Non-trackable rows are valid IO content and should remain visible as a separate classification, not removed.
+
 ## View Behavior
 
 ### `vw_internal_order_rekap_scope`

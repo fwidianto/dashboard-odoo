@@ -33,6 +33,34 @@ No existing SO/JO Rekap views were modified.
 - `po_invoiced_qty`: `8,446.00`
 - `comparison_basis`: `ODOO_RKB_ACTUAL_BASELINE`
 
+## Trackable vs Non-Trackable Breakdown
+
+The Odoo approval screen for `RKB - 426IO026` confirms the full RKB Actual total is `9,078,236,100.61`.
+That full total is preserved in the SQL summary.
+
+- full `rkb_actual_amount`: `9,078,236,100.61`
+- trackable `rkb_actual_trackable_amount`: `7,476,666,216.61`
+- non-trackable `rkb_actual_non_trackable_amount`: `1,601,569,884.00`
+- unknown-class `rkb_actual_unknown_class_amount`: `0.00`
+
+Product counts by class:
+- `TRACKABLE_PRODUCT`: `413`
+- `NON_TRACKABLE_OTHERS`: `2`
+- `BUDGET_SERVICE_ADJUSTMENT`: `1`
+- `UNKNOWN_PRODUCT_CLASS`: `1`
+
+Sample non-trackable rows:
+- `!! - OTHERS (RKB)` -> `NON_TRACKABLE_OTHERS` -> `1,601,569,884.00`
+- `[!! - 630411] !! - S.Part & Jasa Untuk Mesin 630411` -> `NON_TRACKABLE_OTHERS` -> `18,976,835.00` in PO scope
+- `Jasa Transport [PRC]` -> `BUDGET_SERVICE_ADJUSTMENT` -> `6,600.00` in PO scope
+- `Discount [PRC]` -> `UNKNOWN_PRODUCT_CLASS` -> `-1,155,743.15` in PO scope
+
+Interpretation:
+- The earlier ~`7.477B` figure was likely a trackable/product-only comparison
+- The full Odoo RKB total is `9.078B`
+- Both numbers are explainable depending on whether non-trackable budget/service rows are included
+- Non-trackable rows are valid and should not be treated as data errors
+
 ## Product Presence Distribution for `426IO026`
 
 - `PO_ONLY`: `2`

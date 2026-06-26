@@ -114,3 +114,8 @@ Do not force it into mode A.
 - Create a separate IO-first Rekap design for pre-SO cases
 - Before building UI, validate IO-first RKB / ROP / PO mapping for `426IO026`
 - Treat the earlier large gap as a grain-selection issue, not a sign that the workbook and SQL are directly comparable at the SO/JO level
+
+Additional note for `426IO026`:
+- the earlier ~`7.477B` SQL RKB figure was trackable-only
+- the full Odoo RKB Actual total is `9.078B`
+- future comparisons should state explicitly whether they use the full total or a trackable-only subset
