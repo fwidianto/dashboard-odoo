@@ -8,6 +8,9 @@ Executed:
 - `sql/07_internal_order_cost_rekap_views.sql`
 
 No existing SO/JO Rekap views were modified.
+- SQL formatting cleanup was applied to `sql/07_internal_order_cost_rekap_views.sql`.
+- `is_trackable_product` now derives from `product_trackability_class`.
+- Validation for `426IO026` still passes with unchanged full RKB total.
 
 ## Validation Summary
 
