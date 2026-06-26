@@ -50,7 +50,7 @@ WITH source_rows AS (
               OR COALESCE(source_rows.product_name, '') ILIKE '%%jasa%%'
               OR COALESCE(source_rows.product_key, '') ILIKE '%%machining%%'
               OR COALESCE(source_rows.product_name, '') ILIKE '%%machining%%' THEN 'BUDGET_SERVICE_ADJUSTMENT'
-            WHEN COALESCE(source_rows.product_key, '') ~ '^\[.+\]' OR COALESCE(source_rows.product_name, '') ~ '^\[.+\]' THEN 'TRACKABLE_PRODUCT'
+            WHEN COALESCE(source_rows.product_key, '') ~ '^\[[0-9]{5}\]' OR COALESCE(source_rows.product_name, '') ~ '^\[[0-9]{5}\]' THEN 'TRACKABLE_PRODUCT'
             ELSE 'UNKNOWN_PRODUCT_CLASS'
         END AS product_trackability_class,
         CASE
@@ -64,11 +64,11 @@ WITH source_rows AS (
               OR COALESCE(source_rows.product_name, '') ILIKE '%%jasa%%'
               OR COALESCE(source_rows.product_key, '') ILIKE '%%machining%%'
               OR COALESCE(source_rows.product_name, '') ILIKE '%%machining%%' THEN 'BUDGET_SERVICE_TEXT'
-            WHEN COALESCE(source_rows.product_key, '') ~ '^\[.+\]' OR COALESCE(source_rows.product_name, '') ~ '^\[.+\]' THEN 'BRACKETED_PRODUCT_CODE'
+            WHEN COALESCE(source_rows.product_key, '') ~ '^\[[0-9]{5}\]' OR COALESCE(source_rows.product_name, '') ~ '^\[[0-9]{5}\]' THEN 'BRACKETED_PRODUCT_CODE'
             ELSE 'UNKNOWN_FALLBACK'
         END AS product_classification_reason,
         CASE
-            WHEN COALESCE(source_rows.product_key, '') ~ '^\[.+\]' OR COALESCE(source_rows.product_name, '') ~ '^\[.+\]' THEN TRUE
+            WHEN COALESCE(source_rows.product_key, '') ~ '^\[[0-9]{5}\]' OR COALESCE(source_rows.product_name, '') ~ '^\[[0-9]{5}\]' THEN TRUE
             ELSE FALSE
         END AS is_trackable_product
     FROM source_rows

@@ -87,10 +87,15 @@ The IO-first layer should therefore surface both:
 - trackable-only totals for product-level comparison
 
 Classification intent:
-- `TRACKABLE_PRODUCT` for normal bracketed product-code rows
+- `TRACKABLE_PRODUCT` only for normal 5-digit bracketed product-code rows such as `[43809] ...`
 - `NON_TRACKABLE_OTHERS` for `!!` / `OTHERS` budget buckets
 - `BUDGET_SERVICE_ADJUSTMENT` for service or budget adjustment text such as `Sisa Budget`, `Estimator`, `Jasa`, or `Machining`
 - `UNKNOWN_PRODUCT_CLASS` only when the row does not fit the conservative rules above
+
+This classifier is a temporary proxy.
+The most valid future source of truth is the Odoo product trackable / tracking field.
+That field has not yet been fetched into PostgreSQL.
+Once it is available, SQL should use the Odoo field first and only fall back to this text/code heuristic when the field is missing.
 
 Current validation for `426IO026`:
 - full `rkb_actual_amount`: `9,078,236,100.61`

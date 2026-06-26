@@ -55,10 +55,14 @@ Sample non-trackable rows:
 - `Jasa Transport [PRC]` -> `BUDGET_SERVICE_ADJUSTMENT` -> `6,600.00` in PO scope
 - `Discount [PRC]` -> `UNKNOWN_PRODUCT_CLASS` -> `-1,155,743.15` in PO scope
 
+Sample unknown rows:
+- `Discount [PRC]` -> `UNKNOWN_PRODUCT_CLASS` -> `-1,155,743.15` in PO scope
+
 Interpretation:
 - The earlier ~`7.477B` figure was likely a trackable/product-only comparison
 - The full Odoo RKB total is `9.078B`
 - Both numbers are explainable depending on whether non-trackable budget/service rows are included
+- The stricter 5-digit rule does not change the current `426IO026` totals; it only prevents non-standard bracketed rows from being treated as trackable
 - Non-trackable rows are valid and should not be treated as data errors
 
 ## Product Presence Distribution for `426IO026`
