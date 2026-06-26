@@ -39,12 +39,12 @@ Join counts involving IO and JO can multiply because IO/JO values are repeated a
 | Item | Detail |
 | --- | --- |
 | Row count | 1,201 |
-| Important columns | `id`, `name`, `date_order`, `commitment_date`, `partner_id`, `amount_untaxed`, `state`, `delivery_status`, `invoice_status`, `currency_id`, `currency_rate`, `company_id`, `x_studio_sales_name`, `x_studio_product_type`, `x_studio_prodcut_type`, `x_studio_delivery_time`, `x_studio_tanggal_po_cust` |
+| Important columns | `id`, `name`, `date_order`, `commitment_date`, `partner_id`, `amount_untaxed`, `state`, `delivery_status`, `invoice_status`, `currency_id`, `currency_rate`, `company_id`, `x_studio_sales_name`, `x_studio_product_type`, `x_studio_delivery_time`, `x_studio_tanggal_po_cust` |
 | Business meaning | Sales Order header. Represents customer demand, sales status, delivery status, invoice status, customer, currency, and untaxed amount. |
 | Possible relationships | `sale_order.name` appears to match `sale_order_line.order_id`, `mrp_production.origin`, and `stock_move_line.x_studio_source_document`. `sale_order.id::text` appears to match `account_move_line.x_studio_sales_order`. |
 | Business layer | Sales / Revenue |
 | Dashboard usefulness | Useful for SO list, revenue status, delivery status, invoice status, customer slicing, and SO-level profitability header. |
-| Missing or unclear fields | No explicit Internal Order link found. No explicit MO link field. No invoice header relationship except possible accounting custom field. Product type has two similarly named fields: `x_studio_product_type` and `x_studio_prodcut_type`; meaning should be cleaned or confirmed. |
+| Missing or unclear fields | No explicit Internal Order link found. No explicit MO link field. No invoice header relationship except possible accounting custom field. Product type should use the corrected field `x_studio_product_type`; earlier references to the misspelled field name were configuration/documentation typos. |
 
 Enough for dashboard use: partially yes. Good for SO header and status. Not enough alone for end-to-end profitability.
 

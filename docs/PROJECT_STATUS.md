@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-06-24
+Last updated: 2026-06-26
 
 Purpose: give a new developer enough context to understand the Odoo Analytics project in about 30 minutes.
 
@@ -260,14 +260,12 @@ Sales Order dashboard:
 
 | Metric | Value |
 | --- | ---: |
-| Total SO rows | 1,201 |
-| Active SO | 1,175 |
-| Delivered SO | 1,034 |
-| Invoiced SO | 1,072 |
-| Delayed delivery SO | 61 |
-| Waiting invoice SO | 18 |
-| Waiting delivery SO | 82 |
-| Completed SO | 938 |
+| SO count before company filter | 1,201 |
+| SO count after company filter | 1,114 |
+| Active SO after company filter | 1,090 |
+| Excluded PT Nobi Elektrika Sejahtera rows | 87 |
+| Company value returned | `Nobi Putra Angkasa, PT` only |
+| Product Type filter available | Yes |
 | Quantity delivery progress | 75.7% |
 | Quantity invoice progress | 16,264.2% |
 | Amount delivery progress | 82.0% |
@@ -431,27 +429,30 @@ After Sales Order dashboard review:
 
 1. Refine columns and drill-downs only if business users request it.
 2. Keep Internal Order dashboard as supporting traceability.
-3. Do not start profitability until traceability dashboards are accepted.
+3. Review the Job Order Cost Rekap report specification before any SQL implementation.
+4. Do not start profitability until traceability dashboards and cost-report rules are accepted.
 
-Next phase after traceability acceptance:
+Future report/specification work:
 
 ```text
-Profitability Engine
+Job Order Cost Rekap review
 
-Estimator
--> RKB
--> Procurement Actual
--> Manufacturing
--> Revenue
--> Margin
+Sales Order value
+-> Estimator / Budget
+-> RKB PPIC
+-> RKB Actual
+-> ROP / Procurement Request
+-> PO
+-> Received Qty
+-> Remaining / Excess / Saving / Contribution
 ```
 
-Profitability blockers:
+Profitability remains blocked:
 
 - Estimator cost import source is not implemented.
 - RKB cost rules are not finalized.
 - Actual material cost / valuation source is not finalized.
 - Labor and overhead allocation rules are not defined.
 - Accounting account mapping for revenue, AR, COGS, and cost categories is not defined.
-- Profitability must not be calculated until those rules are confirmed.
+- Profitability, margin, COGS, estimator variance, cost variance, and accounting-based profit must not be calculated until those rules are confirmed.
 

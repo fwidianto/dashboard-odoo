@@ -56,7 +56,7 @@ SELECT
     so.company_id AS company_name,
     so.amount_untaxed AS sales_order_untaxed_amount,
     so.x_studio_product_type AS product_type,
-    so.x_studio_prodcut_type AS product_type_alt,
+    so.x_studio_product_type AS product_type_alt,
     sol.id AS sales_order_line_id,
     sol.order_id AS sales_order_line_order_number,
     sol.product_id AS product_name,
