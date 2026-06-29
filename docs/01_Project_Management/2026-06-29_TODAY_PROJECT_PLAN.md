@@ -245,3 +245,22 @@ Current answer:
 If the answer to question 1 is no, the next step is dashboard cleanup.
 
 If the answer to question 1 is yes, the next step is controlled investigation of cost-report readiness, not full profitability implementation.
+
+## 6. Phase 2A.1 Enhancement - IO-backed Manufacturing Correlation
+
+Sales Order dashboard readability is accepted for VP-level operational review.
+
+New Phase 2A.1 enhancement:
+
+| Item | Decision |
+| --- | --- |
+| IO-backed Manufacturing Correlation | Add SO -> IO -> MO visibility to the Sales Order dashboard. |
+| Quantity interpretation | Traceability/correlation only. Do not allocate IO-backed MO quantity to an SO. |
+| Shared IO handling | Show shared IO evidence and IO-level quantity status without assigning production to one SO. |
+| Out of scope | Profitability, COGS, AR, margin, estimator variance, and cost allocation remain out of scope. |
+
+Audit SQL for this phase is stored in:
+
+```text
+docs/06_Investigations/IO_BACKED_MO_CORRELATION_AUDIT.sql
+```

@@ -9,7 +9,7 @@
 }
 
 .sales-dashboard table {
-  min-width: 1880px;
+  min-width: 2180px;
 }
 
 .sales-order-number {
@@ -70,20 +70,20 @@ button.status-chip.is-active {
 }
 
 .sort-button::after {
-  content: "↕";
+  content: "â†•";
   color: var(--muted);
   font-size: 10px;
   opacity: 0.65;
 }
 
 .sort-button[data-direction="asc"]::after {
-  content: "↑";
+  content: "â†‘";
   color: var(--text);
   opacity: 1;
 }
 
 .sort-button[data-direction="desc"]::after {
-  content: "↓";
+  content: "â†“";
   color: var(--text);
   opacity: 1;
 }

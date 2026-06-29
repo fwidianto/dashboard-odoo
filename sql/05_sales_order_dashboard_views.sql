@@ -103,10 +103,152 @@ io_agg AS (
         ON ar.id = bridge.internal_order_id
     GROUP BY bridge.so_id
 ),
+so_io_links AS (
+    SELECT DISTINCT
+        bridge.so_id AS sales_order_id,
+        bridge.internal_order_id,
+        COALESCE(NULLIF(BTRIM(ar.name::text), ''), bridge.internal_order_id::text) AS internal_order_number
+    FROM vw_sale_order_internal_order_bridge bridge
+    LEFT JOIN approval_request ar
+        ON ar.id = bridge.internal_order_id
+    WHERE bridge.internal_order_id IS NOT NULL
+),
+io_linked_so_qty AS (
+    SELECT
+        internal_order_id,
+        internal_order_number,
+        COUNT(DISTINCT sales_order_id) AS linked_so_count,
+        COALESCE(SUM(ordered_qty), 0)::numeric AS linked_so_ordered_qty,
+        COALESCE(SUM(delivered_qty), 0)::numeric AS linked_so_delivered_qty,
+        COALESCE(SUM(invoiced_qty), 0)::numeric AS linked_so_invoiced_qty
+    FROM (
+        SELECT DISTINCT
+            links.internal_order_id,
+            links.internal_order_number,
+            links.sales_order_id,
+            COALESCE(line.ordered_qty, 0)::numeric AS ordered_qty,
+            COALESCE(line.delivered_qty, 0)::numeric AS delivered_qty,
+            COALESCE(line.invoiced_qty, 0)::numeric AS invoiced_qty
+        FROM so_io_links links
+        LEFT JOIN line_agg line
+            ON line.sales_order_id = links.sales_order_id
+    ) linked_so
+    GROUP BY internal_order_id, internal_order_number
+),
+io_mo_rows AS (
+    -- IO-backed MO quantity is correlation-only. It is not allocated to any
+    -- individual Sales Order because one IO may serve multiple SOs.
+    SELECT DISTINCT
+        io.internal_order_id,
+        io.internal_order_number,
+        mo.manufacturing_order_id,
+        mo.manufacturing_order_number,
+        mo.manufacturing_order_state,
+        mo.manufactured_product_name,
+        COALESCE(mo.manufacturing_quantity, 0)::numeric AS manufacturing_quantity,
+        mo.manufacturing_origin,
+        mo.normalized_jo_number,
+        mo.manufacturing_source_type
+    FROM (
+        SELECT DISTINCT internal_order_id, internal_order_number
+        FROM so_io_links
+    ) io
+    LEFT JOIN vw_mrp_order_context mo
+        ON NULLIF(BTRIM(mo.internal_order_number), '') IS NOT NULL
+       AND (
+            BTRIM(mo.internal_order_number) = io.internal_order_number
+            OR BTRIM(mo.internal_order_number) = io.internal_order_id::text
+       )
+       AND mo.manufacturing_source_type = 'IO_BASED_MO'
+       AND mo.is_valid_for_metrics
+),
+io_mo_agg AS (
+    SELECT
+        internal_order_id,
+        internal_order_number,
+        COUNT(DISTINCT manufacturing_order_id) AS io_mo_count,
+        COALESCE(SUM(manufacturing_quantity) FILTER (WHERE manufacturing_order_id IS NOT NULL), 0)::numeric AS io_mo_qty,
+        JSONB_AGG(
+            JSONB_BUILD_OBJECT(
+                'manufacturing_order_id', manufacturing_order_id,
+                'manufacturing_order_number', manufacturing_order_number,
+                'manufacturing_order_state', manufacturing_order_state,
+                'manufactured_product_name', manufactured_product_name,
+                'manufacturing_quantity', manufacturing_quantity,
+                'origin', manufacturing_origin,
+                'job_order_number', normalized_jo_number,
+                'manufacturing_source_type', manufacturing_source_type
+            )
+            ORDER BY manufacturing_order_number
+        ) FILTER (WHERE manufacturing_order_id IS NOT NULL) AS io_manufacturing_orders
+    FROM io_mo_rows
+    GROUP BY internal_order_id, internal_order_number
+),
+io_correlation_by_internal_order AS (
+    SELECT
+        qty.internal_order_id,
+        qty.internal_order_number,
+        COALESCE(mo.io_mo_count, 0) AS io_mo_count,
+        COALESCE(mo.io_mo_qty, 0)::numeric AS io_mo_qty,
+        COALESCE(qty.linked_so_count, 0) AS linked_so_count,
+        COALESCE(qty.linked_so_ordered_qty, 0)::numeric AS linked_so_ordered_qty,
+        COALESCE(qty.linked_so_delivered_qty, 0)::numeric AS linked_so_delivered_qty,
+        COALESCE(qty.linked_so_invoiced_qty, 0)::numeric AS linked_so_invoiced_qty,
+        CASE
+            WHEN COALESCE(mo.io_mo_count, 0) = 0 THEN 'NO_IO_MO_FOUND'
+            WHEN qty.linked_so_ordered_qty IS NULL THEN 'IO_QTY_UNCLEAR'
+            WHEN COALESCE(mo.io_mo_qty, 0) > COALESCE(qty.linked_so_ordered_qty, 0) THEN 'IO_QTY_SURPLUS_VS_LINKED_SO'
+            WHEN COALESCE(qty.linked_so_ordered_qty, 0) > COALESCE(mo.io_mo_qty, 0) THEN 'LINKED_SO_QTY_EXCEEDS_IO_QTY'
+            WHEN COALESCE(mo.io_mo_qty, 0) = COALESCE(qty.linked_so_ordered_qty, 0) THEN 'IO_QTY_BALANCED_WITH_LINKED_SO'
+            ELSE 'IO_QTY_UNCLEAR'
+        END AS io_qty_correlation_status,
+        COALESCE(mo.io_manufacturing_orders, '[]'::jsonb) AS io_manufacturing_orders
+    FROM io_linked_so_qty qty
+    LEFT JOIN io_mo_agg mo
+        ON mo.internal_order_id = qty.internal_order_id
+       AND mo.internal_order_number = qty.internal_order_number
+),
+so_io_correlation_agg AS (
+    SELECT
+        links.sales_order_id,
+        COUNT(DISTINCT corr.internal_order_id) FILTER (WHERE corr.linked_so_count > 1) AS shared_io_count,
+        COALESCE(SUM(corr.io_mo_count), 0)::integer AS io_backed_mo_count,
+        COALESCE(SUM(corr.io_mo_qty), 0)::numeric AS io_backed_mo_qty,
+        CASE
+            WHEN COUNT(corr.internal_order_id) = 0 THEN 'NO_IO_MO_FOUND'
+            WHEN BOOL_OR(corr.io_qty_correlation_status = 'LINKED_SO_QTY_EXCEEDS_IO_QTY') THEN 'LINKED_SO_QTY_EXCEEDS_IO_QTY'
+            WHEN BOOL_OR(corr.io_qty_correlation_status = 'IO_QTY_SURPLUS_VS_LINKED_SO') THEN 'IO_QTY_SURPLUS_VS_LINKED_SO'
+            WHEN BOOL_OR(corr.io_qty_correlation_status = 'IO_QTY_UNCLEAR') THEN 'IO_QTY_UNCLEAR'
+            WHEN BOOL_AND(corr.io_qty_correlation_status = 'NO_IO_MO_FOUND') THEN 'NO_IO_MO_FOUND'
+            WHEN BOOL_AND(corr.io_qty_correlation_status = 'IO_QTY_BALANCED_WITH_LINKED_SO') THEN 'IO_QTY_BALANCED_WITH_LINKED_SO'
+            ELSE 'IO_QTY_UNCLEAR'
+        END AS io_qty_correlation_status,
+        JSONB_AGG(
+            JSONB_BUILD_OBJECT(
+                'internal_order_id', corr.internal_order_id,
+                'internal_order_number', corr.internal_order_number,
+                'io_mo_count', corr.io_mo_count,
+                'io_mo_qty', corr.io_mo_qty,
+                'linked_so_count', corr.linked_so_count,
+                'linked_so_ordered_qty', corr.linked_so_ordered_qty,
+                'linked_so_delivered_qty', corr.linked_so_delivered_qty,
+                'linked_so_invoiced_qty', corr.linked_so_invoiced_qty,
+                'io_qty_correlation_status', corr.io_qty_correlation_status,
+                'io_manufacturing_orders', corr.io_manufacturing_orders
+            )
+            ORDER BY corr.internal_order_number
+        ) FILTER (WHERE corr.internal_order_id IS NOT NULL) AS io_manufacturing_correlations
+    FROM so_io_links links
+    LEFT JOIN io_correlation_by_internal_order corr
+        ON corr.internal_order_id = links.internal_order_id
+       AND corr.internal_order_number = links.internal_order_number
+    GROUP BY links.sales_order_id
+),
 mo_agg AS (
     SELECT
         inferred_sales_order_id AS sales_order_id,
-        COUNT(DISTINCT manufacturing_order_id) AS manufacturing_order_count,
+        COUNT(DISTINCT manufacturing_order_id) AS direct_mo_count,
+        COALESCE(SUM(COALESCE(manufacturing_quantity, 0)), 0)::numeric AS direct_mo_qty,
         COUNT(DISTINCT manufacturing_order_id) FILTER (WHERE manufacturing_source_type = 'JO_BASED_MO') AS job_order_mo_count,
         JSONB_AGG(
             DISTINCT JSONB_BUILD_OBJECT(
@@ -124,6 +266,7 @@ mo_agg AS (
     FROM vw_mrp_order_context
     WHERE inferred_sales_order_id IS NOT NULL
       AND is_valid_for_metrics
+      AND manufacturing_source_type IN ('SO_BASED_MO', 'JO_BASED_MO')
     GROUP BY inferred_sales_order_id
 ),
 accounting_agg AS (
@@ -219,8 +362,16 @@ SELECT
     (COALESCE(line.delivered_qty, 0) > 0) AS has_delivered_qty,
     (COALESCE(line.invoiced_qty, 0) > 0) AS has_invoiced_qty,
     COALESCE(io.internal_order_count, 0) AS internal_order_count,
-    COALESCE(mo.manufacturing_order_count, 0) AS manufacturing_order_count,
+    COALESCE(mo.direct_mo_count, 0) AS manufacturing_order_count,
     COALESCE(mo.job_order_mo_count, 0) AS job_order_mo_count,
+    COALESCE(mo.direct_mo_count, 0) AS direct_mo_count,
+    COALESCE(mo.direct_mo_qty, 0) AS direct_mo_qty,
+    COALESCE(io_corr.io_backed_mo_count, 0) AS io_backed_mo_count,
+    COALESCE(io_corr.io_backed_mo_qty, 0) AS io_backed_mo_qty,
+    COALESCE(mo.direct_mo_count, 0) + COALESCE(io_corr.io_backed_mo_count, 0) AS total_related_mo_count,
+    COALESCE(mo.direct_mo_qty, 0) + COALESCE(io_corr.io_backed_mo_qty, 0) AS total_related_mo_qty,
+    COALESCE(io_corr.shared_io_count, 0) AS shared_io_count,
+    COALESCE(io_corr.io_qty_correlation_status, 'NO_IO_MO_FOUND') AS io_qty_correlation_status,
     COALESCE(accounting.accounting_line_count, 0) AS accounting_line_count,
     COALESCE(line.line_stock_movement_count, 0) AS stock_movement_diagnostic_count,
     COALESCE(line.line_unknown_movement_count, 0) AS unknown_movement_diagnostic_count,
@@ -231,7 +382,7 @@ SELECT
           AND COALESCE(line.delivered_qty, 0) < COALESCE(line.ordered_qty, 0)
           AND COALESCE(line.ordered_qty, 0) > 0 THEN 'DELAYED_DELIVERY'
         WHEN COALESCE(source.sales_order_source_type, 'UNKNOWN_SOURCE') = 'MAKE_TO_ORDER'
-          AND COALESCE(mo.manufacturing_order_count, 0) = 0 THEN 'WAITING_PRODUCTION'
+          AND COALESCE(mo.direct_mo_count, 0) = 0 THEN 'WAITING_PRODUCTION'
         WHEN COALESCE(line.delivered_qty, 0) < COALESCE(line.ordered_qty, 0)
           AND COALESCE(line.ordered_qty, 0) > 0 THEN 'WAITING_DELIVERY'
         WHEN COALESCE(line.delivered_qty, 0) > 0
@@ -246,7 +397,7 @@ SELECT
           AND COALESCE(line.delivered_qty, 0) < COALESCE(line.ordered_qty, 0)
           AND COALESCE(line.ordered_qty, 0) > 0 THEN 3
         WHEN COALESCE(source.sales_order_source_type, 'UNKNOWN_SOURCE') = 'MAKE_TO_ORDER'
-          AND COALESCE(mo.manufacturing_order_count, 0) = 0 THEN 4
+          AND COALESCE(mo.direct_mo_count, 0) = 0 THEN 4
         WHEN COALESCE(line.delivered_qty, 0) < COALESCE(line.ordered_qty, 0)
           AND COALESCE(line.ordered_qty, 0) > 0 THEN 5
         WHEN COALESCE(line.delivered_qty, 0) > 0
@@ -257,6 +408,7 @@ SELECT
     COALESCE(line.sales_order_lines, '[]'::jsonb) AS sales_order_lines,
     COALESCE(io.internal_orders, '[]'::jsonb) AS internal_orders,
     COALESCE(mo.manufacturing_orders, '[]'::jsonb) AS manufacturing_orders,
+    COALESCE(io_corr.io_manufacturing_correlations, '[]'::jsonb) AS io_manufacturing_correlations,
     JSONB_BUILD_OBJECT(
         'company_id', so.company_id,
         'product_type_raw', so.product_type_raw,
@@ -264,6 +416,7 @@ SELECT
         'delivery_status', so.delivery_status,
         'invoice_status', so.invoice_status,
         'source_link_status', COALESCE(source.sales_order_source_link_status, 'UNKNOWN_NO_MATCHED_LINES'),
+        'io_mo_quantity_is_correlation_only', TRUE,
         'stock_movement_diagnostic_count', COALESCE(line.line_stock_movement_count, 0),
         'unknown_movement_diagnostic_count', COALESCE(line.line_unknown_movement_count, 0),
         'accounting_line_count_out_of_scope', COALESCE(accounting.accounting_line_count, 0)
@@ -277,8 +430,10 @@ LEFT JOIN io_agg io
     ON io.sales_order_id = so.sales_order_id
 LEFT JOIN mo_agg mo
     ON mo.sales_order_id = so.sales_order_id
+LEFT JOIN so_io_correlation_agg io_corr
+    ON io_corr.sales_order_id = so.sales_order_id
 LEFT JOIN accounting_agg accounting
     ON accounting.sales_order_id = so.sales_order_id;
 
 COMMENT ON VIEW vw_dashboard_sales_order_traceability IS
-    'Phase 2A dashboard-ready Sales Order traceability view for PT Nobi Putra Angkasa only. Quantity progress uses SO line quantities; amount progress uses qty * price_unit. Delay uses sale_order.commitment_date. Accounting/AR and profitability are out of scope; accounting count is diagnostic only.';
+    'Phase 2A dashboard-ready Sales Order traceability view for PT Nobi Putra Angkasa only. Quantity progress uses SO line quantities; amount progress uses qty * price_unit. IO-backed MO quantity is correlation-only and not allocated to individual SOs. Delay uses sale_order.commitment_date. Accounting/AR and profitability are out of scope; accounting count is diagnostic only.';

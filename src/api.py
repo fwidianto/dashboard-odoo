@@ -428,6 +428,14 @@ async def sales_order_dashboard_data():
             internal_order_count,
             manufacturing_order_count,
             job_order_mo_count,
+            direct_mo_count,
+            direct_mo_qty,
+            io_backed_mo_count,
+            io_backed_mo_qty,
+            total_related_mo_count,
+            total_related_mo_qty,
+            shared_io_count,
+            io_qty_correlation_status,
             accounting_line_count,
             stock_movement_diagnostic_count,
             unknown_movement_diagnostic_count,
@@ -436,6 +444,7 @@ async def sales_order_dashboard_data():
             sales_order_lines,
             internal_orders,
             manufacturing_orders,
+            io_manufacturing_correlations,
             diagnostics
         FROM vw_dashboard_sales_order_traceability
         ORDER BY
@@ -460,10 +469,11 @@ async def sales_order_dashboard_data():
             "meta": {
                 "source_view": "vw_dashboard_sales_order_traceability",
                 "row_count": len(rows),
-                "phase": "2A",
+                "phase": "2A.1",
                 "profitability_included": False,
                 "accounting_ar_included": False,
                 "stock_movement_counts_are_diagnostic": True,
+                "io_mo_quantity_is_correlation_only": True,
             },
         }
     except Exception as e:

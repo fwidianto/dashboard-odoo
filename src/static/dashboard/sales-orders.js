@@ -64,6 +64,14 @@ const followUpLabels = {
   COMPLETED: "Completed",
 };
 
+const ioQtyStatusLabels = {
+  NO_IO_MO_FOUND: "No IO MO found",
+  IO_QTY_SURPLUS_VS_LINKED_SO: "IO qty surplus vs linked SO",
+  LINKED_SO_QTY_EXCEEDS_IO_QTY: "Linked SO qty exceeds IO qty",
+  IO_QTY_BALANCED_WITH_LINKED_SO: "IO qty balanced with linked SO",
+  IO_QTY_UNCLEAR: "IO qty unclear",
+};
+
 function numberValue(value) {
   return Number(value || 0);
 }
@@ -149,6 +157,10 @@ function sourceBadge(source) {
 
 function followUpBadge(status) {
   return badge(followUpLabels[status] || status, cssClassForFollowUp(status));
+}
+
+function ioQtyStatusLabel(status) {
+  return ioQtyStatusLabels[status] || safeText(status);
 }
 
 function miniProgress(value) {
@@ -334,18 +346,58 @@ function renderManufacturingOrders(orders) {
   `;
 }
 
+function renderIoBackedManufacturing(correlations) {
+  if (!correlations || !correlations.length) {
+    return '<div class="detail-empty">No IO-backed Manufacturing correlation found.</div>';
+  }
+  return `
+    <table class="detail-table">
+      <thead>
+        <tr>
+          <th>Internal Order Number</th>
+          <th class="num">Related IO MO Count</th>
+          <th class="num">Related IO MO Qty</th>
+          <th class="num">Linked SO Count</th>
+          <th class="num">Linked SO Ordered Qty</th>
+          <th class="num">Linked SO Delivered Qty</th>
+          <th>IO Qty Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${correlations.map((item) => `
+          <tr>
+            <td>${safeText(item.internal_order_number)}</td>
+            <td class="num">${formatNumber(item.io_mo_count)}</td>
+            <td class="num">${formatQty(item.io_mo_qty)}</td>
+            <td class="num">${formatNumber(item.linked_so_count)}</td>
+            <td class="num">${formatQty(item.linked_so_ordered_qty)}</td>
+            <td class="num">${formatQty(item.linked_so_delivered_qty)}</td>
+            <td>${safeText(ioQtyStatusLabel(item.io_qty_correlation_status))}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
 function detailRow(row) {
   const diagnostics = row.diagnostics || {};
   return `
     <tr class="detail-row">
-      <td colspan="18">
+      <td colspan="21">
         <div class="detail-grid">
           <div class="detail-item"><span>Company</span><strong>${safeText(row.company_id)}</strong></div>
           <div class="detail-item"><span>Raw Product Type</span><strong>${safeText(row.product_type_raw)}</strong></div>
           <div class="detail-item"><span>Delivery Status</span><strong>${safeText(row.delivery_status)}</strong></div>
           <div class="detail-item"><span>Invoice Status</span><strong>${safeText(row.invoice_status)}</strong></div>
           <div class="detail-item"><span>IO Count</span><strong>${formatNumber(row.internal_order_count)}</strong></div>
-          <div class="detail-item"><span>MO Count</span><strong>${formatNumber(row.manufacturing_order_count)}</strong></div>
+          <div class="detail-item"><span>Direct MO Count</span><strong>${formatNumber(row.direct_mo_count)}</strong></div>
+          <div class="detail-item"><span>Related IO MO Count</span><strong>${formatNumber(row.io_backed_mo_count)}</strong></div>
+          <div class="detail-item"><span>Related IO MO Qty</span><strong>${formatQty(row.io_backed_mo_qty)}</strong></div>
+          <div class="detail-item"><span>Total Related MO Count</span><strong>${formatNumber(row.total_related_mo_count)}</strong></div>
+          <div class="detail-item"><span>Total Related MO Qty</span><strong>${formatQty(row.total_related_mo_qty)}</strong></div>
+          <div class="detail-item"><span>Shared IO</span><strong>${formatNumber(row.shared_io_count)}</strong></div>
+          <div class="detail-item"><span>IO Qty Status</span><strong>${safeText(ioQtyStatusLabel(row.io_qty_correlation_status))}</strong></div>
           <div class="detail-item"><span>Accounting Lines</span><strong>${formatNumber(row.accounting_line_count)}</strong></div>
           <div class="detail-item"><span>Source Link</span><strong>${safeText(row.source_link_status)}</strong></div>
           <div class="detail-item"><span>Stock Moves</span><strong>${formatNumber(diagnostics.stock_movement_diagnostic_count)}</strong></div>
@@ -361,6 +413,10 @@ function detailRow(row) {
           <div class="detail-section">
             <h3>Manufacturing Orders / JO</h3>
             ${renderManufacturingOrders(row.manufacturing_orders || [])}
+          </div>
+          <div class="detail-section">
+            <h3>IO-backed Manufacturing</h3>
+            ${renderIoBackedManufacturing(row.io_manufacturing_correlations || [])}
           </div>
         </div>
       </td>
@@ -380,6 +436,9 @@ function tableRow(row) {
       <td>${sourceBadge(row.source_type)}</td>
       <td>${badge(row.sales_order_state, isCancelled(row) ? "status-muted" : "status-progress")}</td>
       <td>${followUpBadge(row.follow_up_status)}</td>
+      <td class="num">${formatNumber(row.total_related_mo_count)}</td>
+      <td class="num">${formatQty(row.total_related_mo_qty)}</td>
+      <td class="num">${formatNumber(row.shared_io_count)}</td>
       <td class="num">${formatQty(row.ordered_qty)}</td>
       <td class="num">${formatQty(row.delivered_qty)}</td>
       <td class="num">${formatQty(row.invoiced_qty)}</td>
@@ -407,6 +466,13 @@ function sortableValue(row, key) {
     "invoiced_amount",
     "amount_delivery_progress_ratio",
     "amount_invoice_progress_ratio",
+    "direct_mo_count",
+    "direct_mo_qty",
+    "io_backed_mo_count",
+    "io_backed_mo_qty",
+    "total_related_mo_count",
+    "total_related_mo_qty",
+    "shared_io_count",
   ]);
   if (key === "commitment_date") return dateOnly(row[key]);
   if (numericKeys.has(key)) return numberValue(row[key]);
@@ -437,7 +503,7 @@ function renderTable(rows) {
   updateSortIndicators();
   els.rowCount.textContent = `${formatNumber(rows.length)} rows`;
   if (!rows.length) {
-    els.dashboardRows.innerHTML = '<tr><td colspan="18" class="empty-cell">No Sales Orders match the current filters.</td></tr>';
+    els.dashboardRows.innerHTML = '<tr><td colspan="21" class="empty-cell">No Sales Orders match the current filters.</td></tr>';
     return;
   }
   els.dashboardRows.innerHTML = rows.map(tableRow).join("");
@@ -561,7 +627,14 @@ function exportFilteredRows() {
     ["Amount Delivery %", (row) => formatPercent(row.amount_delivery_progress_ratio)],
     ["Amount Invoice %", (row) => formatPercent(row.amount_invoice_progress_ratio)],
     ["IO Count", "internal_order_count"],
-    ["MO Count", "manufacturing_order_count"],
+    ["Direct MO Count", "direct_mo_count"],
+    ["Direct MO Qty", "direct_mo_qty"],
+    ["Related IO MO Count", "io_backed_mo_count"],
+    ["Related IO MO Qty", "io_backed_mo_qty"],
+    ["Total Related MO Count", "total_related_mo_count"],
+    ["Total Related MO Qty", "total_related_mo_qty"],
+    ["Shared IO", "shared_io_count"],
+    ["IO Qty Status", "io_qty_correlation_status"],
     ["Accounting Lines", "accounting_line_count"],
   ];
 
@@ -596,7 +669,7 @@ async function loadDashboard() {
     els.lastLoaded.textContent = `Loaded ${new Date().toLocaleString()}`;
   } catch (error) {
     els.lastLoaded.textContent = "Failed to load";
-    els.dashboardRows.innerHTML = `<tr><td colspan="18" class="empty-cell">${error.message}</td></tr>`;
+    els.dashboardRows.innerHTML = `<tr><td colspan="21" class="empty-cell">${error.message}</td></tr>`;
   }
 }
 
