@@ -109,15 +109,28 @@ so_io_links AS (
         bridge.internal_order_id,
         COALESCE(NULLIF(BTRIM(ar.name::text), ''), bridge.internal_order_id::text) AS internal_order_number
     FROM vw_sale_order_internal_order_bridge bridge
+    JOIN sale_order so_scope
+        ON so_scope.id = bridge.so_id
+       AND so_scope.company_id::text = 'Nobi Putra Angkasa, PT'
     LEFT JOIN approval_request ar
         ON ar.id = bridge.internal_order_id
     WHERE bridge.internal_order_id IS NOT NULL
+),
+so_io_link_counts AS (
+    SELECT
+        sales_order_id,
+        COUNT(DISTINCT internal_order_id) AS linked_io_count
+    FROM so_io_links
+    GROUP BY sales_order_id
 ),
 io_linked_so_qty AS (
     SELECT
         internal_order_id,
         internal_order_number,
         COUNT(DISTINCT sales_order_id) AS linked_so_count,
+        COUNT(DISTINCT sales_order_id) FILTER (WHERE linked_io_count > 1) AS multi_io_so_count,
+        BOOL_OR(linked_io_count > 1) AS has_multi_io_so,
+        'FULL_SO_QTY_UNALLOCATED'::text AS linked_so_qty_basis,
         COALESCE(SUM(ordered_qty), 0)::numeric AS linked_so_ordered_qty,
         COALESCE(SUM(delivered_qty), 0)::numeric AS linked_so_delivered_qty,
         COALESCE(SUM(invoiced_qty), 0)::numeric AS linked_so_invoiced_qty
@@ -126,14 +139,38 @@ io_linked_so_qty AS (
             links.internal_order_id,
             links.internal_order_number,
             links.sales_order_id,
+            COALESCE(counts.linked_io_count, 1) AS linked_io_count,
             COALESCE(line.ordered_qty, 0)::numeric AS ordered_qty,
             COALESCE(line.delivered_qty, 0)::numeric AS delivered_qty,
             COALESCE(line.invoiced_qty, 0)::numeric AS invoiced_qty
         FROM so_io_links links
+        LEFT JOIN so_io_link_counts counts
+            ON counts.sales_order_id = links.sales_order_id
         LEFT JOIN line_agg line
             ON line.sales_order_id = links.sales_order_id
     ) linked_so
     GROUP BY internal_order_id, internal_order_number
+),
+io_multi_io_so_links AS (
+    SELECT DISTINCT
+        links.internal_order_id,
+        links.internal_order_number,
+        links.sales_order_id AS multi_io_sales_order_id
+    FROM so_io_links links
+    JOIN so_io_link_counts counts
+        ON counts.sales_order_id = links.sales_order_id
+    WHERE counts.linked_io_count > 1
+),
+so_multi_io_context AS (
+    SELECT
+        dashboard_links.sales_order_id,
+        COUNT(DISTINCT multi_links.multi_io_sales_order_id) AS multi_io_so_count,
+        (COUNT(DISTINCT multi_links.multi_io_sales_order_id) > 0) AS has_multi_io_so
+    FROM so_io_links dashboard_links
+    JOIN io_multi_io_so_links multi_links
+        ON multi_links.internal_order_id = dashboard_links.internal_order_id
+       AND multi_links.internal_order_number = dashboard_links.internal_order_number
+    GROUP BY dashboard_links.sales_order_id
 ),
 io_mo_rows AS (
     -- IO-backed MO quantity is correlation-only. It is not allocated to any
@@ -191,11 +228,15 @@ io_correlation_by_internal_order AS (
         COALESCE(mo.io_mo_count, 0) AS io_mo_count,
         COALESCE(mo.io_mo_qty, 0)::numeric AS io_mo_qty,
         COALESCE(qty.linked_so_count, 0) AS linked_so_count,
+        COALESCE(qty.multi_io_so_count, 0) AS multi_io_so_count,
+        COALESCE(qty.has_multi_io_so, FALSE) AS has_multi_io_so,
+        qty.linked_so_qty_basis,
         COALESCE(qty.linked_so_ordered_qty, 0)::numeric AS linked_so_ordered_qty,
         COALESCE(qty.linked_so_delivered_qty, 0)::numeric AS linked_so_delivered_qty,
         COALESCE(qty.linked_so_invoiced_qty, 0)::numeric AS linked_so_invoiced_qty,
         CASE
             WHEN COALESCE(mo.io_mo_count, 0) = 0 THEN 'NO_IO_MO_FOUND'
+            WHEN COALESCE(qty.has_multi_io_so, FALSE) THEN 'IO_QTY_UNALLOCATED_MULTI_IO_SO'
             WHEN qty.linked_so_ordered_qty IS NULL THEN 'IO_QTY_UNCLEAR'
             WHEN COALESCE(mo.io_mo_qty, 0) > COALESCE(qty.linked_so_ordered_qty, 0) THEN 'IO_QTY_SURPLUS_VS_LINKED_SO'
             WHEN COALESCE(qty.linked_so_ordered_qty, 0) > COALESCE(mo.io_mo_qty, 0) THEN 'LINKED_SO_QTY_EXCEEDS_IO_QTY'
@@ -212,10 +253,14 @@ so_io_correlation_agg AS (
     SELECT
         links.sales_order_id,
         COUNT(DISTINCT corr.internal_order_id) FILTER (WHERE corr.linked_so_count > 1) AS shared_io_count,
+        COALESCE(MAX(multi_context.multi_io_so_count), 0) AS multi_io_so_count,
+        COALESCE(BOOL_OR(multi_context.has_multi_io_so), FALSE) AS has_multi_io_so,
+        'FULL_SO_QTY_UNALLOCATED'::text AS linked_so_qty_basis,
         COALESCE(SUM(corr.io_mo_count), 0)::integer AS io_backed_mo_count,
         COALESCE(SUM(corr.io_mo_qty), 0)::numeric AS io_backed_mo_qty,
         CASE
             WHEN COUNT(corr.internal_order_id) = 0 THEN 'NO_IO_MO_FOUND'
+            WHEN BOOL_OR(corr.io_qty_correlation_status = 'IO_QTY_UNALLOCATED_MULTI_IO_SO') THEN 'IO_QTY_UNALLOCATED_MULTI_IO_SO'
             WHEN BOOL_OR(corr.io_qty_correlation_status = 'LINKED_SO_QTY_EXCEEDS_IO_QTY') THEN 'LINKED_SO_QTY_EXCEEDS_IO_QTY'
             WHEN BOOL_OR(corr.io_qty_correlation_status = 'IO_QTY_SURPLUS_VS_LINKED_SO') THEN 'IO_QTY_SURPLUS_VS_LINKED_SO'
             WHEN BOOL_OR(corr.io_qty_correlation_status = 'IO_QTY_UNCLEAR') THEN 'IO_QTY_UNCLEAR'
@@ -230,6 +275,9 @@ so_io_correlation_agg AS (
                 'io_mo_count', corr.io_mo_count,
                 'io_mo_qty', corr.io_mo_qty,
                 'linked_so_count', corr.linked_so_count,
+                'multi_io_so_count', corr.multi_io_so_count,
+                'has_multi_io_so', corr.has_multi_io_so,
+                'linked_so_qty_basis', corr.linked_so_qty_basis,
                 'linked_so_ordered_qty', corr.linked_so_ordered_qty,
                 'linked_so_delivered_qty', corr.linked_so_delivered_qty,
                 'linked_so_invoiced_qty', corr.linked_so_invoiced_qty,
@@ -239,6 +287,8 @@ so_io_correlation_agg AS (
             ORDER BY corr.internal_order_number
         ) FILTER (WHERE corr.internal_order_id IS NOT NULL) AS io_manufacturing_correlations
     FROM so_io_links links
+    LEFT JOIN so_multi_io_context multi_context
+        ON multi_context.sales_order_id = links.sales_order_id
     LEFT JOIN io_correlation_by_internal_order corr
         ON corr.internal_order_id = links.internal_order_id
        AND corr.internal_order_number = links.internal_order_number
@@ -371,6 +421,9 @@ SELECT
     COALESCE(mo.direct_mo_count, 0) + COALESCE(io_corr.io_backed_mo_count, 0) AS total_related_mo_count,
     COALESCE(mo.direct_mo_qty, 0) + COALESCE(io_corr.io_backed_mo_qty, 0) AS total_related_mo_qty,
     COALESCE(io_corr.shared_io_count, 0) AS shared_io_count,
+    COALESCE(io_corr.multi_io_so_count, 0) AS multi_io_so_count,
+    COALESCE(io_corr.has_multi_io_so, FALSE) AS has_multi_io_so,
+    COALESCE(io_corr.linked_so_qty_basis, 'FULL_SO_QTY_UNALLOCATED') AS linked_so_qty_basis,
     COALESCE(io_corr.io_qty_correlation_status, 'NO_IO_MO_FOUND') AS io_qty_correlation_status,
     COALESCE(accounting.accounting_line_count, 0) AS accounting_line_count,
     COALESCE(line.line_stock_movement_count, 0) AS stock_movement_diagnostic_count,

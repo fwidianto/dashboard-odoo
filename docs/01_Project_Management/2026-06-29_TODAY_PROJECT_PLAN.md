@@ -257,6 +257,8 @@ New Phase 2A.1 enhancement:
 | IO-backed Manufacturing Correlation | Add SO -> IO -> MO visibility to the Sales Order dashboard. |
 | Quantity interpretation | Traceability/correlation only. Do not allocate IO-backed MO quantity to an SO. |
 | Shared IO handling | Show shared IO evidence and IO-level quantity status without assigning production to one SO. |
+| Company scope safety | Production SO -> IO correlation is scoped to PT Nobi Putra Angkasa, matching the Sales Order dashboard scope. |
+| Multi-IO SO limitation | If any linked SO references more than one IO, IO quantity comparison is flagged as `IO_QTY_UNALLOCATED_MULTI_IO_SO`. Full SO quantities are shown as `FULL_SO_QTY_UNALLOCATED`, not as allocated IO quantities. |
 | Out of scope | Profitability, COGS, AR, margin, estimator variance, and cost allocation remain out of scope. |
 
 Audit SQL for this phase is stored in:

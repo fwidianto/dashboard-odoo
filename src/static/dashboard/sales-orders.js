@@ -69,6 +69,7 @@ const ioQtyStatusLabels = {
   IO_QTY_SURPLUS_VS_LINKED_SO: "IO qty surplus vs linked SO",
   LINKED_SO_QTY_EXCEEDS_IO_QTY: "Linked SO qty exceeds IO qty",
   IO_QTY_BALANCED_WITH_LINKED_SO: "IO qty balanced with linked SO",
+  IO_QTY_UNALLOCATED_MULTI_IO_SO: "IO qty unallocated multi-IO SO",
   IO_QTY_UNCLEAR: "IO qty unclear",
 };
 
@@ -358,6 +359,8 @@ function renderIoBackedManufacturing(correlations) {
           <th class="num">Related IO MO Count</th>
           <th class="num">Related IO MO Qty</th>
           <th class="num">Linked SO Count</th>
+          <th class="num">Multi-IO SO Count</th>
+          <th>Linked SO Qty Basis</th>
           <th class="num">Linked SO Ordered Qty</th>
           <th class="num">Linked SO Delivered Qty</th>
           <th>IO Qty Status</th>
@@ -370,6 +373,8 @@ function renderIoBackedManufacturing(correlations) {
             <td class="num">${formatNumber(item.io_mo_count)}</td>
             <td class="num">${formatQty(item.io_mo_qty)}</td>
             <td class="num">${formatNumber(item.linked_so_count)}</td>
+            <td class="num">${formatNumber(item.multi_io_so_count)}</td>
+            <td>${safeText(item.linked_so_qty_basis)}</td>
             <td class="num">${formatQty(item.linked_so_ordered_qty)}</td>
             <td class="num">${formatQty(item.linked_so_delivered_qty)}</td>
             <td>${safeText(ioQtyStatusLabel(item.io_qty_correlation_status))}</td>
@@ -397,6 +402,9 @@ function detailRow(row) {
           <div class="detail-item"><span>Total Related MO Count</span><strong>${formatNumber(row.total_related_mo_count)}</strong></div>
           <div class="detail-item"><span>Total Related MO Qty</span><strong>${formatQty(row.total_related_mo_qty)}</strong></div>
           <div class="detail-item"><span>Shared IO</span><strong>${formatNumber(row.shared_io_count)}</strong></div>
+          <div class="detail-item"><span>Multi-IO SO Count</span><strong>${formatNumber(row.multi_io_so_count)}</strong></div>
+          <div class="detail-item"><span>Has Multi-IO SO</span><strong>${row.has_multi_io_so ? "Yes" : "No"}</strong></div>
+          <div class="detail-item"><span>Linked SO Qty Basis</span><strong>${safeText(row.linked_so_qty_basis)}</strong></div>
           <div class="detail-item"><span>IO Qty Status</span><strong>${safeText(ioQtyStatusLabel(row.io_qty_correlation_status))}</strong></div>
           <div class="detail-item"><span>Accounting Lines</span><strong>${formatNumber(row.accounting_line_count)}</strong></div>
           <div class="detail-item"><span>Source Link</span><strong>${safeText(row.source_link_status)}</strong></div>
@@ -634,6 +642,9 @@ function exportFilteredRows() {
     ["Total Related MO Count", "total_related_mo_count"],
     ["Total Related MO Qty", "total_related_mo_qty"],
     ["Shared IO", "shared_io_count"],
+    ["Multi-IO SO Count", "multi_io_so_count"],
+    ["Has Multi-IO SO", (row) => row.has_multi_io_so ? "Yes" : "No"],
+    ["Linked SO Qty Basis", "linked_so_qty_basis"],
     ["IO Qty Status", "io_qty_correlation_status"],
     ["Accounting Lines", "accounting_line_count"],
   ];
