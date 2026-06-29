@@ -33,6 +33,65 @@
   color: var(--text);
 }
 
+.status-chip {
+  cursor: default;
+}
+
+button.status-chip {
+  font: inherit;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+}
+
+button.status-chip:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(31, 41, 55, 0.08);
+}
+
+button.status-chip.is-active {
+  border-color: rgba(45, 92, 78, 0.46);
+  box-shadow: 0 0 0 2px rgba(45, 92, 78, 0.12);
+}
+
+.sort-button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: inherit;
+  gap: 4px;
+  padding: 0;
+  font: inherit;
+  font-weight: 760;
+  text-align: inherit;
+}
+
+.sort-button::after {
+  content: "↕";
+  color: var(--muted);
+  font-size: 10px;
+  opacity: 0.65;
+}
+
+.sort-button[data-direction="asc"]::after {
+  content: "↑";
+  color: var(--text);
+  opacity: 1;
+}
+
+.sort-button[data-direction="desc"]::after {
+  content: "↓";
+  color: var(--text);
+  opacity: 1;
+}
+
+.sort-button:hover {
+  color: var(--text);
+}
+
 .detail-section {
   grid-column: 1 / -1;
   border: 1px solid var(--border);
