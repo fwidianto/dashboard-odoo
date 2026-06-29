@@ -174,20 +174,29 @@ Before implementing it, confirm:
 
 ## 4. Decision Gate for Today
 
-At the end of today, fill this section.
-
 ### Accepted
 
 | Item | Decision | Notes |
 | --- | --- | --- |
-| KPI cards | TBD |  |
-| Product Type filter | TBD |  |
-| Source Type labels | TBD |  |
-| Follow-up Status | TBD |  |
-| Quantity progress | TBD |  |
-| Amount progress | TBD |  |
-| Delay logic | TBD |  |
-| Main table columns | TBD |  |
+| Sales Order dashboard business readability | Accepted | Fauzan confirmed the data is understandable and sufficient for VP-level review. |
+| KPI cards | Accepted for now | No immediate label or formula change requested. |
+| Product Type filter | Accepted for now | Kept as an active dashboard filter. |
+| Source Type labels | Accepted for now | No immediate renaming requested. |
+| Follow-up Status | Accepted with enhancement | Status chips should be clickable and filter to selected status. |
+| Quantity progress | Keep, but still monitor anomaly | Quantity invoice progress remains a known investigation item. |
+| Amount progress | Keep | Useful as an alternate progress view. |
+| Delay logic | TBD | Still needs confirmation whether `commitment_date` is the official delay basis. |
+| Main table columns | Accepted for now | Enhancement request is usability-focused: sorting, export, and filtering. |
+
+### Enhancement Requests Accepted
+
+| Feature | Decision | Implementation Note |
+| --- | --- | --- |
+| Sort by column | Accepted | Add clickable table headers with ascending/descending sort. |
+| Export to Excel | Accepted | Add frontend export of the currently filtered rows as CSV readable by Excel. |
+| Filter by SO status | Accepted | Add status filter behavior with active-only default. |
+| Exclude cancelled by default | Accepted | Default SO status filter should exclude cancelled records. |
+| Clickable status chips | Accepted | Clicking a follow-up status chip should filter the dashboard to that status only. |
 
 ### Blocked
 
@@ -202,12 +211,14 @@ At the end of today, fill this section.
 
 | Priority | Action | Owner |
 | --- | --- | --- |
-| 1 | Review Sales Order dashboard with business-user mindset. | Fauzan / business reviewer |
-| 2 | Pull sample rows for invoice quantity anomaly. | Developer / analyst |
-| 3 | Decide whether amount progress should be preferred over quantity invoice progress. | Fauzan / business reviewer |
-| 4 | Confirm delay field and label. | Fauzan / operations user |
-| 5 | Update dashboard/UI only after decisions are made. | Developer |
-| 6 | Review Job Order Cost Rekap specification after traceability review. | Fauzan / business reviewer |
+| 1 | Apply Sales Order dashboard usability enhancements. | Developer |
+| 2 | Pull latest repo locally and test `/dashboard/sales-orders`. | Fauzan / Developer |
+| 3 | Verify cancelled records are excluded by default but still available through all-status view. | Fauzan / Developer |
+| 4 | Verify status chips filter correctly. | Fauzan / Developer |
+| 5 | Verify Excel export opens correctly. | Fauzan / Developer |
+| 6 | Pull sample rows for invoice quantity anomaly. | Developer / analyst |
+| 7 | Confirm delay field and label. | Fauzan / operations user |
+| 8 | Review Job Order Cost Rekap specification after traceability review. | Fauzan / business reviewer |
 
 ## 5. Today's Success Criteria
 
@@ -219,6 +230,16 @@ Today is successful if these questions are answered:
 3. What is the likely cause category of the invoice quantity anomaly?
 4. Is commitment_date accepted as the delay basis?
 5. Are we still blocked from profitability and Job Order Cost Rekap SQL implementation?
+```
+
+Current answer:
+
+```text
+1. Yes, accepted as understandable and sufficient from Fauzan's perspective.
+2. Main table can stay for now; usability enhancements are more important than removing columns immediately.
+3. Still unresolved; invoice quantity anomaly remains to be investigated.
+4. Still unresolved; commitment_date still needs confirmation.
+5. Yes, profitability and Job Order Cost Rekap SQL remain blocked until business rules are approved.
 ```
 
 If the answer to question 1 is no, the next step is dashboard cleanup.
