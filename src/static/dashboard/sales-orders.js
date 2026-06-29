@@ -1,12 +1,17 @@
+const ACTIVE_STATUS_FILTER = "__ACTIVE__";
+
 const state = {
   rows: [],
   filteredRows: [],
   expanded: new Set(),
+  sortKey: "commitment_date",
+  sortDirection: "asc",
 };
 
 const els = {
   refreshButton: document.getElementById("refreshButton"),
   clearFiltersButton: document.getElementById("clearFiltersButton"),
+  exportExcelButton: document.getElementById("exportExcelButton"),
   soFilter: document.getElementById("soFilter"),
   customerFilter: document.getElementById("customerFilter"),
   productTypeFilter: document.getElementById("productTypeFilter"),
@@ -17,6 +22,7 @@ const els = {
   followUpFilter: document.getElementById("followUpFilter"),
   statusStrip: document.getElementById("statusStrip"),
   productTypeStrip: document.getElementById("productTypeStrip"),
+  salesOrderTable: document.getElementById("salesOrderTable"),
   dashboardRows: document.getElementById("dashboardRows"),
   rowCount: document.getElementById("rowCount"),
   lastLoaded: document.getElementById("lastLoaded"),
@@ -152,8 +158,12 @@ function miniProgress(value) {
   `;
 }
 
+function isCancelled(row) {
+  return row.is_cancelled || row.follow_up_status === "CANCELLED_RECORD";
+}
+
 function summarize(rows) {
-  const active = rows.filter((row) => row.follow_up_status !== "CANCELLED_RECORD");
+  const active = rows.filter((row) => !isCancelled(row));
   const orderedQty = active.reduce((sum, row) => sum + numberValue(row.ordered_qty), 0);
   const deliveredQty = active.reduce((sum, row) => sum + numberValue(row.delivered_qty), 0);
   const invoicedQty = active.reduce((sum, row) => sum + numberValue(row.invoiced_qty), 0);
@@ -214,13 +224,14 @@ function renderStatusStrip(rows) {
     "COMPLETED",
   ];
 
+  const selectedFollowUp = els.followUpFilter.value;
   els.statusStrip.innerHTML = order
     .filter((status) => counts[status])
     .map((status) => `
-      <span class="status-chip ${cssClassForFollowUp(status)}">
+      <button class="status-chip ${cssClassForFollowUp(status)} ${selectedFollowUp === status ? "is-active" : ""}" type="button" data-follow-up-status="${status}">
         ${followUpLabels[status] || status}
         <strong>${counts[status]}</strong>
-      </span>
+      </button>
     `)
     .join("");
 }
@@ -367,7 +378,7 @@ function tableRow(row) {
       <td>${safeText(row.product_type_label)}</td>
       <td>${formatDate(row.commitment_date)}</td>
       <td>${sourceBadge(row.source_type)}</td>
-      <td>${badge(row.sales_order_state, row.is_cancelled ? "status-muted" : "status-progress")}</td>
+      <td>${badge(row.sales_order_state, isCancelled(row) ? "status-muted" : "status-progress")}</td>
       <td>${followUpBadge(row.follow_up_status)}</td>
       <td class="num">${formatQty(row.ordered_qty)}</td>
       <td class="num">${formatQty(row.delivered_qty)}</td>
@@ -384,7 +395,46 @@ function tableRow(row) {
   `;
 }
 
+function sortableValue(row, key) {
+  const numericKeys = new Set([
+    "ordered_qty",
+    "delivered_qty",
+    "invoiced_qty",
+    "qty_delivery_progress_ratio",
+    "qty_invoice_progress_ratio",
+    "ordered_amount",
+    "delivered_amount",
+    "invoiced_amount",
+    "amount_delivery_progress_ratio",
+    "amount_invoice_progress_ratio",
+  ]);
+  if (key === "commitment_date") return dateOnly(row[key]);
+  if (numericKeys.has(key)) return numberValue(row[key]);
+  return safeText(row[key]).toLowerCase();
+}
+
+function sortedRows(rows) {
+  const direction = state.sortDirection === "desc" ? -1 : 1;
+  return [...rows].sort((a, b) => {
+    const aValue = sortableValue(a, state.sortKey);
+    const bValue = sortableValue(b, state.sortKey);
+    if (typeof aValue === "number" && typeof bValue === "number") {
+      return (aValue - bValue) * direction;
+    }
+    return String(aValue).localeCompare(String(bValue)) * direction;
+  });
+}
+
+function updateSortIndicators() {
+  document.querySelectorAll("[data-sort]").forEach((button) => {
+    const active = button.dataset.sort === state.sortKey;
+    button.dataset.direction = active ? state.sortDirection : "";
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+}
+
 function renderTable(rows) {
+  updateSortIndicators();
   els.rowCount.textContent = `${formatNumber(rows.length)} rows`;
   if (!rows.length) {
     els.dashboardRows.innerHTML = '<tr><td colspan="18" class="empty-cell">No Sales Orders match the current filters.</td></tr>';
@@ -393,17 +443,41 @@ function renderTable(rows) {
   els.dashboardRows.innerHTML = rows.map(tableRow).join("");
 }
 
-function populateSelect(select, values) {
-  const first = select.querySelector("option")?.outerHTML || '<option value="">All</option>';
-  select.innerHTML = first + values.map((value) => `<option value="${value}">${value}</option>`).join("");
+function populateSelect(select, values, firstOptions = null) {
+  const options = firstOptions || [{ value: "", label: "All" }];
+  select.innerHTML = options
+    .map((option) => `<option value="${option.value}">${option.label}</option>`)
+    .join("") + values.map((value) => `<option value="${value}">${value}</option>`).join("");
+}
+
+function restoreSelectValue(select, previousValue, fallback = "") {
+  const hasPrevious = Array.from(select.options).some((option) => option.value === previousValue);
+  select.value = hasPrevious ? previousValue : fallback;
 }
 
 function populateFilters(filters) {
-  populateSelect(els.customerFilter, filters.customers || []);
-  populateSelect(els.productTypeFilter, filters.product_types || []);
-  populateSelect(els.sourceFilter, filters.source_types || []);
-  populateSelect(els.statusFilter, filters.sales_order_statuses || []);
-  populateSelect(els.followUpFilter, filters.follow_up_statuses || []);
+  const previous = {
+    customer: els.customerFilter.value,
+    productType: els.productTypeFilter.value,
+    source: els.sourceFilter.value,
+    status: els.statusFilter.value || ACTIVE_STATUS_FILTER,
+    followUp: els.followUpFilter.value,
+  };
+
+  populateSelect(els.customerFilter, filters.customers || [], [{ value: "", label: "All customers" }]);
+  populateSelect(els.productTypeFilter, filters.product_types || [], [{ value: "", label: "All product types" }]);
+  populateSelect(els.sourceFilter, filters.source_types || [], [{ value: "", label: "All sources" }]);
+  populateSelect(els.statusFilter, filters.sales_order_statuses || [], [
+    { value: ACTIVE_STATUS_FILTER, label: "Active only" },
+    { value: "", label: "All statuses" },
+  ]);
+  populateSelect(els.followUpFilter, filters.follow_up_statuses || [], [{ value: "", label: "All follow-up" }]);
+
+  restoreSelectValue(els.customerFilter, previous.customer);
+  restoreSelectValue(els.productTypeFilter, previous.productType);
+  restoreSelectValue(els.sourceFilter, previous.source);
+  restoreSelectValue(els.statusFilter, previous.status, ACTIVE_STATUS_FILTER);
+  restoreSelectValue(els.followUpFilter, previous.followUp);
 }
 
 function dateOverlaps(row, fromFilter, toFilter) {
@@ -415,7 +489,7 @@ function dateOverlaps(row, fromFilter, toFilter) {
   return true;
 }
 
-function applyFilters() {
+function rowMatchesCurrentFilters(row, options = {}) {
   const soTerm = els.soFilter.value.trim().toLowerCase();
   const customer = els.customerFilter.value;
   const productType = els.productTypeFilter.value;
@@ -425,20 +499,86 @@ function applyFilters() {
   const commitmentFrom = els.commitmentFromFilter.value;
   const commitmentTo = els.commitmentToFilter.value;
 
-  state.filteredRows = state.rows.filter((row) => {
-    const matchesSo = !soTerm || safeText(row.sales_order_number).toLowerCase().includes(soTerm);
-    const matchesCustomer = !customer || row.customer_name === customer;
-    const matchesProductType = !productType || row.product_type_label === productType;
-    const matchesSource = !source || row.source_type === source;
-    const matchesStatus = !status || row.sales_order_state === status;
-    const matchesFollowUp = !followUp || row.follow_up_status === followUp;
-    return matchesSo && matchesCustomer && matchesProductType && matchesSource && matchesStatus && matchesFollowUp && dateOverlaps(row, commitmentFrom, commitmentTo);
-  });
+  const matchesSo = !soTerm || safeText(row.sales_order_number).toLowerCase().includes(soTerm);
+  const matchesCustomer = !customer || row.customer_name === customer;
+  const matchesProductType = !productType || row.product_type_label === productType;
+  const matchesSource = !source || row.source_type === source;
+  const matchesStatus = status === ACTIVE_STATUS_FILTER ? !isCancelled(row) : !status || row.sales_order_state === status;
+  const matchesFollowUp = options.skipFollowUp || !followUp || row.follow_up_status === followUp;
+
+  return matchesSo
+    && matchesCustomer
+    && matchesProductType
+    && matchesSource
+    && matchesStatus
+    && matchesFollowUp
+    && dateOverlaps(row, commitmentFrom, commitmentTo);
+}
+
+function applyFilters() {
+  const rowsForTable = state.rows.filter((row) => rowMatchesCurrentFilters(row));
+  const rowsForStatusStrip = state.rows.filter((row) => rowMatchesCurrentFilters(row, { skipFollowUp: true }));
+
+  state.filteredRows = sortedRows(rowsForTable);
 
   renderKpis(state.filteredRows);
-  renderStatusStrip(state.filteredRows);
+  renderStatusStrip(rowsForStatusStrip);
   renderProductTypeStrip(state.filteredRows);
   renderTable(state.filteredRows);
+}
+
+function csvCell(value) {
+  let text = safeText(value);
+  if (text === "-") text = "";
+  if (/^[=+\-@]/.test(text)) {
+    text = `'${text}`;
+  }
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function exportFilteredRows() {
+  if (!state.filteredRows.length) {
+    window.alert("No rows to export with the current filters.");
+    return;
+  }
+
+  const columns = [
+    ["SO Number", "sales_order_number"],
+    ["Customer", "customer_name"],
+    ["Product Type", "product_type_label"],
+    ["Commitment Date", (row) => dateOnly(row.commitment_date)],
+    ["Source Type", (row) => sourceLabels[row.source_type] || row.source_type],
+    ["SO Status", "sales_order_state"],
+    ["Follow-Up", (row) => followUpLabels[row.follow_up_status] || row.follow_up_status],
+    ["Ordered Qty", "ordered_qty"],
+    ["Delivered Qty", "delivered_qty"],
+    ["Invoiced Qty", "invoiced_qty"],
+    ["Qty Delivery %", (row) => formatPercent(row.qty_delivery_progress_ratio)],
+    ["Qty Invoice %", (row) => formatPercent(row.qty_invoice_progress_ratio)],
+    ["Ordered Amount", "ordered_amount"],
+    ["Delivered Amount", "delivered_amount"],
+    ["Invoiced Amount", "invoiced_amount"],
+    ["Amount Delivery %", (row) => formatPercent(row.amount_delivery_progress_ratio)],
+    ["Amount Invoice %", (row) => formatPercent(row.amount_invoice_progress_ratio)],
+    ["IO Count", "internal_order_count"],
+    ["MO Count", "manufacturing_order_count"],
+    ["Accounting Lines", "accounting_line_count"],
+  ];
+
+  const header = columns.map(([label]) => csvCell(label)).join(",");
+  const rows = state.filteredRows.map((row) => columns
+    .map(([, accessor]) => csvCell(typeof accessor === "function" ? accessor(row) : row[accessor]))
+    .join(","));
+  const csv = `\uFEFF${[header, ...rows].join("\n")}`;
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `sales_orders_traceability_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 async function loadDashboard() {
@@ -456,7 +596,7 @@ async function loadDashboard() {
     els.lastLoaded.textContent = `Loaded ${new Date().toLocaleString()}`;
   } catch (error) {
     els.lastLoaded.textContent = "Failed to load";
-    els.dashboardRows.innerHTML = `<tr><td colspan="17" class="empty-cell">${error.message}</td></tr>`;
+    els.dashboardRows.innerHTML = `<tr><td colspan="18" class="empty-cell">${error.message}</td></tr>`;
   }
 }
 
@@ -467,7 +607,7 @@ function clearFilters() {
   els.commitmentFromFilter.value = "";
   els.commitmentToFilter.value = "";
   els.sourceFilter.value = "";
-  els.statusFilter.value = "";
+  els.statusFilter.value = ACTIVE_STATUS_FILTER;
   els.followUpFilter.value = "";
   applyFilters();
 }
@@ -485,6 +625,26 @@ function clearFilters() {
 
 els.refreshButton.addEventListener("click", loadDashboard);
 els.clearFiltersButton.addEventListener("click", clearFilters);
+els.exportExcelButton.addEventListener("click", exportFilteredRows);
+els.salesOrderTable.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-sort]");
+  if (!button) return;
+  const key = button.dataset.sort;
+  if (state.sortKey === key) {
+    state.sortDirection = state.sortDirection === "asc" ? "desc" : "asc";
+  } else {
+    state.sortKey = key;
+    state.sortDirection = "asc";
+  }
+  applyFilters();
+});
+els.statusStrip.addEventListener("click", (event) => {
+  const chip = event.target.closest("[data-follow-up-status]");
+  if (!chip) return;
+  const status = chip.dataset.followUpStatus;
+  els.followUpFilter.value = els.followUpFilter.value === status ? "" : status;
+  applyFilters();
+});
 els.dashboardRows.addEventListener("click", (event) => {
   const button = event.target.closest("[data-so]");
   if (!button) return;
@@ -497,4 +657,5 @@ els.dashboardRows.addEventListener("click", (event) => {
   renderTable(state.filteredRows);
 });
 
+updateSortIndicators();
 loadDashboard();
