@@ -16,6 +16,7 @@
       <div class="header-actions">
         <a class="secondary-button" href="/dashboard/internal-orders">Internal Orders</a>
         <a class="secondary-button" href="/dashboard/internal-order-rekap">Internal Order Rekap</a>
+        <button class="secondary-button" id="exportExcelButton" type="button">Export Excel</button>
         <button class="icon-button" id="refreshButton" type="button" title="Refresh data" aria-label="Refresh data">
           <span aria-hidden="true">R</span>
         </button>
@@ -88,6 +89,7 @@
       <label>
         <span>SO Status</span>
         <select id="statusFilter">
+          <option value="__ACTIVE__">Active only</option>
           <option value="">All statuses</option>
         </select>
       </label>
@@ -111,27 +113,27 @@
         </div>
       </div>
       <div class="table-scroll">
-        <table>
+        <table id="salesOrderTable">
           <thead>
             <tr>
               <th></th>
-              <th>SO Number</th>
-              <th>Customer</th>
-              <th>Product Type</th>
-              <th>Commitment Date</th>
-              <th>Source Type</th>
-              <th>SO Status</th>
-              <th>Follow-Up</th>
-              <th class="num">Ordered Qty</th>
-              <th class="num">Delivered Qty</th>
-              <th class="num">Invoiced Qty</th>
-              <th>Qty Delivery %</th>
-              <th>Qty Invoice %</th>
-              <th class="num">Ordered Amount</th>
-              <th class="num">Delivered Amount</th>
-              <th class="num">Invoiced Amount</th>
-              <th>Amount Delivery %</th>
-              <th>Amount Invoice %</th>
+              <th><button class="sort-button" type="button" data-sort="sales_order_number">SO Number</button></th>
+              <th><button class="sort-button" type="button" data-sort="customer_name">Customer</button></th>
+              <th><button class="sort-button" type="button" data-sort="product_type_label">Product Type</button></th>
+              <th><button class="sort-button" type="button" data-sort="commitment_date">Commitment Date</button></th>
+              <th><button class="sort-button" type="button" data-sort="source_type">Source Type</button></th>
+              <th><button class="sort-button" type="button" data-sort="sales_order_state">SO Status</button></th>
+              <th><button class="sort-button" type="button" data-sort="follow_up_status">Follow-Up</button></th>
+              <th class="num"><button class="sort-button" type="button" data-sort="ordered_qty">Ordered Qty</button></th>
+              <th class="num"><button class="sort-button" type="button" data-sort="delivered_qty">Delivered Qty</button></th>
+              <th class="num"><button class="sort-button" type="button" data-sort="invoiced_qty">Invoiced Qty</button></th>
+              <th><button class="sort-button" type="button" data-sort="qty_delivery_progress_ratio">Qty Delivery %</button></th>
+              <th><button class="sort-button" type="button" data-sort="qty_invoice_progress_ratio">Qty Invoice %</button></th>
+              <th class="num"><button class="sort-button" type="button" data-sort="ordered_amount">Ordered Amount</button></th>
+              <th class="num"><button class="sort-button" type="button" data-sort="delivered_amount">Delivered Amount</button></th>
+              <th class="num"><button class="sort-button" type="button" data-sort="invoiced_amount">Invoiced Amount</button></th>
+              <th><button class="sort-button" type="button" data-sort="amount_delivery_progress_ratio">Amount Delivery %</button></th>
+              <th><button class="sort-button" type="button" data-sort="amount_invoice_progress_ratio">Amount Invoice %</button></th>
             </tr>
           </thead>
           <tbody id="dashboardRows">
