@@ -87,6 +87,10 @@ line_agg AS (
         COALESCE(SUM(CASE WHEN is_countable_sales_line THEN ordered_qty ELSE 0 END), 0)::numeric AS ordered_qty,
         COALESCE(SUM(CASE WHEN is_countable_sales_line THEN delivered_qty ELSE 0 END), 0)::numeric AS delivered_qty,
         COALESCE(SUM(CASE WHEN is_countable_sales_line THEN invoiced_qty ELSE 0 END), 0)::numeric AS invoiced_qty,
+        COALESCE(SUM(CASE WHEN is_countable_sales_line AND line_source_type = 'FROM_INTERNAL_ORDER' THEN delivered_qty ELSE 0 END), 0)::numeric AS delivered_qty_from_internal_order,
+        COALESCE(SUM(CASE WHEN is_countable_sales_line AND line_source_type = 'FROM_STOCK' THEN delivered_qty ELSE 0 END), 0)::numeric AS delivered_qty_from_stock,
+        COALESCE(SUM(CASE WHEN is_countable_sales_line AND line_source_type = 'MAKE_TO_ORDER' THEN delivered_qty ELSE 0 END), 0)::numeric AS delivered_qty_make_to_order,
+        COALESCE(SUM(CASE WHEN is_countable_sales_line AND line_source_type = 'MIXED_SOURCE' THEN delivered_qty ELSE 0 END), 0)::numeric AS delivered_qty_mixed_source,
         COALESCE(SUM(CASE WHEN is_countable_sales_line THEN ordered_amount ELSE 0 END), 0)::numeric AS ordered_amount,
         COALESCE(SUM(CASE WHEN is_countable_sales_line THEN delivered_amount ELSE 0 END), 0)::numeric AS delivered_amount,
         COALESCE(SUM(CASE WHEN is_countable_sales_line THEN invoiced_amount ELSE 0 END), 0)::numeric AS invoiced_amount,
@@ -221,6 +225,7 @@ io_mo_rows AS (
         mo.manufactured_product_name,
         COALESCE(mo.manufacturing_quantity, 0)::numeric AS manufacturing_quantity,
         COALESCE(mo.cost_of_analysis, 0)::numeric AS cost_of_analysis,
+        mo.actual_cost_per_unit,
         mo.manufacturing_origin,
         mo.normalized_jo_number,
         mo.manufacturing_source_type
@@ -252,7 +257,10 @@ io_mo_agg AS (
             WHERE manufacturing_order_id IS NOT NULL
               AND LOWER(COALESCE(manufacturing_order_state, '')) NOT IN ('done', 'cancel', 'cancelled')
         ), 0)::numeric AS io_in_progress_mo_qty,
-        COALESCE(SUM(cost_of_analysis) FILTER (WHERE manufacturing_order_id IS NOT NULL), 0)::numeric AS io_actual_cost,
+        COALESCE(SUM(cost_of_analysis) FILTER (WHERE manufacturing_order_id IS NOT NULL), 0)::numeric AS io_actual_cost_full,
+        COALESCE(SUM(cost_of_analysis) FILTER (WHERE manufacturing_order_id IS NOT NULL), 0)::numeric
+            / NULLIF(COALESCE(SUM(manufacturing_quantity) FILTER (WHERE manufacturing_order_id IS NOT NULL), 0)::numeric, 0)
+            AS io_actual_cost_per_unit,
         JSONB_AGG(
             JSONB_BUILD_OBJECT(
                 'manufacturing_order_id', manufacturing_order_id,
@@ -260,7 +268,9 @@ io_mo_agg AS (
                 'manufacturing_order_state', manufacturing_order_state,
                 'manufactured_product_name', manufactured_product_name,
                 'manufacturing_quantity', manufacturing_quantity,
+                'cost_of_analysis', cost_of_analysis,
                 'actual_cost', cost_of_analysis,
+                'actual_cost_per_unit', actual_cost_per_unit,
                 'cost_basis', 'MRP_COST_OF_ANALYSIS',
                 'origin', manufacturing_origin,
                 'job_order_number', normalized_jo_number,
@@ -279,7 +289,8 @@ io_correlation_by_internal_order AS (
         COALESCE(mo.io_mo_qty, 0)::numeric AS io_mo_qty,
         COALESCE(mo.io_done_mo_qty, 0)::numeric AS io_done_mo_qty,
         COALESCE(mo.io_in_progress_mo_qty, 0)::numeric AS io_in_progress_mo_qty,
-        COALESCE(mo.io_actual_cost, 0)::numeric AS io_actual_cost,
+        COALESCE(mo.io_actual_cost_full, 0)::numeric AS io_actual_cost_full,
+        mo.io_actual_cost_per_unit,
         COALESCE(qty.linked_so_count, 0) AS linked_so_count,
         COALESCE(qty.multi_io_so_count, 0) AS multi_io_so_count,
         COALESCE(qty.has_multi_io_so, FALSE) AS has_multi_io_so,
@@ -315,7 +326,8 @@ so_io_correlation_agg AS (
         COALESCE(SUM(corr.io_mo_qty), 0)::numeric AS io_backed_mo_qty,
         COALESCE(SUM(corr.io_done_mo_qty), 0)::numeric AS io_backed_done_mo_qty,
         COALESCE(SUM(corr.io_in_progress_mo_qty), 0)::numeric AS io_backed_in_progress_mo_qty,
-        COALESCE(SUM(corr.io_actual_cost), 0)::numeric AS io_backed_actual_cost,
+        COALESCE(SUM(corr.io_actual_cost_full), 0)::numeric AS io_backed_actual_cost_full,
+        COALESCE(SUM(corr.io_actual_cost_full), 0)::numeric / NULLIF(COALESCE(SUM(corr.io_mo_qty), 0)::numeric, 0) AS io_backed_actual_cost_per_unit,
         CASE
             WHEN COUNT(corr.internal_order_id) = 0 THEN 'NO_IO_MO_FOUND'
             WHEN BOOL_OR(corr.io_qty_correlation_status = 'IO_QTY_UNALLOCATED_MULTI_IO_SO') THEN 'IO_QTY_UNALLOCATED_MULTI_IO_SO'
@@ -334,7 +346,9 @@ so_io_correlation_agg AS (
                 'io_mo_qty', corr.io_mo_qty,
                 'io_done_mo_qty', corr.io_done_mo_qty,
                 'io_in_progress_mo_qty', corr.io_in_progress_mo_qty,
-                'io_actual_cost', corr.io_actual_cost,
+                'io_actual_cost_full', corr.io_actual_cost_full,
+                'io_actual_cost', corr.io_actual_cost_full,
+                'io_actual_cost_per_unit', corr.io_actual_cost_per_unit,
                 'actual_cost_is_correlation_only', TRUE,
                 'linked_so_count', corr.linked_so_count,
                 'multi_io_so_count', corr.multi_io_so_count,
@@ -367,7 +381,8 @@ mo_agg AS (
         COALESCE(SUM(COALESCE(manufacturing_quantity, 0)) FILTER (
             WHERE LOWER(COALESCE(manufacturing_order_state, '')) NOT IN ('done', 'cancel', 'cancelled')
         ), 0)::numeric AS direct_in_progress_mo_qty,
-        COALESCE(SUM(COALESCE(cost_of_analysis, 0)), 0)::numeric AS direct_actual_cost,
+        COALESCE(SUM(COALESCE(cost_of_analysis, 0)), 0)::numeric AS direct_actual_cost_full,
+        COALESCE(SUM(COALESCE(cost_of_analysis, 0)), 0)::numeric / NULLIF(COALESCE(SUM(COALESCE(manufacturing_quantity, 0)), 0)::numeric, 0) AS direct_actual_cost_per_unit,
         COUNT(DISTINCT manufacturing_order_id) FILTER (WHERE manufacturing_source_type = 'JO_BASED_MO') AS job_order_mo_count,
         JSONB_AGG(
             DISTINCT JSONB_BUILD_OBJECT(
@@ -376,7 +391,9 @@ mo_agg AS (
                 'manufacturing_order_state', manufacturing_order_state,
                 'manufactured_product_name', manufactured_product_name,
                 'manufacturing_quantity', manufacturing_quantity,
+                'cost_of_analysis', cost_of_analysis,
                 'actual_cost', cost_of_analysis,
+                'actual_cost_per_unit', actual_cost_per_unit,
                 'cost_basis', 'MRP_COST_OF_ANALYSIS',
                 'origin', manufacturing_origin,
                 'internal_order_number', internal_order_number,
@@ -490,6 +507,188 @@ rkb_cost_agg AS (
         BOOL_OR(rkb_link_basis = 'IO_CORRELATED_RKB_UNALLOCATED') AS has_io_rkb
     FROM rkb_related_rows
     GROUP BY sales_order_id
+),
+actual_cost_inputs AS (
+    SELECT
+        so.sales_order_id,
+        COALESCE(source.sales_order_source_type, 'UNKNOWN_SOURCE') AS source_type,
+        COALESCE(line.delivered_qty, 0)::numeric AS delivered_qty,
+        COALESCE(line.delivered_qty_from_internal_order, 0)::numeric AS delivered_qty_from_internal_order,
+        COALESCE(line.delivered_qty_make_to_order, 0)::numeric AS delivered_qty_make_to_order,
+        COALESCE(line.delivered_qty_mixed_source, 0)::numeric AS delivered_qty_mixed_source,
+        COALESCE(line.ordered_amount_idr, 0)::numeric AS sales_amount_idr,
+        COALESCE(rkb.has_io_rkb, FALSE) AS has_io_rkb,
+        COALESCE(mo.direct_actual_cost_full, 0)::numeric AS direct_actual_cost_full,
+        mo.direct_actual_cost_per_unit,
+        COALESCE(io_corr.io_backed_actual_cost_full, 0)::numeric AS io_backed_actual_cost_full,
+        io_corr.io_backed_actual_cost_per_unit
+    FROM so_base so
+    LEFT JOIN line_agg line
+        ON line.sales_order_id = so.sales_order_id
+    LEFT JOIN source_summary source
+        ON source.sales_order_id = so.sales_order_id
+    LEFT JOIN mo_agg mo
+        ON mo.sales_order_id = so.sales_order_id
+    LEFT JOIN so_io_correlation_agg io_corr
+        ON io_corr.sales_order_id = so.sales_order_id
+    LEFT JOIN rkb_cost_agg rkb
+        ON rkb.sales_order_id = so.sales_order_id
+),
+actual_cost_calc_raw AS (
+    SELECT
+        sales_order_id,
+        source_type,
+        sales_amount_idr,
+        has_io_rkb,
+        direct_actual_cost_full,
+        direct_actual_cost_per_unit,
+        io_backed_actual_cost_full,
+        io_backed_actual_cost_per_unit,
+        delivered_qty,
+        delivered_qty_mixed_source,
+        CASE
+            WHEN source_type = 'MAKE_TO_ORDER' THEN delivered_qty
+            ELSE delivered_qty_make_to_order
+        END AS direct_allocated_delivered_qty,
+        CASE
+            WHEN source_type = 'FROM_INTERNAL_ORDER' THEN delivered_qty
+            WHEN source_type = 'MIXED_SOURCE' THEN delivered_qty_from_internal_order
+            ELSE 0::numeric
+        END AS io_allocated_delivered_qty
+    FROM actual_cost_inputs
+),
+actual_cost_calc AS (
+    SELECT
+        sales_order_id,
+        direct_actual_cost_full,
+        direct_actual_cost_per_unit,
+        CASE
+            WHEN direct_actual_cost_full = 0 THEN 0::numeric
+            WHEN direct_allocated_delivered_qty > 0 AND direct_actual_cost_per_unit IS NOT NULL THEN direct_allocated_delivered_qty * direct_actual_cost_per_unit
+            ELSE direct_actual_cost_full
+        END AS direct_actual_cost,
+        CASE
+            WHEN direct_actual_cost_full = 0 THEN 'NO_DIRECT_MO_COST'
+            WHEN direct_allocated_delivered_qty > 0 AND direct_actual_cost_per_unit IS NOT NULL THEN 'DIRECT_MO_COST_PER_DELIVERED_QTY'
+            ELSE 'DIRECT_MO_COST_FULL'
+        END AS direct_actual_cost_basis,
+        io_backed_actual_cost_full,
+        io_backed_actual_cost_per_unit,
+        CASE
+            WHEN io_backed_actual_cost_full = 0 OR io_backed_actual_cost_per_unit IS NULL THEN 0::numeric
+            WHEN source_type = 'FROM_INTERNAL_ORDER' AND io_allocated_delivered_qty > 0 THEN io_allocated_delivered_qty * io_backed_actual_cost_per_unit
+            WHEN source_type = 'MIXED_SOURCE' AND io_allocated_delivered_qty > 0 THEN io_allocated_delivered_qty * io_backed_actual_cost_per_unit
+            ELSE 0::numeric
+        END AS io_backed_actual_cost_allocated,
+        CASE
+            WHEN io_backed_actual_cost_full = 0 OR io_backed_actual_cost_per_unit IS NULL THEN
+                CASE WHEN source_type = 'FROM_STOCK' THEN 'FROM_STOCK_COST_NOT_TRACEABLE' ELSE 'NO_IO_ACTUAL_COST' END
+            WHEN source_type = 'FROM_INTERNAL_ORDER' AND io_allocated_delivered_qty > 0 THEN 'IO_COST_PER_DELIVERED_QTY'
+            WHEN source_type = 'MIXED_SOURCE' AND io_allocated_delivered_qty > 0 THEN 'MIXED_SOURCE_IO_COST_PER_DELIVERED_QTY'
+            ELSE 'IO_COST_CORRELATION_ONLY_UNALLOCATED'
+        END AS io_backed_actual_cost_basis,
+        direct_actual_cost_full + io_backed_actual_cost_full AS total_related_actual_cost_full,
+        (
+            CASE
+                WHEN direct_actual_cost_full = 0 THEN 0::numeric
+                WHEN direct_allocated_delivered_qty > 0 AND direct_actual_cost_per_unit IS NOT NULL THEN direct_allocated_delivered_qty * direct_actual_cost_per_unit
+                ELSE direct_actual_cost_full
+            END
+            +
+            CASE
+                WHEN io_backed_actual_cost_full = 0 OR io_backed_actual_cost_per_unit IS NULL THEN 0::numeric
+                WHEN source_type = 'FROM_INTERNAL_ORDER' AND io_allocated_delivered_qty > 0 THEN io_allocated_delivered_qty * io_backed_actual_cost_per_unit
+                WHEN source_type = 'MIXED_SOURCE' AND io_allocated_delivered_qty > 0 THEN io_allocated_delivered_qty * io_backed_actual_cost_per_unit
+                ELSE 0::numeric
+            END
+        ) AS actual_cost_quantity_based,
+        (
+            CASE
+                WHEN direct_actual_cost_full = 0 THEN 0::numeric
+                WHEN direct_allocated_delivered_qty > 0 AND direct_actual_cost_per_unit IS NOT NULL THEN direct_allocated_delivered_qty * direct_actual_cost_per_unit
+                ELSE direct_actual_cost_full
+            END
+            +
+            CASE
+                WHEN io_backed_actual_cost_full = 0 OR io_backed_actual_cost_per_unit IS NULL THEN 0::numeric
+                WHEN source_type = 'FROM_INTERNAL_ORDER' AND io_allocated_delivered_qty > 0 THEN io_allocated_delivered_qty * io_backed_actual_cost_per_unit
+                WHEN source_type = 'MIXED_SOURCE' AND io_allocated_delivered_qty > 0 THEN io_allocated_delivered_qty * io_backed_actual_cost_per_unit
+                ELSE 0::numeric
+            END
+        ) AS actual_cost,
+        CASE
+            WHEN delivered_qty > 0 THEN (
+                (
+                    CASE
+                        WHEN direct_actual_cost_full = 0 THEN 0::numeric
+                        WHEN direct_allocated_delivered_qty > 0 AND direct_actual_cost_per_unit IS NOT NULL THEN direct_allocated_delivered_qty * direct_actual_cost_per_unit
+                        ELSE direct_actual_cost_full
+                    END
+                    +
+                    CASE
+                        WHEN io_backed_actual_cost_full = 0 OR io_backed_actual_cost_per_unit IS NULL THEN 0::numeric
+                        WHEN source_type = 'FROM_INTERNAL_ORDER' AND io_allocated_delivered_qty > 0 THEN io_allocated_delivered_qty * io_backed_actual_cost_per_unit
+                        WHEN source_type = 'MIXED_SOURCE' AND io_allocated_delivered_qty > 0 THEN io_allocated_delivered_qty * io_backed_actual_cost_per_unit
+                        ELSE 0::numeric
+                    END
+                ) / NULLIF(delivered_qty, 0)
+            )
+        END AS actual_cost_per_unit,
+        CASE
+            WHEN source_type = 'MIXED_SOURCE' AND delivered_qty_mixed_source > 0 THEN 'MIXED_SOURCE_ACTUAL_COST_NEEDS_REVIEW'
+            WHEN (
+                CASE
+                    WHEN direct_actual_cost_full = 0 THEN 0::numeric
+                    WHEN direct_allocated_delivered_qty > 0 AND direct_actual_cost_per_unit IS NOT NULL THEN direct_allocated_delivered_qty * direct_actual_cost_per_unit
+                    ELSE direct_actual_cost_full
+                END
+            ) > 0
+             AND (
+                CASE
+                    WHEN io_backed_actual_cost_full = 0 OR io_backed_actual_cost_per_unit IS NULL THEN 0::numeric
+                    WHEN source_type = 'FROM_INTERNAL_ORDER' AND io_allocated_delivered_qty > 0 THEN io_allocated_delivered_qty * io_backed_actual_cost_per_unit
+                    WHEN source_type = 'MIXED_SOURCE' AND io_allocated_delivered_qty > 0 THEN io_allocated_delivered_qty * io_backed_actual_cost_per_unit
+                    ELSE 0::numeric
+                END
+            ) > 0 THEN 'DIRECT_AND_IO_QTY_BASED'
+            WHEN (
+                CASE
+                    WHEN direct_actual_cost_full = 0 THEN 0::numeric
+                    WHEN direct_allocated_delivered_qty > 0 AND direct_actual_cost_per_unit IS NOT NULL THEN direct_allocated_delivered_qty * direct_actual_cost_per_unit
+                    ELSE direct_actual_cost_full
+                END
+            ) > 0 THEN
+                CASE
+                    WHEN direct_actual_cost_full = 0 THEN 'NO_DIRECT_MO_COST'
+                    WHEN direct_allocated_delivered_qty > 0 AND direct_actual_cost_per_unit IS NOT NULL THEN 'DIRECT_MO_COST_PER_DELIVERED_QTY'
+                    ELSE 'DIRECT_MO_COST_FULL'
+                END
+            WHEN (
+                CASE
+                    WHEN io_backed_actual_cost_full = 0 OR io_backed_actual_cost_per_unit IS NULL THEN 0::numeric
+                    WHEN source_type = 'FROM_INTERNAL_ORDER' AND io_allocated_delivered_qty > 0 THEN io_allocated_delivered_qty * io_backed_actual_cost_per_unit
+                    WHEN source_type = 'MIXED_SOURCE' AND io_allocated_delivered_qty > 0 THEN io_allocated_delivered_qty * io_backed_actual_cost_per_unit
+                    ELSE 0::numeric
+                END
+            ) > 0 THEN
+                CASE
+                    WHEN io_backed_actual_cost_full = 0 OR io_backed_actual_cost_per_unit IS NULL THEN
+                        CASE WHEN source_type = 'FROM_STOCK' THEN 'FROM_STOCK_COST_NOT_TRACEABLE' ELSE 'NO_IO_ACTUAL_COST' END
+                    WHEN source_type = 'FROM_INTERNAL_ORDER' AND io_allocated_delivered_qty > 0 THEN 'IO_COST_PER_DELIVERED_QTY'
+                    WHEN source_type = 'MIXED_SOURCE' AND io_allocated_delivered_qty > 0 THEN 'MIXED_SOURCE_IO_COST_PER_DELIVERED_QTY'
+                    ELSE 'IO_COST_CORRELATION_ONLY_UNALLOCATED'
+                END
+            WHEN source_type = 'FROM_STOCK' THEN 'FROM_STOCK_COST_NOT_TRACEABLE'
+            ELSE 'NO_ACTUAL_COST'
+        END AS actual_cost_basis,
+        NULLIF(CONCAT_WS('|',
+            CASE WHEN sales_amount_idr = 0 THEN 'NO_SALES_AMOUNT_BASIS' END,
+            CASE WHEN has_io_rkb THEN 'RKB_COST_IO_CORRELATED_UNALLOCATED' END,
+            CASE WHEN source_type = 'MIXED_SOURCE' AND delivered_qty_mixed_source > 0 THEN 'MIXED_SOURCE_ACTUAL_COST_NEEDS_REVIEW' END,
+            CASE WHEN source_type = 'FROM_STOCK' AND io_backed_actual_cost_full = 0 AND direct_actual_cost_full = 0 THEN 'ACTUAL_COST_INCOMPLETE' END,
+            CASE WHEN source_type = 'UNKNOWN_SOURCE' THEN 'ACTUAL_COST_INCOMPLETE' END
+        ), '') AS contribution_basis_warning
+    FROM actual_cost_calc_raw
 )
 SELECT
     so.sales_order_id,
@@ -555,24 +754,30 @@ SELECT
     COALESCE(mo.direct_mo_qty, 0) AS direct_mo_qty,
     COALESCE(mo.direct_done_mo_qty, 0) AS direct_done_mo_qty,
     COALESCE(mo.direct_in_progress_mo_qty, 0) AS direct_in_progress_mo_qty,
-    COALESCE(mo.direct_actual_cost, 0) AS direct_actual_cost,
+    COALESCE(ac.direct_actual_cost, 0) AS direct_actual_cost,
+    ac.direct_actual_cost_per_unit,
+    ac.direct_actual_cost_basis,
     COALESCE(io_corr.io_backed_mo_count, 0) AS io_backed_mo_count,
     COALESCE(io_corr.io_backed_mo_qty, 0) AS io_backed_mo_qty,
     COALESCE(io_corr.io_backed_done_mo_qty, 0) AS io_backed_done_mo_qty,
     COALESCE(io_corr.io_backed_in_progress_mo_qty, 0) AS io_backed_in_progress_mo_qty,
-    COALESCE(io_corr.io_backed_actual_cost, 0) AS io_backed_actual_cost,
+    COALESCE(io_corr.io_backed_actual_cost_full, 0) AS io_backed_actual_cost,
+    COALESCE(io_corr.io_backed_actual_cost_full, 0) AS io_backed_actual_cost_full,
+    COALESCE(ac.io_backed_actual_cost_allocated, 0) AS io_backed_actual_cost_allocated,
+    ac.io_backed_actual_cost_per_unit,
+    ac.io_backed_actual_cost_basis,
     TRUE AS io_backed_actual_cost_is_correlation_only,
-    COALESCE(mo.direct_actual_cost, 0) + COALESCE(io_corr.io_backed_actual_cost, 0) AS total_related_actual_cost,
-    COALESCE(mo.direct_actual_cost, 0) + COALESCE(io_corr.io_backed_actual_cost, 0) AS actual_cost,
+    COALESCE(ac.total_related_actual_cost_full, 0) AS total_related_actual_cost,
+    COALESCE(ac.total_related_actual_cost_full, 0) AS total_related_actual_cost_full,
+    COALESCE(ac.actual_cost, 0) AS actual_cost,
+    COALESCE(ac.actual_cost_quantity_based, 0) AS actual_cost_quantity_based,
+    ac.actual_cost_per_unit,
+    ac.actual_cost_basis,
     COALESCE(line.ordered_amount_idr, 0) - COALESCE(rkb.rkb_planned_cost, 0) AS rkb_kontribusi_amount,
     (COALESCE(line.ordered_amount_idr, 0) - COALESCE(rkb.rkb_planned_cost, 0)) / NULLIF(COALESCE(line.ordered_amount_idr, 0), 0) AS rkb_kontribusi_percent,
-    COALESCE(line.ordered_amount_idr, 0) - (COALESCE(mo.direct_actual_cost, 0) + COALESCE(io_corr.io_backed_actual_cost, 0)) AS kontribusi_aktual_amount,
-    (COALESCE(line.ordered_amount_idr, 0) - (COALESCE(mo.direct_actual_cost, 0) + COALESCE(io_corr.io_backed_actual_cost, 0))) / NULLIF(COALESCE(line.ordered_amount_idr, 0), 0) AS kontribusi_aktual_percent,
-    CASE
-        WHEN COALESCE(line.ordered_amount_idr, 0) = 0 THEN 'NO_SALES_AMOUNT_BASIS'
-        WHEN COALESCE(rkb.has_io_rkb, FALSE) OR COALESCE(io_corr.io_backed_actual_cost, 0) <> 0 THEN 'INCLUDES_IO_CORRELATED_UNALLOCATED_COST'
-        ELSE NULL
-    END AS contribution_basis_warning,
+    COALESCE(line.ordered_amount_idr, 0) - COALESCE(ac.actual_cost_quantity_based, 0) AS kontribusi_aktual_amount,
+    (COALESCE(line.ordered_amount_idr, 0) - COALESCE(ac.actual_cost_quantity_based, 0)) / NULLIF(COALESCE(line.ordered_amount_idr, 0), 0) AS kontribusi_aktual_percent,
+    ac.contribution_basis_warning,
     COALESCE(mo.direct_mo_count, 0) + COALESCE(io_corr.io_backed_mo_count, 0) AS total_related_mo_count,
     COALESCE(mo.direct_mo_qty, 0) + COALESCE(io_corr.io_backed_mo_qty, 0) AS total_related_mo_qty,
     COALESCE(mo.direct_done_mo_qty, 0) + COALESCE(io_corr.io_backed_done_mo_qty, 0) AS total_done_mo_qty,
@@ -642,12 +847,14 @@ LEFT JOIN mo_agg mo
     ON mo.sales_order_id = so.sales_order_id
 LEFT JOIN so_io_correlation_agg io_corr
     ON io_corr.sales_order_id = so.sales_order_id
+LEFT JOIN actual_cost_calc ac
+    ON ac.sales_order_id = so.sales_order_id
 LEFT JOIN accounting_agg accounting
     ON accounting.sales_order_id = so.sales_order_id
 LEFT JOIN rkb_cost_agg rkb
     ON rkb.sales_order_id = so.sales_order_id;
 
 COMMENT ON VIEW vw_dashboard_sales_order_traceability IS
-    'Phase 2A dashboard-ready Sales Order traceability view for PT Nobi Putra Angkasa only. Quantity and amount progress use countable SO lines and are capped at 100 percent. IO-backed MO quantity is correlation-only and not allocated to individual SOs. Delay uses sale_order.commitment_date. Sales amounts use sale_order.currency_rate as an IDR multiplier with rate-1 fallback. Contribution metrics are operational and not accounting COGS or gross profit. Accounting/AR is out of scope; accounting count is diagnostic only.';
+    'Phase 2A dashboard-ready Sales Order traceability view for PT Nobi Putra Angkasa only. Quantity and amount progress use countable SO lines and are capped at 100 percent. IO-backed MO quantity is correlation-only and not allocated to individual SOs. Delay uses sale_order.commitment_date. Sales amounts use sale_order.currency_rate as an IDR multiplier with rate-1 fallback. Actual cost is quantity-based from delivered quantity when possible; full IO or MO cost remains audit/correlation only. Contribution metrics are operational and not accounting COGS or gross profit. Accounting/AR is out of scope; accounting count is diagnostic only.';
 
 

@@ -103,6 +103,7 @@ SELECT
     mo.product_id AS manufactured_product_name,
     mo.product_qty AS manufacturing_quantity,
     COALESCE(NULLIF(mo.x_studio_cost_of_analysis::text, '')::numeric, 0) AS cost_of_analysis,
+    COALESCE(NULLIF(mo.x_studio_cost_of_analysis::text, '')::numeric, 0) / NULLIF(mo.product_qty, 0) AS actual_cost_per_unit,
     mo.state AS manufacturing_order_state,
     UPPER(COALESCE(mo.state, 'UNKNOWN')) AS normalized_status,
     (LOWER(COALESCE(mo.state, '')) IN ('cancel', 'cancelled')) AS is_cancelled,

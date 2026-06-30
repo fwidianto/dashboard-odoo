@@ -310,3 +310,13 @@ docs/06_Investigations/IO_BACKED_MO_CORRELATION_AUDIT.sql
 - This is not accounting COGS, gross profit, AR/payment, margin, estimator variance, or cost allocation.
 - IO-backed actual cost and IO-correlated RKB remain correlation-only unless allocation rules are approved.
 - RKB, ROP, and Purchase Order detail still belongs in a separate future report view.
+## Phase 2A.1 Quantity-Based Actual Cost Correction
+
+- Actual Cost was corrected to avoid IO overlap.
+- If a Sales Order references IO, actual cost uses delivered quantity multiplied by actual cost per unit.
+- Full IO or MO actual cost is kept only as a related or correlation audit value.
+- Mixed source actual cost uses source-segment delivered quantity where available and is flagged for review when exact allocation is unclear.
+- If stock or MO origin is not traceable, actual cost is flagged incomplete or needs review.
+- Kontribusi remains operational contribution, not accounting gross profit or COGS.
+- Local databases must sync `mrp.production.x_studio_cost_of_analysis` before reapplying the SQL views.
+- Actual cost calculations are quantity-based and apple-to-apple.

@@ -46,7 +46,7 @@ models:
     columns:
       id: ID
       write_date: Last Updated on
-      x_studio_prodcut_type: Product Type
+      x_studio_product_type: Product Type
       name: Order Number
       create_date: Created
       date_order: Order Date

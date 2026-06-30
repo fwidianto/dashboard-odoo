@@ -479,7 +479,7 @@ function renderManufacturingOrders(orders) {
   }
   return `
     <table class="detail-table">
-      <thead><tr><th>MO Number</th><th>Status</th><th>Product</th><th class="num">Qty</th><th class="num">Actual Cost</th><th>Cost Basis</th><th>Origin</th><th>JO</th><th>Source</th></tr></thead>
+      <thead><tr><th>MO Number</th><th>Status</th><th>Product</th><th class="num">MO Qty</th><th class="num">Cost of Analysis</th><th class="num">Actual Cost / Unit</th><th>Cost Basis</th><th>Origin</th><th>JO</th><th>Source</th></tr></thead>
       <tbody>
         ${orders.map((order) => `
           <tr>
@@ -487,7 +487,8 @@ function renderManufacturingOrders(orders) {
             <td>${safeText(order.manufacturing_order_state)}</td>
             <td>${safeText(order.manufactured_product_name)}</td>
             <td class="num">${formatQty(order.manufacturing_quantity)}</td>
-            <td class="num">${formatAmount(order.actual_cost)}</td>
+            <td class="num">${formatAmount(order.cost_of_analysis)}</td>
+            <td class="num">${formatAmount(order.actual_cost_per_unit)}</td>
             <td>${safeText(order.cost_basis)}</td>
             <td>${safeText(order.origin)}</td>
             <td>${safeText(order.job_order_number)}</td>
@@ -510,7 +511,8 @@ function renderIoBackedManufacturing(correlations) {
           <th>Internal Order Number</th>
           <th class="num">Related IO MO Count</th>
           <th class="num">Related IO MO Qty</th>
-          <th class="num">IO Actual Cost</th>
+          <th class="num">IO Actual Cost Full</th>
+          <th class="num">IO Actual Cost / Unit</th>
           <th class="num">Linked SO Count</th>
           <th class="num">Multi-IO SO Count</th>
           <th>Linked SO Qty Basis</th>
@@ -525,7 +527,8 @@ function renderIoBackedManufacturing(correlations) {
             <td>${safeText(item.internal_order_number)}</td>
             <td class="num">${formatNumber(item.io_mo_count)}</td>
             <td class="num">${formatQty(item.io_mo_qty)}</td>
-            <td class="num">${formatAmount(item.io_actual_cost)}</td>
+            <td class="num">${formatAmount(item.io_actual_cost_full || item.io_actual_cost)}</td>
+            <td class="num">${formatAmount(item.io_actual_cost_per_unit)}</td>
             <td class="num">${formatNumber(item.linked_so_count)}</td>
             <td class="num">${formatNumber(item.multi_io_so_count)}</td>
             <td>${safeText(item.linked_so_qty_basis)}</td>
@@ -663,9 +666,16 @@ function sortableValue(row, key) {
     "direct_rkb_planned_cost",
     "io_correlated_rkb_planned_cost",
     "direct_actual_cost",
+    "direct_actual_cost_per_unit",
     "io_backed_actual_cost",
+    "io_backed_actual_cost_full",
+    "io_backed_actual_cost_allocated",
+    "io_backed_actual_cost_per_unit",
     "total_related_actual_cost",
+    "total_related_actual_cost_full",
     "actual_cost",
+    "actual_cost_quantity_based",
+    "actual_cost_per_unit",
     "rkb_kontribusi_amount",
     "rkb_kontribusi_percent",
     "kontribusi_aktual_amount",
@@ -864,10 +874,16 @@ function exportFilteredRows() {
     ["Invoiced Qty", "invoiced_qty"],
     ["Qty Delivery %", (row) => formatPercent(row.qty_delivery_progress_ratio)],
     ["Qty Invoice %", (row) => formatPercent(row.qty_invoice_progress_ratio)],
-    ["Ordered Amount IDR", "ordered_amount_idr"],
-    ["Planned Cost IDR", "rkb_planned_cost"],
+    ["Sales Amount IDR", "ordered_amount_idr"],
+    ["RKB Planned Cost", "rkb_planned_cost"],
     ["RKB Kontribusi %", (row) => formatContributionPercent(row.rkb_kontribusi_percent)],
-    ["Actual Cost IDR", "actual_cost"],
+    ["Actual Cost (Qty-Based)", "actual_cost"],
+    ["Actual Cost Basis", "actual_cost_basis"],
+    ["Actual Cost / Unit", "actual_cost_per_unit"],
+    ["Direct Actual Cost Basis", "direct_actual_cost_basis"],
+    ["IO Actual Cost Full", "io_backed_actual_cost_full"],
+    ["IO Actual Cost Allocated", "io_backed_actual_cost_allocated"],
+    ["IO Actual Cost Basis", "io_backed_actual_cost_basis"],
     ["Kontribusi Aktual %", (row) => formatContributionPercent(row.kontribusi_aktual_percent)],
     ["RKB Cost Basis", "rkb_cost_basis"],
     ["Contribution Warning", "contribution_basis_warning"],
