@@ -5,14 +5,32 @@ const state = {
   filteredRows: [],
   expanded: new Set(),
   sortKey: "commitment_date",
-  sortDirection: "asc",
+sortDirection: "asc",
+  filterOptions: {
+    year: [],
+    customer: [],
+    productType: [],
+    source: [],
+    status: [],
+    followUp: [],
+  },
+  filters: {
+    year: new Set(),
+    customer: new Set(),
+    productType: new Set(),
+    source: new Set(),
+    status: new Set(),
+    followUp: new Set(),
+  },
+  filtersInitialized: false,
 };
 
 const els = {
   refreshButton: document.getElementById("refreshButton"),
   clearFiltersButton: document.getElementById("clearFiltersButton"),
   exportExcelButton: document.getElementById("exportExcelButton"),
-  soFilter: document.getElementById("soFilter"),
+soFilter: document.getElementById("soFilter"),
+  yearFilter: document.getElementById("yearFilter"),
   customerFilter: document.getElementById("customerFilter"),
   productTypeFilter: document.getElementById("productTypeFilter"),
   commitmentFromFilter: document.getElementById("commitmentFromFilter"),
@@ -22,6 +40,8 @@ const els = {
   followUpFilter: document.getElementById("followUpFilter"),
   statusStrip: document.getElementById("statusStrip"),
   productTypeStrip: document.getElementById("productTypeStrip"),
+  sourceStrip: document.getElementById("sourceStrip"),
+  kpiGrid: document.querySelector(".kpi-grid"),
   salesOrderTable: document.getElementById("salesOrderTable"),
   dashboardRows: document.getElementById("dashboardRows"),
   rowCount: document.getElementById("rowCount"),
@@ -37,8 +57,10 @@ const els = {
   kpiAmountInvoice: document.getElementById("kpiAmountInvoice"),
   kpiFromIo: document.getElementById("kpiFromIo"),
   kpiMakeToOrder: document.getElementById("kpiMakeToOrder"),
-  kpiFromStock: document.getElementById("kpiFromStock"),
+kpiFromStock: document.getElementById("kpiFromStock"),
+  kpiMixedSource: document.getElementById("kpiMixedSource"),
   kpiUnknownSource: document.getElementById("kpiUnknownSource"),
+  unknownSourceCard: document.getElementById("unknownSourceCard"),
   barQtyDelivery: document.getElementById("barQtyDelivery"),
   barQtyInvoice: document.getElementById("barQtyInvoice"),
   barAmountDelivery: document.getElementById("barAmountDelivery"),
@@ -46,24 +68,78 @@ const els = {
 };
 
 const sourceLabels = {
-  FROM_STOCK: "From stock",
   FROM_INTERNAL_ORDER: "From IO",
-  MAKE_TO_ORDER: "Make to order / JO",
-  MIXED_SOURCE: "Mixed source",
-  UNKNOWN_SOURCE: "Unknown source",
-  CANCELLED_RECORD: "Cancelled",
+  FROM_STOCK: "From Stock",
+  MAKE_TO_ORDER: "From Manufacture Order",
+  MIXED_SOURCE: "From IO & Manufacture Order",
+  UNKNOWN_SOURCE: "Unknown Source",
+  CANCELLED_RECORD: "Cancel",
 };
 
 const followUpLabels = {
-  CANCELLED_RECORD: "Cancelled",
-  UNKNOWN_SOURCE: "Unknown source",
-  DELAYED_DELIVERY: "Delayed delivery",
-  WAITING_PRODUCTION: "Waiting production",
-  WAITING_DELIVERY: "Waiting delivery",
-  WAITING_INVOICE: "Waiting invoice",
+  CANCELLED_RECORD: "Cancel",
+  UNKNOWN_SOURCE: "Unknown Source",
+  DELAYED_DELIVERY: "Delayed Delivery",
+  WAITING_PRODUCTION: "Waiting Manufacture Order",
+  WAITING_DELIVERY: "Waiting to Deliver",
+  WAITING_INVOICE: "Waiting to Invoice",
   COMPLETED: "Completed",
 };
 
+const sourceOrder = ["FROM_INTERNAL_ORDER", "FROM_STOCK", "MAKE_TO_ORDER", "MIXED_SOURCE", "UNKNOWN_SOURCE", "CANCELLED_RECORD"];
+const followUpOrder = ["CANCELLED_RECORD", "UNKNOWN_SOURCE", "DELAYED_DELIVERY", "WAITING_PRODUCTION", "WAITING_DELIVERY", "WAITING_INVOICE", "COMPLETED"];
+
+function isCancelStatusValue(value) {
+  return ["cancel", "cancelled"].includes(String(value || "").toLowerCase());
+}
+
+function activeStatusValues() {
+  return state.filterOptions.status.filter((status) => !isCancelStatusValue(status));
+}
+
+function sourceLabel(rowOrSource) {
+  const source = typeof rowOrSource === "object" && rowOrSource !== null ? rowOrSource.source_type : rowOrSource;
+  if (source === "UNKNOWN_SOURCE" && typeof rowOrSource === "object" && isCancelled(rowOrSource)) return "";
+  return sourceLabels[source] || safeText(source);
+}
+
+function followUpLabel(status) {
+  return followUpLabels[status] || safeText(status);
+}
+
+function setSingleFilter(filterKey, value) {
+  const selected = state.filters[filterKey];
+  if (selected.size === 1 && selected.has(value)) selected.clear();
+  else state.filters[filterKey] = new Set([value]);
+  applyFilters();
+}
+
+function selectionMatches(filterKey, value) {
+  const selected = state.filters[filterKey];
+  return !selected.size || selected.has(String(value || ""));
+}
+
+function setsEqualToArray(set, values) {
+  return set.size === values.length && values.every((value) => set.has(String(value)));
+}
+
+function checklistSummary(filterKey, allLabel, labelFn) {
+  const selected = state.filters[filterKey];
+  const options = state.filterOptions[filterKey] || [];
+  if (filterKey === "status" && selected.size && setsEqualToArray(selected, activeStatusValues())) return "Active only";
+  if (!selected.size || selected.size === options.length) return allLabel;
+  if (selected.size === 1) return labelFn([...selected][0]);
+  return `${selected.size} selected`;
+}
+
+const checklistConfigs = {
+  year: { el: () => els.yearFilter, allLabel: "All years", label: (value) => safeText(value) },
+  customer: { el: () => els.customerFilter, allLabel: "All customers", label: (value) => safeText(value) },
+  productType: { el: () => els.productTypeFilter, allLabel: "All product types", label: (value) => safeText(value) },
+  source: { el: () => els.sourceFilter, allLabel: "All sources", label: sourceLabel },
+  status: { el: () => els.statusFilter, allLabel: "All statuses", label: (value) => safeText(value) },
+  followUp: { el: () => els.followUpFilter, allLabel: "All follow-up", label: followUpLabel },
+};
 const ioQtyStatusLabels = {
   NO_IO_MO_FOUND: "No IO MO found",
   IO_QTY_SURPLUS_VS_LINKED_SO: "IO qty surplus vs linked SO",
@@ -142,22 +218,25 @@ function cssClassForFollowUp(status) {
 
 function cssClassForSource(source) {
   if (source === "FROM_INTERNAL_ORDER" || source === "FROM_STOCK") return "status-progress";
-  if (source === "MAKE_TO_ORDER") return "status-followup";
+  if (source === "MAKE_TO_ORDER" || source === "MIXED_SOURCE") return "status-followup";
   if (source === "UNKNOWN_SOURCE") return "status-danger";
   if (source === "CANCELLED_RECORD") return "status-muted";
   return "status-muted";
 }
 
 function badge(label, className) {
-  return `<span class="status-badge ${className}">${safeText(label)}</span>`;
+  const text = safeText(label);
+  if (text === "-") return "";
+  return `<span class="status-badge ${className}">${text}</span>`;
 }
 
-function sourceBadge(source) {
-  return badge(sourceLabels[source] || source, cssClassForSource(source));
+function sourceBadge(rowOrSource) {
+  const source = typeof rowOrSource === "object" && rowOrSource !== null ? rowOrSource.source_type : rowOrSource;
+  return badge(sourceLabel(rowOrSource), cssClassForSource(source));
 }
 
 function followUpBadge(status) {
-  return badge(followUpLabels[status] || status, cssClassForFollowUp(status));
+  return badge(followUpLabel(status), cssClassForFollowUp(status));
 }
 
 function ioQtyStatusLabel(status) {
@@ -197,12 +276,14 @@ function summarize(rows) {
     fromIo: active.filter((row) => row.source_type === "FROM_INTERNAL_ORDER").length,
     makeToOrder: active.filter((row) => row.source_type === "MAKE_TO_ORDER").length,
     fromStock: active.filter((row) => row.source_type === "FROM_STOCK").length,
+    mixedSource: active.filter((row) => row.source_type === "MIXED_SOURCE").length,
     unknownSource: active.filter((row) => row.source_type === "UNKNOWN_SOURCE").length,
   };
 }
 
-function renderKpis(rows) {
+function renderKpis(rows, sourceRows = rows) {
   const summary = summarize(rows);
+  const sourceSummary = summarize(sourceRows);
   els.kpiActiveSo.textContent = formatNumber(summary.activeSalesOrders);
   els.kpiDeliveredSo.textContent = formatNumber(summary.deliveredSalesOrders);
   els.kpiInvoicedSo.textContent = formatNumber(summary.invoicedSalesOrders);
@@ -212,10 +293,15 @@ function renderKpis(rows) {
   els.kpiQtyInvoice.textContent = formatPercent(summary.qtyInvoiceProgress);
   els.kpiAmountDelivery.textContent = formatPercent(summary.amountDeliveryProgress);
   els.kpiAmountInvoice.textContent = formatPercent(summary.amountInvoiceProgress);
-  els.kpiFromIo.textContent = formatNumber(summary.fromIo);
-  els.kpiMakeToOrder.textContent = formatNumber(summary.makeToOrder);
-  els.kpiFromStock.textContent = formatNumber(summary.fromStock);
-  els.kpiUnknownSource.textContent = formatNumber(summary.unknownSource);
+  els.kpiFromIo.textContent = formatNumber(sourceSummary.fromIo);
+  els.kpiMakeToOrder.textContent = formatNumber(sourceSummary.makeToOrder);
+  els.kpiFromStock.textContent = formatNumber(sourceSummary.fromStock);
+  els.kpiMixedSource.textContent = formatNumber(sourceSummary.mixedSource);
+  els.kpiUnknownSource.textContent = formatNumber(sourceSummary.unknownSource);
+  els.unknownSourceCard.hidden = sourceSummary.unknownSource <= 0 && !state.filters.source.has("UNKNOWN_SOURCE");
+  document.querySelectorAll("[data-source-type]").forEach((card) => {
+    card.classList.toggle("is-active", state.filters.source.size === 1 && state.filters.source.has(card.dataset.sourceType));
+  });
   els.barQtyDelivery.style.width = progressWidth(summary.qtyDeliveryProgress);
   els.barQtyInvoice.style.width = progressWidth(summary.qtyInvoiceProgress);
   els.barAmountDelivery.style.width = progressWidth(summary.amountDeliveryProgress);
@@ -237,12 +323,12 @@ function renderStatusStrip(rows) {
     "COMPLETED",
   ];
 
-  const selectedFollowUp = els.followUpFilter.value;
+  const selectedFollowUp = state.filters.followUp.size === 1 ? [...state.filters.followUp][0] : "";
   els.statusStrip.innerHTML = order
     .filter((status) => counts[status])
     .map((status) => `
       <button class="status-chip ${cssClassForFollowUp(status)} ${selectedFollowUp === status ? "is-active" : ""}" type="button" data-follow-up-status="${status}">
-        ${followUpLabels[status] || status}
+        ${followUpLabel(status)}
         <strong>${counts[status]}</strong>
       </button>
     `)
@@ -259,10 +345,29 @@ function renderProductTypeStrip(rows) {
   els.productTypeStrip.innerHTML = Object.entries(counts)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([label, count]) => `
-      <span class="status-chip product-type-chip">
+      <button class="status-chip product-type-chip ${state.filters.productType.size === 1 && state.filters.productType.has(label) ? "is-active" : ""}" type="button" data-product-type="${encodeURIComponent(label)}">
         ${safeText(label)}
         <strong>${formatNumber(count)}</strong>
-      </span>
+      </button>
+    `)
+    .join("");
+}
+
+function renderSourceStrip(rows) {
+  const counts = rows.reduce((acc, row) => {
+    if (row.source_type === "UNKNOWN_SOURCE" && isCancelled(row)) return acc;
+    acc[row.source_type] = (acc[row.source_type] || 0) + 1;
+    return acc;
+  }, {});
+
+  els.sourceStrip.innerHTML = sourceOrder
+    .filter((source) => source !== "CANCELLED_RECORD")
+    .filter((source) => counts[source] || state.filters.source.has(source))
+    .map((source) => `
+      <button class="status-chip ${cssClassForSource(source)} ${state.filters.source.size === 1 && state.filters.source.has(source) ? "is-active" : ""}" type="button" data-source-type="${source}">
+        ${sourceLabel(source)}
+        <strong>${formatNumber(counts[source] || 0)}</strong>
+      </button>
     `)
     .join("");
 }
@@ -389,7 +494,7 @@ function detailRow(row) {
   const diagnostics = row.diagnostics || {};
   return `
     <tr class="detail-row">
-      <td colspan="21">
+      <td colspan="22">
         <div class="detail-grid">
           <div class="detail-item"><span>Company</span><strong>${safeText(row.company_id)}</strong></div>
           <div class="detail-item"><span>Raw Product Type</span><strong>${safeText(row.product_type_raw)}</strong></div>
@@ -399,9 +504,12 @@ function detailRow(row) {
           <div class="detail-item"><span>Direct MO Count</span><strong>${formatNumber(row.direct_mo_count)}</strong></div>
           <div class="detail-item"><span>Related IO MO Count</span><strong>${formatNumber(row.io_backed_mo_count)}</strong></div>
           <div class="detail-item"><span>Related IO MO Qty</span><strong>${formatQty(row.io_backed_mo_qty)}</strong></div>
+          <div class="detail-item"><span>Related MO Qty</span><strong>${formatQty(row.total_related_mo_qty)}</strong></div>
+          <div class="detail-item"><span>Produced MO Qty</span><strong>${formatQty(row.total_done_mo_qty)}</strong></div>
+          <div class="detail-item"><span>Manufacturing In Progress Qty</span><strong>${formatQty(row.total_in_progress_mo_qty)}</strong></div>
           <div class="detail-item"><span>Total Related MO Count</span><strong>${formatNumber(row.total_related_mo_count)}</strong></div>
-          <div class="detail-item"><span>Total Related MO Qty</span><strong>${formatQty(row.total_related_mo_qty)}</strong></div>
-          <div class="detail-item"><span>Shared IO</span><strong>${formatNumber(row.shared_io_count)}</strong></div>
+          <div class="detail-item"><span>Shared IO</span><strong>${safeText(row.shared_io_numbers)}</strong></div>
+          <div class="detail-item"><span>Shared IO Count</span><strong>${formatNumber(row.shared_io_count)}</strong></div>
           <div class="detail-item"><span>Multi-IO SO Count</span><strong>${formatNumber(row.multi_io_so_count)}</strong></div>
           <div class="detail-item"><span>Has Multi-IO SO</span><strong>${row.has_multi_io_so ? "Yes" : "No"}</strong></div>
           <div class="detail-item"><span>Linked SO Qty Basis</span><strong>${safeText(row.linked_so_qty_basis)}</strong></div>
@@ -441,12 +549,13 @@ function tableRow(row) {
       <td>${safeText(row.customer_name)}</td>
       <td>${safeText(row.product_type_label)}</td>
       <td>${formatDate(row.commitment_date)}</td>
-      <td>${sourceBadge(row.source_type)}</td>
+      <td>${sourceBadge(row)}</td>
       <td>${badge(row.sales_order_state, isCancelled(row) ? "status-muted" : "status-progress")}</td>
       <td>${followUpBadge(row.follow_up_status)}</td>
-      <td class="num">${formatNumber(row.total_related_mo_count)}</td>
       <td class="num">${formatQty(row.total_related_mo_qty)}</td>
-      <td class="num">${formatNumber(row.shared_io_count)}</td>
+      <td class="num">${formatQty(row.total_done_mo_qty)}</td>
+      <td class="num">${formatQty(row.total_in_progress_mo_qty)}</td>
+      <td>${safeText(row.shared_io_numbers)}</td>
       <td class="num">${formatQty(row.ordered_qty)}</td>
       <td class="num">${formatQty(row.delivered_qty)}</td>
       <td class="num">${formatQty(row.invoiced_qty)}</td>
@@ -480,6 +589,8 @@ function sortableValue(row, key) {
     "io_backed_mo_qty",
     "total_related_mo_count",
     "total_related_mo_qty",
+    "total_done_mo_qty",
+    "total_in_progress_mo_qty",
     "shared_io_count",
   ]);
   if (key === "commitment_date") return dateOnly(row[key]);
@@ -511,47 +622,67 @@ function renderTable(rows) {
   updateSortIndicators();
   els.rowCount.textContent = `${formatNumber(rows.length)} rows`;
   if (!rows.length) {
-    els.dashboardRows.innerHTML = '<tr><td colspan="21" class="empty-cell">No Sales Orders match the current filters.</td></tr>';
+    els.dashboardRows.innerHTML = '<tr><td colspan="22" class="empty-cell">No Sales Orders match the current filters.</td></tr>';
     return;
   }
   els.dashboardRows.innerHTML = rows.map(tableRow).join("");
 }
 
-function populateSelect(select, values, firstOptions = null) {
-  const options = firstOptions || [{ value: "", label: "All" }];
-  select.innerHTML = options
-    .map((option) => `<option value="${option.value}">${option.label}</option>`)
-    .join("") + values.map((value) => `<option value="${value}">${value}</option>`).join("");
+function uniqueOptionValues(values) {
+  return [...new Set((values || [])
+    .filter((value) => value !== null && value !== undefined && String(value).trim())
+    .map(String))];
 }
 
-function restoreSelectValue(select, previousValue, fallback = "") {
-  const hasPrevious = Array.from(select.options).some((option) => option.value === previousValue);
-  select.value = hasPrevious ? previousValue : fallback;
+function renderChecklist(filterKey) {
+  const config = checklistConfigs[filterKey];
+  const options = state.filterOptions[filterKey] || [];
+  const selected = state.filters[filterKey];
+  const summary = checklistSummary(filterKey, config.allLabel, config.label);
+  config.el().innerHTML = `
+    <button class="checklist-button" type="button" data-checklist-toggle="${filterKey}" aria-expanded="false">
+      <span>${summary}</span>
+    </button>
+    <div class="checklist-menu" role="group" aria-label="${config.allLabel}">
+      <div class="checklist-actions">
+        <button type="button" data-checklist-action="select" data-filter="${filterKey}">Select All</button>
+        <button type="button" data-checklist-action="clear" data-filter="${filterKey}">Clear</button>
+      </div>
+      <div class="checklist-options">
+        ${options.map((value) => `
+          <label class="checklist-option">
+            <input type="checkbox" data-checklist-input="${filterKey}" value="${value}" ${selected.has(String(value)) ? "checked" : ""}>
+            <span>${config.label(value)}</span>
+          </label>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderChecklists() {
+  Object.keys(checklistConfigs).forEach(renderChecklist);
+}
+
+function keepValidSelections(filterKey) {
+  const valid = new Set(state.filterOptions[filterKey]);
+  state.filters[filterKey] = new Set([...state.filters[filterKey]].filter((value) => valid.has(value)));
 }
 
 function populateFilters(filters) {
-  const previous = {
-    customer: els.customerFilter.value,
-    productType: els.productTypeFilter.value,
-    source: els.sourceFilter.value,
-    status: els.statusFilter.value || ACTIVE_STATUS_FILTER,
-    followUp: els.followUpFilter.value,
-  };
+  state.filterOptions.year = uniqueOptionValues(filters.years || []).sort((a, b) => Number(b) - Number(a));
+  state.filterOptions.customer = uniqueOptionValues(filters.customers || []).sort((a, b) => a.localeCompare(b));
+  state.filterOptions.productType = uniqueOptionValues(filters.product_types || []).sort((a, b) => a.localeCompare(b));
+  state.filterOptions.source = uniqueOptionValues(filters.source_types || []).sort((a, b) => sourceOrder.indexOf(a) - sourceOrder.indexOf(b));
+  state.filterOptions.status = uniqueOptionValues(filters.sales_order_statuses || []).sort((a, b) => a.localeCompare(b));
+  state.filterOptions.followUp = uniqueOptionValues(filters.follow_up_statuses || []).sort((a, b) => followUpOrder.indexOf(a) - followUpOrder.indexOf(b));
 
-  populateSelect(els.customerFilter, filters.customers || [], [{ value: "", label: "All customers" }]);
-  populateSelect(els.productTypeFilter, filters.product_types || [], [{ value: "", label: "All product types" }]);
-  populateSelect(els.sourceFilter, filters.source_types || [], [{ value: "", label: "All sources" }]);
-  populateSelect(els.statusFilter, filters.sales_order_statuses || [], [
-    { value: ACTIVE_STATUS_FILTER, label: "Active only" },
-    { value: "", label: "All statuses" },
-  ]);
-  populateSelect(els.followUpFilter, filters.follow_up_statuses || [], [{ value: "", label: "All follow-up" }]);
-
-  restoreSelectValue(els.customerFilter, previous.customer);
-  restoreSelectValue(els.productTypeFilter, previous.productType);
-  restoreSelectValue(els.sourceFilter, previous.source);
-  restoreSelectValue(els.statusFilter, previous.status, ACTIVE_STATUS_FILTER);
-  restoreSelectValue(els.followUpFilter, previous.followUp);
+  Object.keys(state.filters).forEach(keepValidSelections);
+  if (!state.filtersInitialized) {
+    state.filters.status = new Set(activeStatusValues());
+    state.filtersInitialized = true;
+  }
+  renderChecklists();
 }
 
 function dateOverlaps(row, fromFilter, toFilter) {
@@ -565,22 +696,19 @@ function dateOverlaps(row, fromFilter, toFilter) {
 
 function rowMatchesCurrentFilters(row, options = {}) {
   const soTerm = els.soFilter.value.trim().toLowerCase();
-  const customer = els.customerFilter.value;
-  const productType = els.productTypeFilter.value;
-  const source = els.sourceFilter.value;
-  const status = els.statusFilter.value;
-  const followUp = els.followUpFilter.value;
   const commitmentFrom = els.commitmentFromFilter.value;
   const commitmentTo = els.commitmentToFilter.value;
 
   const matchesSo = !soTerm || safeText(row.sales_order_number).toLowerCase().includes(soTerm);
-  const matchesCustomer = !customer || row.customer_name === customer;
-  const matchesProductType = !productType || row.product_type_label === productType;
-  const matchesSource = !source || row.source_type === source;
-  const matchesStatus = status === ACTIVE_STATUS_FILTER ? !isCancelled(row) : !status || row.sales_order_state === status;
-  const matchesFollowUp = options.skipFollowUp || !followUp || row.follow_up_status === followUp;
+  const matchesYear = options.skipYear || selectionMatches("year", row.order_year);
+  const matchesCustomer = options.skipCustomer || selectionMatches("customer", row.customer_name);
+  const matchesProductType = options.skipProductType || selectionMatches("productType", row.product_type_label);
+  const matchesSource = options.skipSource || selectionMatches("source", row.source_type);
+  const matchesStatus = options.skipStatus || selectionMatches("status", row.sales_order_state);
+  const matchesFollowUp = options.skipFollowUp || selectionMatches("followUp", row.follow_up_status);
 
   return matchesSo
+    && matchesYear
     && matchesCustomer
     && matchesProductType
     && matchesSource
@@ -592,12 +720,16 @@ function rowMatchesCurrentFilters(row, options = {}) {
 function applyFilters() {
   const rowsForTable = state.rows.filter((row) => rowMatchesCurrentFilters(row));
   const rowsForStatusStrip = state.rows.filter((row) => rowMatchesCurrentFilters(row, { skipFollowUp: true }));
+  const rowsForProductTypeStrip = state.rows.filter((row) => rowMatchesCurrentFilters(row, { skipProductType: true }));
+  const rowsForSourceStrip = state.rows.filter((row) => rowMatchesCurrentFilters(row, { skipSource: true }));
 
   state.filteredRows = sortedRows(rowsForTable);
 
-  renderKpis(state.filteredRows);
+  renderKpis(state.filteredRows, rowsForSourceStrip);
   renderStatusStrip(rowsForStatusStrip);
-  renderProductTypeStrip(state.filteredRows);
+  renderProductTypeStrip(rowsForProductTypeStrip);
+  renderSourceStrip(rowsForSourceStrip);
+  renderChecklists();
   renderTable(state.filteredRows);
 }
 
@@ -617,13 +749,14 @@ function exportFilteredRows() {
   }
 
   const columns = [
+    ["Year", "order_year"],
     ["SO Number", "sales_order_number"],
     ["Customer", "customer_name"],
     ["Product Type", "product_type_label"],
-    ["Commitment Date", (row) => dateOnly(row.commitment_date)],
-    ["Source Type", (row) => sourceLabels[row.source_type] || row.source_type],
+    ["Delivery Date", (row) => dateOnly(row.commitment_date)],
+    ["Source Type", (row) => sourceLabel(row)],
     ["SO Status", "sales_order_state"],
-    ["Follow-Up", (row) => followUpLabels[row.follow_up_status] || row.follow_up_status],
+    ["Follow-Up", (row) => followUpLabel(row.follow_up_status)],
     ["Ordered Qty", "ordered_qty"],
     ["Delivered Qty", "delivered_qty"],
     ["Invoiced Qty", "invoiced_qty"],
@@ -640,8 +773,11 @@ function exportFilteredRows() {
     ["Related IO MO Count", "io_backed_mo_count"],
     ["Related IO MO Qty", "io_backed_mo_qty"],
     ["Total Related MO Count", "total_related_mo_count"],
-    ["Total Related MO Qty", "total_related_mo_qty"],
-    ["Shared IO", "shared_io_count"],
+    ["Related MO Qty", "total_related_mo_qty"],
+    ["Produced MO Qty", "total_done_mo_qty"],
+    ["Manufacturing In Progress Qty", "total_in_progress_mo_qty"],
+    ["Shared IO", "shared_io_numbers"],
+    ["Shared IO Count", "shared_io_count"],
     ["Multi-IO SO Count", "multi_io_so_count"],
     ["Has Multi-IO SO", (row) => row.has_multi_io_so ? "Yes" : "No"],
     ["Linked SO Qty Basis", "linked_so_qty_basis"],
@@ -680,32 +816,69 @@ async function loadDashboard() {
     els.lastLoaded.textContent = `Loaded ${new Date().toLocaleString()}`;
   } catch (error) {
     els.lastLoaded.textContent = "Failed to load";
-    els.dashboardRows.innerHTML = `<tr><td colspan="21" class="empty-cell">${error.message}</td></tr>`;
+    els.dashboardRows.innerHTML = `<tr><td colspan="22" class="empty-cell">${error.message}</td></tr>`;
   }
 }
 
 function clearFilters() {
   els.soFilter.value = "";
-  els.customerFilter.value = "";
-  els.productTypeFilter.value = "";
   els.commitmentFromFilter.value = "";
   els.commitmentToFilter.value = "";
-  els.sourceFilter.value = "";
-  els.statusFilter.value = ACTIVE_STATUS_FILTER;
-  els.followUpFilter.value = "";
+  state.filters.year.clear();
+  state.filters.customer.clear();
+  state.filters.productType.clear();
+  state.filters.source.clear();
+  state.filters.followUp.clear();
+  state.filters.status = new Set(activeStatusValues());
   applyFilters();
 }
 
-[
-  els.soFilter,
-  els.customerFilter,
-  els.productTypeFilter,
-  els.commitmentFromFilter,
-  els.commitmentToFilter,
-  els.sourceFilter,
-  els.statusFilter,
-  els.followUpFilter,
-].forEach((el) => el.addEventListener("input", applyFilters));
+[els.soFilter, els.commitmentFromFilter, els.commitmentToFilter].forEach((el) => el.addEventListener("input", applyFilters));
+
+function handleChecklistClick(event) {
+  const toggle = event.target.closest("[data-checklist-toggle]");
+  if (toggle) {
+    const wrapper = toggle.closest(".checklist-filter");
+    const wasOpen = wrapper.classList.contains("is-open");
+    document.querySelectorAll(".checklist-filter.is-open").forEach((el) => {
+      el.classList.remove("is-open");
+      el.querySelector(".checklist-button")?.setAttribute("aria-expanded", "false");
+    });
+    wrapper.classList.toggle("is-open", !wasOpen);
+    toggle.setAttribute("aria-expanded", !wasOpen ? "true" : "false");
+    event.stopPropagation();
+    return;
+  }
+
+  const action = event.target.closest("[data-checklist-action]");
+  if (action) {
+    const filterKey = action.dataset.filter;
+    if (action.dataset.checklistAction === "select") state.filters[filterKey] = new Set(state.filterOptions[filterKey]);
+    else state.filters[filterKey].clear();
+    applyFilters();
+    event.stopPropagation();
+  }
+}
+
+function handleChecklistChange(event) {
+  const input = event.target.closest("[data-checklist-input]");
+  if (!input) return;
+  const selected = state.filters[input.dataset.checklistInput];
+  if (input.checked) selected.add(input.value);
+  else selected.delete(input.value);
+  applyFilters();
+}
+
+document.addEventListener("click", (event) => {
+  handleChecklistClick(event);
+  if (!event.target.closest(".checklist-filter")) {
+    document.querySelectorAll(".checklist-filter.is-open").forEach((el) => {
+      el.classList.remove("is-open");
+      el.querySelector(".checklist-button")?.setAttribute("aria-expanded", "false");
+    });
+  }
+});
+document.addEventListener("change", handleChecklistChange);
 
 els.refreshButton.addEventListener("click", loadDashboard);
 els.clearFiltersButton.addEventListener("click", clearFilters);
@@ -725,9 +898,29 @@ els.salesOrderTable.addEventListener("click", (event) => {
 els.statusStrip.addEventListener("click", (event) => {
   const chip = event.target.closest("[data-follow-up-status]");
   if (!chip) return;
-  const status = chip.dataset.followUpStatus;
-  els.followUpFilter.value = els.followUpFilter.value === status ? "" : status;
-  applyFilters();
+  setSingleFilter("followUp", chip.dataset.followUpStatus);
+});
+els.productTypeStrip.addEventListener("click", (event) => {
+  const chip = event.target.closest("[data-product-type]");
+  if (!chip) return;
+  setSingleFilter("productType", decodeURIComponent(chip.dataset.productType));
+});
+els.sourceStrip.addEventListener("click", (event) => {
+  const chip = event.target.closest("[data-source-type]");
+  if (!chip) return;
+  setSingleFilter("source", chip.dataset.sourceType);
+});
+els.kpiGrid.addEventListener("click", (event) => {
+  const card = event.target.closest("[data-source-type]");
+  if (!card) return;
+  setSingleFilter("source", card.dataset.sourceType);
+});
+els.kpiGrid.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const card = event.target.closest("[data-source-type]");
+  if (!card) return;
+  event.preventDefault();
+  setSingleFilter("source", card.dataset.sourceType);
 });
 els.dashboardRows.addEventListener("click", (event) => {
   const button = event.target.closest("[data-so]");

@@ -49,10 +49,11 @@
         <strong id="kpiAmountInvoice">-</strong>
         <div class="progress-track"><span id="barAmountInvoice"></span></div>
       </article>
-      <article class="kpi-card"><span class="kpi-label">From IO</span><strong id="kpiFromIo">-</strong></article>
-      <article class="kpi-card"><span class="kpi-label">Make To Order / JO</span><strong id="kpiMakeToOrder">-</strong></article>
-      <article class="kpi-card"><span class="kpi-label">From Stock</span><strong id="kpiFromStock">-</strong></article>
-      <article class="kpi-card"><span class="kpi-label">Unknown Source</span><strong id="kpiUnknownSource">-</strong></article>
+      <article class="kpi-card filterable-kpi" data-source-type="FROM_INTERNAL_ORDER" role="button" tabindex="0"><span class="kpi-label">From IO</span><strong id="kpiFromIo">-</strong></article>
+      <article class="kpi-card filterable-kpi" data-source-type="MAKE_TO_ORDER" role="button" tabindex="0"><span class="kpi-label">From Manufacture Order</span><strong id="kpiMakeToOrder">-</strong></article>
+      <article class="kpi-card filterable-kpi" data-source-type="FROM_STOCK" role="button" tabindex="0"><span class="kpi-label">From Stock</span><strong id="kpiFromStock">-</strong></article>
+      <article class="kpi-card filterable-kpi" data-source-type="MIXED_SOURCE" role="button" tabindex="0"><span class="kpi-label">From IO &amp; Manufacture Order</span><strong id="kpiMixedSource">-</strong></article>
+      <article class="kpi-card filterable-kpi" id="unknownSourceCard" data-source-type="UNKNOWN_SOURCE" role="button" tabindex="0"><span class="kpi-label">Unknown Source</span><strong id="kpiUnknownSource">-</strong></article>
     </section>
 
     <section class="filter-panel" aria-label="Sales Order filters">
@@ -60,50 +61,44 @@
         <span>SO Number</span>
         <input id="soFilter" type="search" placeholder="Search SO">
       </label>
-      <label>
+      <div class="filter-field">
+        <span>Year</span>
+        <div class="checklist-filter" id="yearFilter"></div>
+      </div>
+      <div class="filter-field">
         <span>Customer</span>
-        <select id="customerFilter">
-          <option value="">All customers</option>
-        </select>
-      </label>
-      <label>
+        <div class="checklist-filter" id="customerFilter"></div>
+      </div>
+      <div class="filter-field">
         <span>Product Type</span>
-        <select id="productTypeFilter">
-          <option value="">All product types</option>
-        </select>
-      </label>
+        <div class="checklist-filter" id="productTypeFilter"></div>
+      </div>
       <label>
-        <span>Commitment From</span>
+        <span>Delivery Date From</span>
         <input id="commitmentFromFilter" type="date">
       </label>
       <label>
-        <span>Commitment To</span>
+        <span>Delivery Date To</span>
         <input id="commitmentToFilter" type="date">
       </label>
-      <label>
+      <div class="filter-field">
         <span>Source Type</span>
-        <select id="sourceFilter">
-          <option value="">All sources</option>
-        </select>
-      </label>
-      <label>
+        <div class="checklist-filter" id="sourceFilter"></div>
+      </div>
+      <div class="filter-field">
         <span>SO Status</span>
-        <select id="statusFilter">
-          <option value="__ACTIVE__">Active only</option>
-          <option value="">All statuses</option>
-        </select>
-      </label>
-      <label>
+        <div class="checklist-filter" id="statusFilter"></div>
+      </div>
+      <div class="filter-field">
         <span>Follow-Up</span>
-        <select id="followUpFilter">
-          <option value="">All follow-up</option>
-        </select>
-      </label>
+        <div class="checklist-filter" id="followUpFilter"></div>
+      </div>
       <button class="secondary-button" id="clearFiltersButton" type="button">Clear</button>
     </section>
 
     <section class="status-strip" id="statusStrip" aria-label="Follow-up status counts"></section>
     <section class="status-strip product-type-strip" id="productTypeStrip" aria-label="Product type counts"></section>
+    <section class="status-strip source-strip" id="sourceStrip" aria-label="Source type counts"></section>
 
     <section class="table-panel" aria-label="Sales Order traceability table">
       <div class="table-toolbar">
@@ -120,13 +115,14 @@
               <th><button class="sort-button" type="button" data-sort="sales_order_number">SO Number</button></th>
               <th><button class="sort-button" type="button" data-sort="customer_name">Customer</button></th>
               <th><button class="sort-button" type="button" data-sort="product_type_label">Product Type</button></th>
-              <th><button class="sort-button" type="button" data-sort="commitment_date">Commitment Date</button></th>
+              <th><button class="sort-button" type="button" data-sort="commitment_date">Delivery Date</button></th>
               <th><button class="sort-button" type="button" data-sort="source_type">Source Type</button></th>
               <th><button class="sort-button" type="button" data-sort="sales_order_state">SO Status</button></th>
               <th><button class="sort-button" type="button" data-sort="follow_up_status">Follow-Up</button></th>
-              <th class="num"><button class="sort-button" type="button" data-sort="total_related_mo_count">Total Related MO Count</button></th>
-              <th class="num"><button class="sort-button" type="button" data-sort="total_related_mo_qty">Total Related MO Qty</button></th>
-              <th class="num"><button class="sort-button" type="button" data-sort="shared_io_count">Shared IO Count</button></th>
+              <th class="num"><button class="sort-button" type="button" data-sort="total_related_mo_qty">Related MO Qty</button></th>
+              <th class="num"><button class="sort-button" type="button" data-sort="total_done_mo_qty">Produced MO Qty</button></th>
+              <th class="num"><button class="sort-button" type="button" data-sort="total_in_progress_mo_qty">Manufacturing In Progress Qty</button></th>
+              <th><button class="sort-button" type="button" data-sort="shared_io_numbers">Shared IO</button></th>
               <th class="num"><button class="sort-button" type="button" data-sort="ordered_qty">Ordered Qty</button></th>
               <th class="num"><button class="sort-button" type="button" data-sort="delivered_qty">Delivered Qty</button></th>
               <th class="num"><button class="sort-button" type="button" data-sort="invoiced_qty">Invoiced Qty</button></th>
@@ -141,7 +137,7 @@
           </thead>
           <tbody id="dashboardRows">
             <tr>
-              <td colspan="21" class="empty-cell">Loading dashboard data...</td>
+              <td colspan="22" class="empty-cell">Loading dashboard data...</td>
             </tr>
           </tbody>
         </table>

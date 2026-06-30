@@ -266,3 +266,15 @@ Audit SQL for this phase is stored in:
 ```text
 docs/06_Investigations/IO_BACKED_MO_CORRELATION_AUDIT.sql
 ```
+## Phase 2A.1 Sales Order Traceability Dashboard Refinement
+
+- Sales Order Traceability view refined for operational usability.
+- Added Year filter using `sale_order.create_date`.
+- Checklist filters added for categorical filters.
+- Delivery Date label replaces Commitment Date label in UI.
+- Source Type and Follow-Up labels revised to business-friendly terms.
+- Product Type and Source chips/cards are clickable filters.
+- MO Count removed from main table.
+- Shared IO now shows actual shared IO reference values.
+- MO Qty remains traceability/correlation-only, with done/in-progress distinction.
+- No profitability, cost, AR, margin, or allocation added.

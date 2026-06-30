@@ -198,6 +198,7 @@ io_mo_rows AS (
        )
        AND mo.manufacturing_source_type = 'IO_BASED_MO'
        AND mo.is_valid_for_metrics
+       AND LOWER(COALESCE(mo.manufacturing_order_state, '')) NOT IN ('cancel', 'cancelled')
 ),
 io_mo_agg AS (
     SELECT
@@ -205,6 +206,14 @@ io_mo_agg AS (
         internal_order_number,
         COUNT(DISTINCT manufacturing_order_id) AS io_mo_count,
         COALESCE(SUM(manufacturing_quantity) FILTER (WHERE manufacturing_order_id IS NOT NULL), 0)::numeric AS io_mo_qty,
+        COALESCE(SUM(manufacturing_quantity) FILTER (
+            WHERE manufacturing_order_id IS NOT NULL
+              AND LOWER(COALESCE(manufacturing_order_state, '')) = 'done'
+        ), 0)::numeric AS io_done_mo_qty,
+        COALESCE(SUM(manufacturing_quantity) FILTER (
+            WHERE manufacturing_order_id IS NOT NULL
+              AND LOWER(COALESCE(manufacturing_order_state, '')) NOT IN ('done', 'cancel', 'cancelled')
+        ), 0)::numeric AS io_in_progress_mo_qty,
         JSONB_AGG(
             JSONB_BUILD_OBJECT(
                 'manufacturing_order_id', manufacturing_order_id,
@@ -227,6 +236,8 @@ io_correlation_by_internal_order AS (
         qty.internal_order_number,
         COALESCE(mo.io_mo_count, 0) AS io_mo_count,
         COALESCE(mo.io_mo_qty, 0)::numeric AS io_mo_qty,
+        COALESCE(mo.io_done_mo_qty, 0)::numeric AS io_done_mo_qty,
+        COALESCE(mo.io_in_progress_mo_qty, 0)::numeric AS io_in_progress_mo_qty,
         COALESCE(qty.linked_so_count, 0) AS linked_so_count,
         COALESCE(qty.multi_io_so_count, 0) AS multi_io_so_count,
         COALESCE(qty.has_multi_io_so, FALSE) AS has_multi_io_so,
@@ -253,11 +264,15 @@ so_io_correlation_agg AS (
     SELECT
         links.sales_order_id,
         COUNT(DISTINCT corr.internal_order_id) FILTER (WHERE corr.linked_so_count > 1) AS shared_io_count,
+        STRING_AGG(DISTINCT corr.internal_order_number, ', ' ORDER BY corr.internal_order_number)
+            FILTER (WHERE corr.linked_so_count > 1) AS shared_io_numbers,
         COALESCE(MAX(multi_context.multi_io_so_count), 0) AS multi_io_so_count,
         COALESCE(BOOL_OR(multi_context.has_multi_io_so), FALSE) AS has_multi_io_so,
         'FULL_SO_QTY_UNALLOCATED'::text AS linked_so_qty_basis,
         COALESCE(SUM(corr.io_mo_count), 0)::integer AS io_backed_mo_count,
         COALESCE(SUM(corr.io_mo_qty), 0)::numeric AS io_backed_mo_qty,
+        COALESCE(SUM(corr.io_done_mo_qty), 0)::numeric AS io_backed_done_mo_qty,
+        COALESCE(SUM(corr.io_in_progress_mo_qty), 0)::numeric AS io_backed_in_progress_mo_qty,
         CASE
             WHEN COUNT(corr.internal_order_id) = 0 THEN 'NO_IO_MO_FOUND'
             WHEN BOOL_OR(corr.io_qty_correlation_status = 'IO_QTY_UNALLOCATED_MULTI_IO_SO') THEN 'IO_QTY_UNALLOCATED_MULTI_IO_SO'
@@ -274,6 +289,8 @@ so_io_correlation_agg AS (
                 'internal_order_number', corr.internal_order_number,
                 'io_mo_count', corr.io_mo_count,
                 'io_mo_qty', corr.io_mo_qty,
+                'io_done_mo_qty', corr.io_done_mo_qty,
+                'io_in_progress_mo_qty', corr.io_in_progress_mo_qty,
                 'linked_so_count', corr.linked_so_count,
                 'multi_io_so_count', corr.multi_io_so_count,
                 'has_multi_io_so', corr.has_multi_io_so,
@@ -299,6 +316,12 @@ mo_agg AS (
         inferred_sales_order_id AS sales_order_id,
         COUNT(DISTINCT manufacturing_order_id) AS direct_mo_count,
         COALESCE(SUM(COALESCE(manufacturing_quantity, 0)), 0)::numeric AS direct_mo_qty,
+        COALESCE(SUM(COALESCE(manufacturing_quantity, 0)) FILTER (
+            WHERE LOWER(COALESCE(manufacturing_order_state, '')) = 'done'
+        ), 0)::numeric AS direct_done_mo_qty,
+        COALESCE(SUM(COALESCE(manufacturing_quantity, 0)) FILTER (
+            WHERE LOWER(COALESCE(manufacturing_order_state, '')) NOT IN ('done', 'cancel', 'cancelled')
+        ), 0)::numeric AS direct_in_progress_mo_qty,
         COUNT(DISTINCT manufacturing_order_id) FILTER (WHERE manufacturing_source_type = 'JO_BASED_MO') AS job_order_mo_count,
         JSONB_AGG(
             DISTINCT JSONB_BUILD_OBJECT(
@@ -317,6 +340,7 @@ mo_agg AS (
     WHERE inferred_sales_order_id IS NOT NULL
       AND is_valid_for_metrics
       AND manufacturing_source_type IN ('SO_BASED_MO', 'JO_BASED_MO')
+      AND LOWER(COALESCE(manufacturing_order_state, '')) NOT IN ('cancel', 'cancelled')
     GROUP BY inferred_sales_order_id
 ),
 accounting_agg AS (
@@ -347,6 +371,8 @@ so_base AS (
         so.company_id AS company_id,
         so.partner_id AS customer_name,
         so.date_order AS order_date,
+        so.create_date AS order_create_date,
+        EXTRACT(YEAR FROM so.create_date)::integer AS order_year,
         so.commitment_date,
         so.state AS sales_order_state,
         UPPER(COALESCE(so.state, 'UNKNOWN')) AS normalized_status,
@@ -377,6 +403,8 @@ SELECT
     so.company_id,
     so.customer_name,
     so.order_date,
+    so.order_create_date,
+    so.order_year,
     so.commitment_date,
     so.sales_order_state,
     so.normalized_status,
@@ -416,11 +444,18 @@ SELECT
     COALESCE(mo.job_order_mo_count, 0) AS job_order_mo_count,
     COALESCE(mo.direct_mo_count, 0) AS direct_mo_count,
     COALESCE(mo.direct_mo_qty, 0) AS direct_mo_qty,
+    COALESCE(mo.direct_done_mo_qty, 0) AS direct_done_mo_qty,
+    COALESCE(mo.direct_in_progress_mo_qty, 0) AS direct_in_progress_mo_qty,
     COALESCE(io_corr.io_backed_mo_count, 0) AS io_backed_mo_count,
     COALESCE(io_corr.io_backed_mo_qty, 0) AS io_backed_mo_qty,
+    COALESCE(io_corr.io_backed_done_mo_qty, 0) AS io_backed_done_mo_qty,
+    COALESCE(io_corr.io_backed_in_progress_mo_qty, 0) AS io_backed_in_progress_mo_qty,
     COALESCE(mo.direct_mo_count, 0) + COALESCE(io_corr.io_backed_mo_count, 0) AS total_related_mo_count,
     COALESCE(mo.direct_mo_qty, 0) + COALESCE(io_corr.io_backed_mo_qty, 0) AS total_related_mo_qty,
+    COALESCE(mo.direct_done_mo_qty, 0) + COALESCE(io_corr.io_backed_done_mo_qty, 0) AS total_done_mo_qty,
+    COALESCE(mo.direct_in_progress_mo_qty, 0) + COALESCE(io_corr.io_backed_in_progress_mo_qty, 0) AS total_in_progress_mo_qty,
     COALESCE(io_corr.shared_io_count, 0) AS shared_io_count,
+    io_corr.shared_io_numbers,
     COALESCE(io_corr.multi_io_so_count, 0) AS multi_io_so_count,
     COALESCE(io_corr.has_multi_io_so, FALSE) AS has_multi_io_so,
     COALESCE(io_corr.linked_so_qty_basis, 'FULL_SO_QTY_UNALLOCATED') AS linked_so_qty_basis,
