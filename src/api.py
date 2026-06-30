@@ -509,6 +509,7 @@ async def sales_order_dashboard_detail(sales_order_id: int):
     sql = text("""
         SELECT
             sales_order_id,
+            sales_order_number,
             sales_order_lines,
             manufacturing_orders,
             io_manufacturing_correlations

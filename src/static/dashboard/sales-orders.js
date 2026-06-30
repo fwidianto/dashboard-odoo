@@ -5,6 +5,7 @@ const state = {
   rows: [],
   filteredRows: [],
   expanded: new Set(),
+  detailCache: new Map(),
   detailLoading: new Set(),
   sortKey: "commitment_date",
 sortDirection: "asc",
@@ -521,56 +522,81 @@ function renderIoBackedManufacturing(correlations) {
   `;
 }
 
-function detailRow(row) {
+function detailContent(row, options = {}) {
+  if (options.error) {
+    return '<div class="detail-empty">Failed to load details.</div>';
+  }
+  if (options.loading || !row.detail_loaded) {
+    return '<div class="detail-empty">Loading details...</div>';
+  }
   return `
-    <tr class="detail-row">
-      <td colspan="22">
         <div class="detail-sections">
           <div class="detail-section">
             <h3>SO Lines</h3>
-            ${row.detail_loaded ? renderLineRows(row.sales_order_lines || []) : '<div class="detail-empty">Loading SO lines...</div>'}
+            ${renderLineRows(row.sales_order_lines || [])}
           </div>
           <div class="detail-section">
             <h3>Manufacturing Orders / JO</h3>
-            ${row.detail_loaded ? renderManufacturingOrders(row.manufacturing_orders || []) : '<div class="detail-empty">Loading Manufacturing Orders / JO...</div>'}
+            ${renderManufacturingOrders(row.manufacturing_orders || [])}
           </div>
           <div class="detail-section">
             <h3>IO-backed Manufacturing</h3>
-            ${row.detail_loaded ? renderIoBackedManufacturing(row.io_manufacturing_correlations || []) : '<div class="detail-empty">Loading IO-backed Manufacturing...</div>'}
+            ${renderIoBackedManufacturing(row.io_manufacturing_correlations || [])}
           </div>
         </div>
+  `;
+}
+
+function detailRow(row, options = {}) {
+  return `
+    <tr class="detail-row" data-detail-so-id="${row.sales_order_id}">
+      <td colspan="22">
+        ${detailContent(row, options)}
       </td>
     </tr>
   `;
 }
 
 async function loadRowDetails(soId) {
-  const row = state.rows.find((item) => String(item.sales_order_id) === String(soId));
-  if (!row || row.detail_loaded || state.detailLoading.has(String(soId))) return;
-  state.detailLoading.add(String(soId));
+  const key = String(soId);
+  const row = state.rows.find((item) => String(item.sales_order_id) === key);
+  if (!row) return;
+
+  const detailRowEl = document.querySelector(`tr[data-detail-so-id="${CSS.escape(key)}"]`);
+  if (state.detailCache.has(key)) {
+    Object.assign(row, state.detailCache.get(key), { detail_loaded: true });
+    if (detailRowEl) detailRowEl.querySelector("td").innerHTML = detailContent(row);
+    return;
+  }
+  if (state.detailLoading.has(key)) return;
+
+  state.detailLoading.add(key);
   try {
-    const response = await fetch(`/api/dashboard/sales-orders/${encodeURIComponent(soId)}/details`, { headers: { Accept: "application/json" } });
+    const response = await fetch(`/api/dashboard/sales-orders/${encodeURIComponent(key)}/details`, { headers: { Accept: "application/json" } });
     if (!response.ok) throw new Error(`Detail request failed: ${response.status}`);
     const detail = await response.json();
-    row.sales_order_lines = detail.sales_order_lines || [];
-    row.manufacturing_orders = detail.manufacturing_orders || [];
-    row.io_manufacturing_correlations = detail.io_manufacturing_correlations || [];
-    row.detail_loaded = true;
+    const cached = {
+      sales_order_lines: detail.sales_order_lines || [],
+      manufacturing_orders: detail.manufacturing_orders || [],
+      io_manufacturing_correlations: detail.io_manufacturing_correlations || [],
+    };
+    state.detailCache.set(key, cached);
+    Object.assign(row, cached, { detail_loaded: true });
+    const currentDetailRow = document.querySelector(`tr[data-detail-so-id="${CSS.escape(key)}"]`);
+    if (currentDetailRow) currentDetailRow.querySelector("td").innerHTML = detailContent(row);
   } catch (error) {
-    row.sales_order_lines = [];
-    row.manufacturing_orders = [];
-    row.io_manufacturing_correlations = [];
-    row.detail_loaded = true;
     console.error(error);
+    const currentDetailRow = document.querySelector(`tr[data-detail-so-id="${CSS.escape(key)}"]`);
+    if (currentDetailRow) currentDetailRow.querySelector("td").innerHTML = detailContent(row, { error: true });
   } finally {
-    state.detailLoading.delete(String(soId));
-    renderTable(state.filteredRows);
+    state.detailLoading.delete(key);
   }
 }
+
 function tableRow(row) {
   const expanded = state.expanded.has(String(row.sales_order_id));
   return `
-    <tr>
+    <tr data-row-so-id="${row.sales_order_id}">
       <td><button class="row-action" type="button" data-so="${row.sales_order_id}" title="Toggle details" aria-label="Toggle details">${expanded ? "-" : "+"}</button></td>
       <td class="sales-order-number">${safeText(row.sales_order_number)}</td>
       <td>${safeText(row.customer_name)}</td>
@@ -594,7 +620,7 @@ function tableRow(row) {
       <td class="progress-cell">${miniProgress(row.amount_delivery_progress_ratio)}</td>
       <td class="progress-cell">${miniProgress(row.amount_invoice_progress_ratio)}</td>
     </tr>
-    ${expanded ? detailRow(row) : ""}
+    ${expanded ? detailRow(row, { loading: !row.detail_loaded }) : ""}
   `;
 }
 
@@ -851,6 +877,7 @@ async function loadDashboard() {
     const payload = await response.json();
     state.rows = (payload.rows || []).map((row) => ({ ...row, detail_loaded: false }));
     state.expanded.clear();
+    state.detailCache.clear();
     state.detailLoading.clear();
     populateFilters(payload.filters || {});
     applyFilters();
@@ -995,12 +1022,30 @@ els.dashboardRows.addEventListener("click", (event) => {
   const button = event.target.closest("[data-so]");
   if (!button) return;
   const soId = String(button.dataset.so);
-  if (state.expanded.has(soId)) {
+  const mainRow = button.closest("tr[data-row-so-id]");
+  if (!mainRow) return;
+
+  const existingDetail = els.dashboardRows.querySelector(`tr[data-detail-so-id="${CSS.escape(soId)}"]`);
+  if (existingDetail) {
+    existingDetail.remove();
     state.expanded.delete(soId);
-  } else {
-    state.expanded.add(soId);
+    button.textContent = "+";
+    return;
   }
-  renderTable(state.filteredRows);
+
+  const row = state.rows.find((item) => String(item.sales_order_id) === soId);
+  if (!row) return;
+  state.expanded.add(soId);
+  button.textContent = "-";
+  if (state.detailCache.has(soId)) {
+    Object.assign(row, state.detailCache.get(soId), { detail_loaded: true });
+    mainRow.insertAdjacentHTML("afterend", detailRow(row));
+    return;
+  }
+
+  row.detail_loaded = false;
+  mainRow.insertAdjacentHTML("afterend", detailRow(row, { loading: true }));
+  loadRowDetails(soId);
 });
 
 updateSortIndicators();
