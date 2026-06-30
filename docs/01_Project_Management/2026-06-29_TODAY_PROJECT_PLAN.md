@@ -310,6 +310,7 @@ docs/06_Investigations/IO_BACKED_MO_CORRELATION_AUDIT.sql
 - This is not accounting COGS, gross profit, AR/payment, margin, estimator variance, or cost allocation.
 - IO-backed actual cost and IO-correlated RKB remain correlation-only unless allocation rules are approved.
 - RKB, ROP, and Purchase Order detail still belongs in a separate future report view.
+
 ## Phase 2A.1 Quantity-Based Actual Cost Correction
 
 - Actual Cost was corrected to avoid IO overlap.
@@ -320,3 +321,13 @@ docs/06_Investigations/IO_BACKED_MO_CORRELATION_AUDIT.sql
 - Kontribusi remains operational contribution, not accounting gross profit or COGS.
 - Local databases must sync `mrp.production.x_studio_cost_of_analysis` before reapplying the SQL views.
 - Actual cost calculations are quantity-based and apple-to-apple.
+
+## Phase 2A.1 IO RKB Cost Pool Allocation Correction
+
+- IO-backed RKB Planned Cost is no longer assigned by dividing the full IO RKB only across Sales Orders that currently reference the IO.
+- Internal Orders can produce finished goods before later Sales Orders exist, so IO RKB is treated as a production cost pool.
+- `IO RKB Planned Cost per Unit = Total IO RKB Planned Cost / IO Finished Goods Qty`.
+- `Allocated IO RKB Planned Cost for SO = SO ordered quantity linked to IO x IO RKB Planned Cost per Unit`.
+- Denominator priority uses related IO Manufacturing Order finished-good quantity from non-cancelled MOs; if that quantity basis is missing or zero, the dashboard does not allocate and flags `IO_RKB_ALLOCATION_NO_FG_QTY_BASIS`.
+- Final SO `rkb_planned_cost` is `direct_rkb_planned_cost + io_correlated_rkb_planned_cost_allocated`.
+- Full IO RKB remains visible only as audit or correlation value, with remaining pool shown as unallocated until later SO consumption exists.
