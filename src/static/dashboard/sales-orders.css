@@ -9,7 +9,7 @@
 }
 
 .sales-dashboard table {
-  min-width: 2320px;
+  min-width: 2700px;
 }
 
 .sales-order-number {
@@ -263,4 +263,9 @@ button.status-chip.is-active {
 
 .source-strip {
   margin-top: -8px;
+}
+
+.contribution-negative {
+  color: var(--danger);
+  font-weight: 760;
 }

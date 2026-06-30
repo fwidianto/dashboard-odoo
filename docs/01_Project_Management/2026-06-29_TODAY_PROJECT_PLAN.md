@@ -297,3 +297,16 @@ docs/06_Investigations/IO_BACKED_MO_CORRELATION_AUDIT.sql
 - Manufacturing Orders remain quantity/status traceability only unless a valid monetary source exists.
 - Future report direction: separate Sales Order / Internal Order -> RKB -> ROP / Procurement Request -> Purchase Order -> Receipt / Stock -> Manufacturing Order -> Finished Good flow.
 - No profitability, cost, AR, margin, or allocation added.
+
+## Phase 2A.1 Controlled Contribution Metrics
+
+- Sales Order dashboard now includes controlled contribution metrics, not a full profitability engine.
+- RKB Amount is treated as Planned Cost.
+- Actual Cost comes from `mrp_production.x_studio_cost_of_analysis`; this field is already configured for sync as `Cost Analysis`, and databases without the column must sync `mrp.production` before reapplying SQL views.
+- Sales Amount IDR uses the existing countable Sales Order line basis, excluding detectable down-payment, placeholder, and non-product/non-service lines.
+- RKB Kontribusi = Sales Amount IDR - RKB Planned Cost.
+- Kontribusi Aktual = Sales Amount IDR - Actual Cost.
+- Contribution percent is calculated against Sales Amount IDR and is not capped.
+- This is not accounting COGS, gross profit, AR/payment, margin, estimator variance, or cost allocation.
+- IO-backed actual cost and IO-correlated RKB remain correlation-only unless allocation rules are approved.
+- RKB, ROP, and Purchase Order detail still belongs in a separate future report view.

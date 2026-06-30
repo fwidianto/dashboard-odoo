@@ -214,6 +214,19 @@ function formatPercent(value) {
   return `${(Number(value) * 100).toFixed(1)}%`;
 }
 
+function formatContributionPercent(value) {
+  if (value === null || value === undefined || value === "") return "-";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "-";
+  return `${(numeric * 100).toFixed(1)}%`;
+}
+
+function contributionClass(value) {
+  if (value === null || value === undefined || value === "") return "";
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric < 0 ? "contribution-negative" : "";
+}
+
 function progressWidth(value) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) {
     return "0%";
@@ -466,7 +479,7 @@ function renderManufacturingOrders(orders) {
   }
   return `
     <table class="detail-table">
-      <thead><tr><th>MO Number</th><th>Status</th><th>Product</th><th class="num">Qty</th><th>Origin</th><th>JO</th><th>Source</th></tr></thead>
+      <thead><tr><th>MO Number</th><th>Status</th><th>Product</th><th class="num">Qty</th><th class="num">Actual Cost</th><th>Cost Basis</th><th>Origin</th><th>JO</th><th>Source</th></tr></thead>
       <tbody>
         ${orders.map((order) => `
           <tr>
@@ -474,6 +487,8 @@ function renderManufacturingOrders(orders) {
             <td>${safeText(order.manufacturing_order_state)}</td>
             <td>${safeText(order.manufactured_product_name)}</td>
             <td class="num">${formatQty(order.manufacturing_quantity)}</td>
+            <td class="num">${formatAmount(order.actual_cost)}</td>
+            <td>${safeText(order.cost_basis)}</td>
             <td>${safeText(order.origin)}</td>
             <td>${safeText(order.job_order_number)}</td>
             <td>${safeText(order.manufacturing_source_type)}</td>
@@ -495,6 +510,7 @@ function renderIoBackedManufacturing(correlations) {
           <th>Internal Order Number</th>
           <th class="num">Related IO MO Count</th>
           <th class="num">Related IO MO Qty</th>
+          <th class="num">IO Actual Cost</th>
           <th class="num">Linked SO Count</th>
           <th class="num">Multi-IO SO Count</th>
           <th>Linked SO Qty Basis</th>
@@ -509,6 +525,7 @@ function renderIoBackedManufacturing(correlations) {
             <td>${safeText(item.internal_order_number)}</td>
             <td class="num">${formatNumber(item.io_mo_count)}</td>
             <td class="num">${formatQty(item.io_mo_qty)}</td>
+            <td class="num">${formatAmount(item.io_actual_cost)}</td>
             <td class="num">${formatNumber(item.linked_so_count)}</td>
             <td class="num">${formatNumber(item.multi_io_so_count)}</td>
             <td>${safeText(item.linked_so_qty_basis)}</td>
@@ -550,7 +567,7 @@ function detailContent(row, options = {}) {
 function detailRow(row, options = {}) {
   return `
     <tr class="detail-row" data-detail-so-id="${row.sales_order_id}">
-      <td colspan="22">
+      <td colspan="26">
         ${detailContent(row, options)}
       </td>
     </tr>
@@ -615,6 +632,10 @@ function tableRow(row) {
       <td class="progress-cell">${miniProgress(row.qty_delivery_progress_ratio)}</td>
       <td class="progress-cell">${miniProgress(row.qty_invoice_progress_ratio)}</td>
       <td class="num">${formatAmount(row.ordered_amount_idr)}</td>
+      <td class="num">${formatAmount(row.rkb_planned_cost)}</td>
+      <td class="num ${contributionClass(row.rkb_kontribusi_percent)}">${formatContributionPercent(row.rkb_kontribusi_percent)}</td>
+      <td class="num">${formatAmount(row.actual_cost)}</td>
+      <td class="num ${contributionClass(row.kontribusi_aktual_percent)}">${formatContributionPercent(row.kontribusi_aktual_percent)}</td>
       <td class="num">${formatAmount(row.delivered_amount_idr)}</td>
       <td class="num">${formatAmount(row.invoiced_amount_idr)}</td>
       <td class="progress-cell">${miniProgress(row.amount_delivery_progress_ratio)}</td>
@@ -634,6 +655,21 @@ function sortableValue(row, key) {
     "ordered_amount",
     "delivered_amount",
     "invoiced_amount",
+    "ordered_amount_idr",
+    "delivered_amount_idr",
+    "invoiced_amount_idr",
+    "sales_amount_idr",
+    "rkb_planned_cost",
+    "direct_rkb_planned_cost",
+    "io_correlated_rkb_planned_cost",
+    "direct_actual_cost",
+    "io_backed_actual_cost",
+    "total_related_actual_cost",
+    "actual_cost",
+    "rkb_kontribusi_amount",
+    "rkb_kontribusi_percent",
+    "kontribusi_aktual_amount",
+    "kontribusi_aktual_percent",
     "amount_delivery_progress_ratio",
     "amount_invoice_progress_ratio",
     "direct_mo_count",
@@ -675,7 +711,7 @@ function renderTable(rows) {
   updateSortIndicators();
   els.rowCount.textContent = `${formatNumber(rows.length)} rows`;
   if (!rows.length) {
-    els.dashboardRows.innerHTML = '<tr><td colspan="22" class="empty-cell">No Sales Orders match the current filters.</td></tr>';
+    els.dashboardRows.innerHTML = '<tr><td colspan="26" class="empty-cell">No Sales Orders match the current filters.</td></tr>';
     return;
   }
   els.dashboardRows.innerHTML = rows.map(tableRow).join("");
@@ -829,6 +865,12 @@ function exportFilteredRows() {
     ["Qty Delivery %", (row) => formatPercent(row.qty_delivery_progress_ratio)],
     ["Qty Invoice %", (row) => formatPercent(row.qty_invoice_progress_ratio)],
     ["Ordered Amount IDR", "ordered_amount_idr"],
+    ["Planned Cost IDR", "rkb_planned_cost"],
+    ["RKB Kontribusi %", (row) => formatContributionPercent(row.rkb_kontribusi_percent)],
+    ["Actual Cost IDR", "actual_cost"],
+    ["Kontribusi Aktual %", (row) => formatContributionPercent(row.kontribusi_aktual_percent)],
+    ["RKB Cost Basis", "rkb_cost_basis"],
+    ["Contribution Warning", "contribution_basis_warning"],
     ["Delivered Amount IDR", "delivered_amount_idr"],
     ["Invoiced Amount IDR", "invoiced_amount_idr"],
     ["Amount Delivery %", (row) => formatPercent(row.amount_delivery_progress_ratio)],
@@ -884,7 +926,7 @@ async function loadDashboard() {
     els.lastLoaded.textContent = `Loaded ${new Date().toLocaleString()}`;
   } catch (error) {
     els.lastLoaded.textContent = "Failed to load";
-    els.dashboardRows.innerHTML = `<tr><td colspan="22" class="empty-cell">${error.message}</td></tr>`;
+    els.dashboardRows.innerHTML = `<tr><td colspan="26" class="empty-cell">${error.message}</td></tr>`;
   }
 }
 

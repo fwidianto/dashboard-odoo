@@ -220,6 +220,7 @@ io_mo_rows AS (
         mo.manufacturing_order_state,
         mo.manufactured_product_name,
         COALESCE(mo.manufacturing_quantity, 0)::numeric AS manufacturing_quantity,
+        COALESCE(mo.cost_of_analysis, 0)::numeric AS cost_of_analysis,
         mo.manufacturing_origin,
         mo.normalized_jo_number,
         mo.manufacturing_source_type
@@ -251,6 +252,7 @@ io_mo_agg AS (
             WHERE manufacturing_order_id IS NOT NULL
               AND LOWER(COALESCE(manufacturing_order_state, '')) NOT IN ('done', 'cancel', 'cancelled')
         ), 0)::numeric AS io_in_progress_mo_qty,
+        COALESCE(SUM(cost_of_analysis) FILTER (WHERE manufacturing_order_id IS NOT NULL), 0)::numeric AS io_actual_cost,
         JSONB_AGG(
             JSONB_BUILD_OBJECT(
                 'manufacturing_order_id', manufacturing_order_id,
@@ -258,6 +260,8 @@ io_mo_agg AS (
                 'manufacturing_order_state', manufacturing_order_state,
                 'manufactured_product_name', manufactured_product_name,
                 'manufacturing_quantity', manufacturing_quantity,
+                'actual_cost', cost_of_analysis,
+                'cost_basis', 'MRP_COST_OF_ANALYSIS',
                 'origin', manufacturing_origin,
                 'job_order_number', normalized_jo_number,
                 'manufacturing_source_type', manufacturing_source_type
@@ -275,6 +279,7 @@ io_correlation_by_internal_order AS (
         COALESCE(mo.io_mo_qty, 0)::numeric AS io_mo_qty,
         COALESCE(mo.io_done_mo_qty, 0)::numeric AS io_done_mo_qty,
         COALESCE(mo.io_in_progress_mo_qty, 0)::numeric AS io_in_progress_mo_qty,
+        COALESCE(mo.io_actual_cost, 0)::numeric AS io_actual_cost,
         COALESCE(qty.linked_so_count, 0) AS linked_so_count,
         COALESCE(qty.multi_io_so_count, 0) AS multi_io_so_count,
         COALESCE(qty.has_multi_io_so, FALSE) AS has_multi_io_so,
@@ -310,6 +315,7 @@ so_io_correlation_agg AS (
         COALESCE(SUM(corr.io_mo_qty), 0)::numeric AS io_backed_mo_qty,
         COALESCE(SUM(corr.io_done_mo_qty), 0)::numeric AS io_backed_done_mo_qty,
         COALESCE(SUM(corr.io_in_progress_mo_qty), 0)::numeric AS io_backed_in_progress_mo_qty,
+        COALESCE(SUM(corr.io_actual_cost), 0)::numeric AS io_backed_actual_cost,
         CASE
             WHEN COUNT(corr.internal_order_id) = 0 THEN 'NO_IO_MO_FOUND'
             WHEN BOOL_OR(corr.io_qty_correlation_status = 'IO_QTY_UNALLOCATED_MULTI_IO_SO') THEN 'IO_QTY_UNALLOCATED_MULTI_IO_SO'
@@ -328,6 +334,8 @@ so_io_correlation_agg AS (
                 'io_mo_qty', corr.io_mo_qty,
                 'io_done_mo_qty', corr.io_done_mo_qty,
                 'io_in_progress_mo_qty', corr.io_in_progress_mo_qty,
+                'io_actual_cost', corr.io_actual_cost,
+                'actual_cost_is_correlation_only', TRUE,
                 'linked_so_count', corr.linked_so_count,
                 'multi_io_so_count', corr.multi_io_so_count,
                 'has_multi_io_so', corr.has_multi_io_so,
@@ -359,6 +367,7 @@ mo_agg AS (
         COALESCE(SUM(COALESCE(manufacturing_quantity, 0)) FILTER (
             WHERE LOWER(COALESCE(manufacturing_order_state, '')) NOT IN ('done', 'cancel', 'cancelled')
         ), 0)::numeric AS direct_in_progress_mo_qty,
+        COALESCE(SUM(COALESCE(cost_of_analysis, 0)), 0)::numeric AS direct_actual_cost,
         COUNT(DISTINCT manufacturing_order_id) FILTER (WHERE manufacturing_source_type = 'JO_BASED_MO') AS job_order_mo_count,
         JSONB_AGG(
             DISTINCT JSONB_BUILD_OBJECT(
@@ -367,6 +376,8 @@ mo_agg AS (
                 'manufacturing_order_state', manufacturing_order_state,
                 'manufactured_product_name', manufactured_product_name,
                 'manufacturing_quantity', manufacturing_quantity,
+                'actual_cost', cost_of_analysis,
+                'cost_basis', 'MRP_COST_OF_ANALYSIS',
                 'origin', manufacturing_origin,
                 'internal_order_number', internal_order_number,
                 'job_order_number', normalized_jo_number,
@@ -433,6 +444,52 @@ so_base AS (
         so.x_studio_io_1 AS raw_internal_order_reference
     FROM sale_order so
     WHERE so.company_id::text = 'Nobi Putra Angkasa, PT'
+),
+rkb_related_rows AS (
+    SELECT DISTINCT ON (sales_order_id, rkb_line_id)
+        sales_order_id,
+        rkb_line_id,
+        rkb_link_basis,
+        COALESCE(planned_subtotal, 0)::numeric AS planned_subtotal
+    FROM (
+        SELECT
+            so.sales_order_id,
+            rkb.rkb_line_id,
+            'DIRECT_SO_OR_JO_RKB'::text AS rkb_link_basis,
+            rkb.planned_subtotal
+        FROM so_base so
+        JOIN vw_rkb_planning_lines rkb
+            ON rkb.is_valid_for_metrics
+           AND rkb.job_order_number IS NOT NULL
+           AND rkb.job_order_number = so.sales_order_number
+        UNION ALL
+        SELECT
+            links.sales_order_id,
+            rkb.rkb_line_id,
+            'IO_CORRELATED_RKB_UNALLOCATED'::text AS rkb_link_basis,
+            rkb.planned_subtotal
+        FROM so_io_links links
+        JOIN vw_rkb_planning_lines rkb
+            ON rkb.is_valid_for_metrics
+           AND rkb.internal_order_number IS NOT NULL
+           AND (
+                rkb.internal_order_number = links.internal_order_number
+                OR rkb.internal_order_number = links.internal_order_id::text
+           )
+    ) rkb_links
+    ORDER BY sales_order_id, rkb_line_id,
+        CASE rkb_link_basis WHEN 'DIRECT_SO_OR_JO_RKB' THEN 1 ELSE 2 END
+),
+rkb_cost_agg AS (
+    SELECT
+        sales_order_id,
+        COALESCE(SUM(planned_subtotal), 0)::numeric AS rkb_planned_cost,
+        COALESCE(SUM(planned_subtotal) FILTER (WHERE rkb_link_basis = 'DIRECT_SO_OR_JO_RKB'), 0)::numeric AS direct_rkb_planned_cost,
+        COALESCE(SUM(planned_subtotal) FILTER (WHERE rkb_link_basis = 'IO_CORRELATED_RKB_UNALLOCATED'), 0)::numeric AS io_correlated_rkb_planned_cost,
+        BOOL_OR(rkb_link_basis = 'DIRECT_SO_OR_JO_RKB') AS has_direct_rkb,
+        BOOL_OR(rkb_link_basis = 'IO_CORRELATED_RKB_UNALLOCATED') AS has_io_rkb
+    FROM rkb_related_rows
+    GROUP BY sales_order_id
 )
 SELECT
     so.sales_order_id,
@@ -467,6 +524,16 @@ SELECT
     COALESCE(line.delivered_amount, 0) AS delivered_amount,
     COALESCE(line.invoiced_amount, 0) AS invoiced_amount,
     COALESCE(line.ordered_amount_idr, 0) AS ordered_amount_idr,
+    COALESCE(line.ordered_amount_idr, 0) AS sales_amount_idr,
+    COALESCE(rkb.rkb_planned_cost, 0) AS rkb_planned_cost,
+    COALESCE(rkb.direct_rkb_planned_cost, 0) AS direct_rkb_planned_cost,
+    COALESCE(rkb.io_correlated_rkb_planned_cost, 0) AS io_correlated_rkb_planned_cost,
+    CASE
+        WHEN COALESCE(rkb.has_direct_rkb, FALSE) AND COALESCE(rkb.has_io_rkb, FALSE) THEN 'DIRECT_AND_IO_CORRELATED_RKB'
+        WHEN COALESCE(rkb.has_direct_rkb, FALSE) THEN 'DIRECT_SO_OR_JO_RKB'
+        WHEN COALESCE(rkb.has_io_rkb, FALSE) THEN 'IO_CORRELATED_RKB_UNALLOCATED'
+        ELSE 'NO_RKB_FOUND'
+    END AS rkb_cost_basis,
     COALESCE(line.delivered_amount_idr, 0) AS delivered_amount_idr,
     COALESCE(line.invoiced_amount_idr, 0) AS invoiced_amount_idr,
     COALESCE(line.currency_rate_used, 1) AS currency_rate_used,
@@ -488,10 +555,24 @@ SELECT
     COALESCE(mo.direct_mo_qty, 0) AS direct_mo_qty,
     COALESCE(mo.direct_done_mo_qty, 0) AS direct_done_mo_qty,
     COALESCE(mo.direct_in_progress_mo_qty, 0) AS direct_in_progress_mo_qty,
+    COALESCE(mo.direct_actual_cost, 0) AS direct_actual_cost,
     COALESCE(io_corr.io_backed_mo_count, 0) AS io_backed_mo_count,
     COALESCE(io_corr.io_backed_mo_qty, 0) AS io_backed_mo_qty,
     COALESCE(io_corr.io_backed_done_mo_qty, 0) AS io_backed_done_mo_qty,
     COALESCE(io_corr.io_backed_in_progress_mo_qty, 0) AS io_backed_in_progress_mo_qty,
+    COALESCE(io_corr.io_backed_actual_cost, 0) AS io_backed_actual_cost,
+    TRUE AS io_backed_actual_cost_is_correlation_only,
+    COALESCE(mo.direct_actual_cost, 0) + COALESCE(io_corr.io_backed_actual_cost, 0) AS total_related_actual_cost,
+    COALESCE(mo.direct_actual_cost, 0) + COALESCE(io_corr.io_backed_actual_cost, 0) AS actual_cost,
+    COALESCE(line.ordered_amount_idr, 0) - COALESCE(rkb.rkb_planned_cost, 0) AS rkb_kontribusi_amount,
+    (COALESCE(line.ordered_amount_idr, 0) - COALESCE(rkb.rkb_planned_cost, 0)) / NULLIF(COALESCE(line.ordered_amount_idr, 0), 0) AS rkb_kontribusi_percent,
+    COALESCE(line.ordered_amount_idr, 0) - (COALESCE(mo.direct_actual_cost, 0) + COALESCE(io_corr.io_backed_actual_cost, 0)) AS kontribusi_aktual_amount,
+    (COALESCE(line.ordered_amount_idr, 0) - (COALESCE(mo.direct_actual_cost, 0) + COALESCE(io_corr.io_backed_actual_cost, 0))) / NULLIF(COALESCE(line.ordered_amount_idr, 0), 0) AS kontribusi_aktual_percent,
+    CASE
+        WHEN COALESCE(line.ordered_amount_idr, 0) = 0 THEN 'NO_SALES_AMOUNT_BASIS'
+        WHEN COALESCE(rkb.has_io_rkb, FALSE) OR COALESCE(io_corr.io_backed_actual_cost, 0) <> 0 THEN 'INCLUDES_IO_CORRELATED_UNALLOCATED_COST'
+        ELSE NULL
+    END AS contribution_basis_warning,
     COALESCE(mo.direct_mo_count, 0) + COALESCE(io_corr.io_backed_mo_count, 0) AS total_related_mo_count,
     COALESCE(mo.direct_mo_qty, 0) + COALESCE(io_corr.io_backed_mo_qty, 0) AS total_related_mo_qty,
     COALESCE(mo.direct_done_mo_qty, 0) + COALESCE(io_corr.io_backed_done_mo_qty, 0) AS total_done_mo_qty,
@@ -562,9 +643,11 @@ LEFT JOIN mo_agg mo
 LEFT JOIN so_io_correlation_agg io_corr
     ON io_corr.sales_order_id = so.sales_order_id
 LEFT JOIN accounting_agg accounting
-    ON accounting.sales_order_id = so.sales_order_id;
+    ON accounting.sales_order_id = so.sales_order_id
+LEFT JOIN rkb_cost_agg rkb
+    ON rkb.sales_order_id = so.sales_order_id;
 
 COMMENT ON VIEW vw_dashboard_sales_order_traceability IS
-    'Phase 2A dashboard-ready Sales Order traceability view for PT Nobi Putra Angkasa only. Quantity and amount progress use countable SO lines and are capped at 100 percent. IO-backed MO quantity is correlation-only and not allocated to individual SOs. Delay uses sale_order.commitment_date. Sales amounts use sale_order.currency_rate as an IDR multiplier with rate-1 fallback. Accounting/AR and profitability are out of scope; accounting count is diagnostic only.';
+    'Phase 2A dashboard-ready Sales Order traceability view for PT Nobi Putra Angkasa only. Quantity and amount progress use countable SO lines and are capped at 100 percent. IO-backed MO quantity is correlation-only and not allocated to individual SOs. Delay uses sale_order.commitment_date. Sales amounts use sale_order.currency_rate as an IDR multiplier with rate-1 fallback. Contribution metrics are operational and not accounting COGS or gross profit. Accounting/AR is out of scope; accounting count is diagnostic only.';
 
 

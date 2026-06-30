@@ -102,6 +102,7 @@ SELECT
     mo.name AS manufacturing_order_number,
     mo.product_id AS manufactured_product_name,
     mo.product_qty AS manufacturing_quantity,
+    COALESCE(NULLIF(mo.x_studio_cost_of_analysis::text, '')::numeric, 0) AS cost_of_analysis,
     mo.state AS manufacturing_order_state,
     UPPER(COALESCE(mo.state, 'UNKNOWN')) AS normalized_status,
     (LOWER(COALESCE(mo.state, '')) IN ('cancel', 'cancelled')) AS is_cancelled,
