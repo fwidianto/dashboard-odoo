@@ -46,7 +46,7 @@ models:
     columns:
       id: ID
       write_date: Last Updated on
-      x_studio_product_type: Product Type
+      x_studio_prodcut_type: Product Type
       name: Order Number
       create_date: Created
       date_order: Order Date
@@ -211,6 +211,7 @@ models:
       x_studio_master_production_schedule_start: MPS Start
       x_studio_master_production_schedule_finish: MPS End
       company_id: Company
+      x_studio_cost_of_analysis: Cost Analysis
 
   # ===========================================================================
   # APPROVAL MODELS
