@@ -33,9 +33,19 @@ WITH line_base AS (
         COALESCE(line.delivered_quantity, 0)::numeric AS delivered_qty,
         COALESCE(line.invoiced_quantity, 0)::numeric AS invoiced_qty,
         COALESCE(sol.price_unit, 0)::numeric AS unit_price,
+        COALESCE(NULLIF(so_line.currency_rate, 0), NULLIF(sol.x_studio_currency_rate, 0), 1)::numeric AS currency_rate_used,
+        CASE
+            WHEN COALESCE(NULLIF(so_line.currency_rate, 0), NULLIF(sol.x_studio_currency_rate, 0)) IS NULL
+                THEN 'IDR_FALLBACK_RATE_1'
+            ELSE 'SALE_ORDER_CURRENCY_RATE_MULTIPLIED_TO_IDR'
+        END AS currency_conversion_basis,
         (COALESCE(line.ordered_quantity, 0) * COALESCE(sol.price_unit, 0))::numeric AS ordered_amount,
         (COALESCE(line.delivered_quantity, 0) * COALESCE(sol.price_unit, 0))::numeric AS delivered_amount,
         (COALESCE(line.invoiced_quantity, 0) * COALESCE(sol.price_unit, 0))::numeric AS invoiced_amount,
+        (COALESCE(sol.price_unit, 0) * COALESCE(NULLIF(so_line.currency_rate, 0), NULLIF(sol.x_studio_currency_rate, 0), 1))::numeric AS unit_price_idr,
+        (COALESCE(line.ordered_quantity, 0) * COALESCE(sol.price_unit, 0) * COALESCE(NULLIF(so_line.currency_rate, 0), NULLIF(sol.x_studio_currency_rate, 0), 1))::numeric AS ordered_amount_idr,
+        (COALESCE(line.delivered_quantity, 0) * COALESCE(sol.price_unit, 0) * COALESCE(NULLIF(so_line.currency_rate, 0), NULLIF(sol.x_studio_currency_rate, 0), 1))::numeric AS delivered_amount_idr,
+        (COALESCE(line.invoiced_quantity, 0) * COALESCE(sol.price_unit, 0) * COALESCE(NULLIF(so_line.currency_rate, 0), NULLIF(sol.x_studio_currency_rate, 0), 1))::numeric AS invoiced_amount_idr,
         line.line_source_type,
         line.line_source_link_status,
         line.line_source_confidence,
@@ -46,6 +56,8 @@ WITH line_base AS (
     FROM vw_sales_order_line_source_context line
     LEFT JOIN sale_order_line sol
         ON sol.id = line.sales_order_line_id
+    LEFT JOIN sale_order so_line
+        ON so_line.id = line.sales_order_id
 ),
 line_agg AS (
     SELECT
@@ -58,6 +70,11 @@ line_agg AS (
         COALESCE(SUM(ordered_amount), 0)::numeric AS ordered_amount,
         COALESCE(SUM(delivered_amount), 0)::numeric AS delivered_amount,
         COALESCE(SUM(invoiced_amount), 0)::numeric AS invoiced_amount,
+        COALESCE(SUM(ordered_amount_idr), 0)::numeric AS ordered_amount_idr,
+        COALESCE(SUM(delivered_amount_idr), 0)::numeric AS delivered_amount_idr,
+        COALESCE(SUM(invoiced_amount_idr), 0)::numeric AS invoiced_amount_idr,
+        COALESCE(MAX(currency_rate_used), 1)::numeric AS currency_rate_used,
+        COALESCE(MAX(currency_conversion_basis), 'IDR_FALLBACK_RATE_1') AS currency_conversion_basis,
         COALESCE(SUM(internal_order_reference_count), 0)::integer AS line_internal_order_reference_count,
         COALESCE(SUM(matching_mo_count), 0)::integer AS line_matching_mo_count,
         COALESCE(SUM(matching_stock_movement_count), 0)::integer AS line_stock_movement_count,
@@ -71,13 +88,19 @@ line_agg AS (
                 'delivered_qty', delivered_qty,
                 'invoiced_qty', invoiced_qty,
                 'unit_price', unit_price,
+                'unit_price_idr', unit_price_idr,
                 'ordered_amount', ordered_amount,
                 'delivered_amount', delivered_amount,
                 'invoiced_amount', invoiced_amount,
+                'ordered_amount_idr', ordered_amount_idr,
+                'delivered_amount_idr', delivered_amount_idr,
+                'invoiced_amount_idr', invoiced_amount_idr,
+                'currency_rate_used', currency_rate_used,
+                'currency_conversion_basis', currency_conversion_basis,
                 'qty_delivery_progress_ratio', delivered_qty / NULLIF(ordered_qty, 0),
                 'qty_invoice_progress_ratio', invoiced_qty / NULLIF(ordered_qty, 0),
-                'amount_delivery_progress_ratio', delivered_amount / NULLIF(ordered_amount, 0),
-                'amount_invoice_progress_ratio', invoiced_amount / NULLIF(ordered_amount, 0),
+                'amount_delivery_progress_ratio', delivered_amount_idr / NULLIF(ordered_amount_idr, 0),
+                'amount_invoice_progress_ratio', invoiced_amount_idr / NULLIF(ordered_amount_idr, 0),
                 'line_source_type', line_source_type,
                 'line_source_link_status', line_source_link_status,
                 'line_source_confidence', line_source_confidence
@@ -396,6 +419,269 @@ so_base AS (
         so.x_studio_io_1 AS raw_internal_order_reference
     FROM sale_order so
     WHERE so.company_id::text = 'Nobi Putra Angkasa, PT'
+),
+so_io_keys AS (
+    SELECT DISTINCT sales_order_id, internal_order_number AS io_key
+    FROM so_io_links
+    WHERE internal_order_number IS NOT NULL
+    UNION
+    SELECT DISTINCT sales_order_id, internal_order_id::text AS io_key
+    FROM so_io_links
+    WHERE internal_order_id IS NOT NULL
+),
+so_number_keys AS (
+    SELECT DISTINCT sales_order_id, sales_order_number AS jo_key
+    FROM so_base
+    WHERE sales_order_number IS NOT NULL
+),
+rkb_source_rows AS MATERIALIZED (
+    SELECT
+        rkb_line_id,
+        approval_request_display_name,
+        product_name,
+        rkb_line_description,
+        planned_quantity,
+        unit_of_measure,
+        planned_unit_price,
+        planned_subtotal,
+        approval_status,
+        requester_name,
+        date_of_need,
+        internal_order_number,
+        job_order_number
+    FROM vw_rkb_planning_lines
+    WHERE is_valid_for_metrics
+      AND (internal_order_number IS NOT NULL OR job_order_number IS NOT NULL)
+),
+po_source_rows AS MATERIALIZED (
+    SELECT
+        procurement_line_id,
+        purchase_order_reference,
+        vendor_name,
+        product_name,
+        procurement_line_description,
+        ordered_quantity,
+        received_quantity,
+        invoiced_quantity,
+        unit_of_measure,
+        currency_name,
+        unit_price,
+        line_subtotal,
+        inverse_currency_rate,
+        purchase_line_state,
+        purchase_planned_date,
+        internal_order_number,
+        job_order_number
+    FROM vw_procurement_lines
+    WHERE is_valid_for_metrics
+      AND (internal_order_number IS NOT NULL OR job_order_number IS NOT NULL)
+
+),
+rkb_related_rows AS (
+    SELECT DISTINCT ON (sales_order_id, rkb_line_id)
+        sales_order_id,
+        rkb_line_id,
+        approval_request_display_name,
+        rkb_link_basis,
+        product_name,
+        rkb_line_description,
+        planned_quantity,
+        unit_of_measure,
+        planned_unit_price,
+        planned_subtotal,
+        approval_status,
+        requester_name,
+        date_of_need,
+        internal_order_number,
+        job_order_number
+    FROM (
+        SELECT
+            links.sales_order_id,
+            rkb.rkb_line_id,
+            rkb.approval_request_display_name,
+            'IO_BASED_RKB'::text AS rkb_link_basis,
+            rkb.product_name,
+            rkb.rkb_line_description,
+            rkb.planned_quantity,
+            rkb.unit_of_measure,
+            rkb.planned_unit_price,
+            rkb.planned_subtotal,
+            rkb.approval_status,
+            rkb.requester_name,
+            rkb.date_of_need,
+            rkb.internal_order_number,
+            rkb.job_order_number
+        FROM so_io_keys links
+        JOIN rkb_source_rows rkb
+            ON rkb.internal_order_number = links.io_key
+        UNION ALL
+        SELECT
+            so.sales_order_id,
+            rkb.rkb_line_id,
+            rkb.approval_request_display_name,
+            'JO_SO_BASED_RKB'::text AS rkb_link_basis,
+            rkb.product_name,
+            rkb.rkb_line_description,
+            rkb.planned_quantity,
+            rkb.unit_of_measure,
+            rkb.planned_unit_price,
+            rkb.planned_subtotal,
+            rkb.approval_status,
+            rkb.requester_name,
+            rkb.date_of_need,
+            rkb.internal_order_number,
+            rkb.job_order_number
+        FROM so_number_keys so
+        JOIN rkb_source_rows rkb
+            ON rkb.job_order_number = so.jo_key
+    ) rkb_links
+    ORDER BY sales_order_id, rkb_line_id,
+        CASE rkb_link_basis WHEN 'JO_SO_BASED_RKB' THEN 1 ELSE 2 END
+),
+rkb_agg AS (
+    SELECT
+        sales_order_id,
+        JSONB_AGG(
+            JSONB_BUILD_OBJECT(
+                'rkb_line_id', rkb_line_id,
+                'rkb_reference', approval_request_display_name,
+                'rkb_link_basis', rkb_link_basis,
+                'product_name', product_name,
+                'description', rkb_line_description,
+                'quantity', planned_quantity,
+                'unit_of_measure', unit_of_measure,
+                'unit_price', planned_unit_price,
+                'amount', planned_subtotal,
+                'status', approval_status,
+                'requester', requester_name,
+                'needed_date', date_of_need,
+                'internal_order_number', internal_order_number,
+                'job_order_number', job_order_number
+            )
+            ORDER BY approval_request_display_name, rkb_line_id
+        ) AS rkb_lines
+    FROM rkb_related_rows
+    GROUP BY sales_order_id
+),
+po_related_rows AS (
+    SELECT DISTINCT ON (sales_order_id, procurement_line_id)
+        sales_order_id,
+        procurement_line_id,
+        purchase_order_reference,
+        po_link_basis,
+        vendor_name,
+        product_name,
+        procurement_line_description,
+        ordered_quantity,
+        received_quantity,
+        invoiced_quantity,
+        unit_of_measure,
+        currency_name,
+        unit_price,
+        line_subtotal,
+        inverse_currency_rate,
+        po_unit_price_idr,
+        po_amount_idr,
+        currency_conversion_basis,
+        purchase_line_state,
+        purchase_planned_date,
+        internal_order_number,
+        job_order_number
+    FROM (
+        SELECT
+            links.sales_order_id,
+            po.procurement_line_id,
+            po.purchase_order_reference,
+            'IO_BASED_PO'::text AS po_link_basis,
+            po.vendor_name,
+            po.product_name,
+            po.procurement_line_description,
+            po.ordered_quantity,
+            po.received_quantity,
+            po.invoiced_quantity,
+            po.unit_of_measure,
+            po.currency_name,
+            po.unit_price,
+            po.line_subtotal,
+            po.inverse_currency_rate,
+            (COALESCE(po.unit_price, 0) * COALESCE(NULLIF(po.inverse_currency_rate, 0), 1))::numeric AS po_unit_price_idr,
+            (COALESCE(po.line_subtotal, 0) * COALESCE(NULLIF(po.inverse_currency_rate, 0), 1))::numeric AS po_amount_idr,
+            CASE
+                WHEN NULLIF(po.inverse_currency_rate, 0) IS NULL THEN 'IDR_FALLBACK_RATE_1'
+                ELSE 'PO_INVERSE_CURRENCY_RATE_MULTIPLIED_TO_IDR'
+            END AS currency_conversion_basis,
+            po.purchase_line_state,
+            po.purchase_planned_date,
+            po.internal_order_number,
+            po.job_order_number
+        FROM so_io_keys links
+        JOIN po_source_rows po
+            ON po.internal_order_number = links.io_key
+        UNION ALL
+        SELECT
+            so.sales_order_id,
+            po.procurement_line_id,
+            po.purchase_order_reference,
+            'JO_SO_BASED_PO'::text AS po_link_basis,
+            po.vendor_name,
+            po.product_name,
+            po.procurement_line_description,
+            po.ordered_quantity,
+            po.received_quantity,
+            po.invoiced_quantity,
+            po.unit_of_measure,
+            po.currency_name,
+            po.unit_price,
+            po.line_subtotal,
+            po.inverse_currency_rate,
+            (COALESCE(po.unit_price, 0) * COALESCE(NULLIF(po.inverse_currency_rate, 0), 1))::numeric AS po_unit_price_idr,
+            (COALESCE(po.line_subtotal, 0) * COALESCE(NULLIF(po.inverse_currency_rate, 0), 1))::numeric AS po_amount_idr,
+            CASE
+                WHEN NULLIF(po.inverse_currency_rate, 0) IS NULL THEN 'IDR_FALLBACK_RATE_1'
+                ELSE 'PO_INVERSE_CURRENCY_RATE_MULTIPLIED_TO_IDR'
+            END AS currency_conversion_basis,
+            po.purchase_line_state,
+            po.purchase_planned_date,
+            po.internal_order_number,
+            po.job_order_number
+        FROM so_number_keys so
+        JOIN po_source_rows po
+            ON po.job_order_number = so.jo_key
+    ) po_links
+    ORDER BY sales_order_id, procurement_line_id,
+        CASE po_link_basis WHEN 'JO_SO_BASED_PO' THEN 1 ELSE 2 END
+),
+po_agg AS (
+    SELECT
+        sales_order_id,
+        JSONB_AGG(
+            JSONB_BUILD_OBJECT(
+                'procurement_line_id', procurement_line_id,
+                'po_reference', purchase_order_reference,
+                'po_link_basis', po_link_basis,
+                'vendor_name', vendor_name,
+                'product_name', product_name,
+                'description', procurement_line_description,
+                'ordered_quantity', ordered_quantity,
+                'received_quantity', received_quantity,
+                'billed_quantity', invoiced_quantity,
+                'unit_of_measure', unit_of_measure,
+                'currency', currency_name,
+                'unit_price_original', unit_price,
+                'amount_original', line_subtotal,
+                'currency_rate_used', COALESCE(NULLIF(inverse_currency_rate, 0), 1),
+                'currency_conversion_basis', currency_conversion_basis,
+                'po_unit_price_idr', po_unit_price_idr,
+                'po_amount_idr', po_amount_idr,
+                'status', purchase_line_state,
+                'expected_arrival', purchase_planned_date,
+                'internal_order_number', internal_order_number,
+                'job_order_number', job_order_number
+            )
+            ORDER BY purchase_order_reference, procurement_line_id
+        ) AS purchase_order_lines
+    FROM po_related_rows
+    GROUP BY sales_order_id
 )
 SELECT
     so.sales_order_id,
@@ -429,10 +715,15 @@ SELECT
     COALESCE(line.ordered_amount, 0) AS ordered_amount,
     COALESCE(line.delivered_amount, 0) AS delivered_amount,
     COALESCE(line.invoiced_amount, 0) AS invoiced_amount,
+    COALESCE(line.ordered_amount_idr, 0) AS ordered_amount_idr,
+    COALESCE(line.delivered_amount_idr, 0) AS delivered_amount_idr,
+    COALESCE(line.invoiced_amount_idr, 0) AS invoiced_amount_idr,
+    COALESCE(line.currency_rate_used, 1) AS currency_rate_used,
+    COALESCE(line.currency_conversion_basis, 'IDR_FALLBACK_RATE_1') AS currency_conversion_basis,
     COALESCE(line.delivered_qty, 0) / NULLIF(COALESCE(line.ordered_qty, 0), 0) AS qty_delivery_progress_ratio,
     COALESCE(line.invoiced_qty, 0) / NULLIF(COALESCE(line.ordered_qty, 0), 0) AS qty_invoice_progress_ratio,
-    COALESCE(line.delivered_amount, 0) / NULLIF(COALESCE(line.ordered_amount, 0), 0) AS amount_delivery_progress_ratio,
-    COALESCE(line.invoiced_amount, 0) / NULLIF(COALESCE(line.ordered_amount, 0), 0) AS amount_invoice_progress_ratio,
+    COALESCE(line.delivered_amount_idr, 0) / NULLIF(COALESCE(line.ordered_amount_idr, 0), 0) AS amount_delivery_progress_ratio,
+    COALESCE(line.invoiced_amount_idr, 0) / NULLIF(COALESCE(line.ordered_amount_idr, 0), 0) AS amount_invoice_progress_ratio,
     (COALESCE(line.delivered_qty, 0) >= COALESCE(line.ordered_qty, 0) AND COALESCE(line.ordered_qty, 0) > 0) AS is_fully_delivered_qty,
     (COALESCE(line.invoiced_qty, 0) >= COALESCE(line.ordered_qty, 0) AND COALESCE(line.ordered_qty, 0) > 0) AS is_fully_invoiced_qty,
     (COALESCE(line.delivered_amount, 0) >= COALESCE(line.ordered_amount, 0) AND COALESCE(line.ordered_amount, 0) > 0) AS is_fully_delivered_amount,
@@ -497,6 +788,8 @@ SELECT
     COALESCE(io.internal_orders, '[]'::jsonb) AS internal_orders,
     COALESCE(mo.manufacturing_orders, '[]'::jsonb) AS manufacturing_orders,
     COALESCE(io_corr.io_manufacturing_correlations, '[]'::jsonb) AS io_manufacturing_correlations,
+    COALESCE(rkb.rkb_lines, '[]'::jsonb) AS rkb_lines,
+    COALESCE(po.purchase_order_lines, '[]'::jsonb) AS purchase_order_lines,
     JSONB_BUILD_OBJECT(
         'company_id', so.company_id,
         'product_type_raw', so.product_type_raw,
@@ -520,8 +813,14 @@ LEFT JOIN mo_agg mo
     ON mo.sales_order_id = so.sales_order_id
 LEFT JOIN so_io_correlation_agg io_corr
     ON io_corr.sales_order_id = so.sales_order_id
+LEFT JOIN rkb_agg rkb
+    ON rkb.sales_order_id = so.sales_order_id
+LEFT JOIN po_agg po
+    ON po.sales_order_id = so.sales_order_id
 LEFT JOIN accounting_agg accounting
     ON accounting.sales_order_id = so.sales_order_id;
 
 COMMENT ON VIEW vw_dashboard_sales_order_traceability IS
-    'Phase 2A dashboard-ready Sales Order traceability view for PT Nobi Putra Angkasa only. Quantity progress uses SO line quantities; amount progress uses qty * price_unit. IO-backed MO quantity is correlation-only and not allocated to individual SOs. Delay uses sale_order.commitment_date. Accounting/AR and profitability are out of scope; accounting count is diagnostic only.';
+    'Phase 2A dashboard-ready Sales Order traceability view for PT Nobi Putra Angkasa only. Quantity progress uses SO line quantities; amount progress uses IDR-converted qty * price_unit. IO-backed MO quantity is correlation-only and not allocated to individual SOs. Delay uses sale_order.commitment_date. Sales amounts use sale_order.currency_rate as an IDR multiplier with rate-1 fallback; PO detail uses purchase_order_line.x_studio_currency_rate_inverse as an IDR multiplier with rate-1 fallback. Accounting/AR and profitability are out of scope; accounting count is diagnostic only.';
+
+

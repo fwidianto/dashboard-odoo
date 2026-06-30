@@ -24,11 +24,11 @@
     </header>
 
     <section class="kpi-grid" aria-label="Sales Order KPI cards">
-      <article class="kpi-card"><span class="kpi-label">Active SO</span><strong id="kpiActiveSo">-</strong></article>
-      <article class="kpi-card"><span class="kpi-label">Delivered SO</span><strong id="kpiDeliveredSo">-</strong></article>
-      <article class="kpi-card"><span class="kpi-label">Invoiced SO</span><strong id="kpiInvoicedSo">-</strong></article>
-      <article class="kpi-card"><span class="kpi-label">Delayed Delivery</span><strong id="kpiDelayedDelivery">-</strong></article>
-      <article class="kpi-card"><span class="kpi-label">Waiting Invoice</span><strong id="kpiWaitingInvoice">-</strong></article>
+      <article class="kpi-card filterable-kpi" data-kpi-action="ACTIVE_SO" role="button" tabindex="0"><span class="kpi-label">Active SO</span><strong id="kpiActiveSo">-</strong></article>
+      <article class="kpi-card filterable-kpi" data-kpi-action="DELIVERED_SO" role="button" tabindex="0"><span class="kpi-label">Delivered SO</span><strong id="kpiDeliveredSo">-</strong></article>
+      <article class="kpi-card filterable-kpi" data-kpi-action="INVOICED_SO" role="button" tabindex="0"><span class="kpi-label">Invoiced SO</span><strong id="kpiInvoicedSo">-</strong></article>
+      <article class="kpi-card filterable-kpi" data-kpi-action="DELAYED_DELIVERY" role="button" tabindex="0"><span class="kpi-label">Delayed Delivery</span><strong id="kpiDelayedDelivery">-</strong></article>
+      <article class="kpi-card filterable-kpi" data-kpi-action="WAITING_INVOICE" role="button" tabindex="0"><span class="kpi-label">Waiting Invoice</span><strong id="kpiWaitingInvoice">-</strong></article>
       <article class="kpi-card wide">
         <span class="kpi-label">Qty Delivery</span>
         <strong id="kpiQtyDelivery">-</strong>
@@ -128,9 +128,9 @@
               <th class="num"><button class="sort-button" type="button" data-sort="invoiced_qty">Invoiced Qty</button></th>
               <th><button class="sort-button" type="button" data-sort="qty_delivery_progress_ratio">Qty Delivery %</button></th>
               <th><button class="sort-button" type="button" data-sort="qty_invoice_progress_ratio">Qty Invoice %</button></th>
-              <th class="num"><button class="sort-button" type="button" data-sort="ordered_amount">Ordered Amount</button></th>
-              <th class="num"><button class="sort-button" type="button" data-sort="delivered_amount">Delivered Amount</button></th>
-              <th class="num"><button class="sort-button" type="button" data-sort="invoiced_amount">Invoiced Amount</button></th>
+              <th class="num"><button class="sort-button" type="button" data-sort="ordered_amount_idr">Ordered Amount IDR</button></th>
+              <th class="num"><button class="sort-button" type="button" data-sort="delivered_amount_idr">Delivered Amount IDR</button></th>
+              <th class="num"><button class="sort-button" type="button" data-sort="invoiced_amount_idr">Invoiced Amount IDR</button></th>
               <th><button class="sort-button" type="button" data-sort="amount_delivery_progress_ratio">Amount Delivery %</button></th>
               <th><button class="sort-button" type="button" data-sort="amount_invoice_progress_ratio">Amount Invoice %</button></th>
             </tr>

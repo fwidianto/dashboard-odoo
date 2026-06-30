@@ -418,6 +418,11 @@ async def sales_order_dashboard_data():
             ordered_amount,
             delivered_amount,
             invoiced_amount,
+            ordered_amount_idr,
+            delivered_amount_idr,
+            invoiced_amount_idr,
+            currency_rate_used,
+            currency_conversion_basis,
             qty_delivery_progress_ratio,
             qty_invoice_progress_ratio,
             amount_delivery_progress_ratio,
@@ -458,6 +463,8 @@ async def sales_order_dashboard_data():
             internal_orders,
             manufacturing_orders,
             io_manufacturing_correlations,
+            '[]'::jsonb AS rkb_lines,
+            '[]'::jsonb AS purchase_order_lines,
             diagnostics
         FROM vw_dashboard_sales_order_traceability
         ORDER BY
@@ -491,6 +498,37 @@ async def sales_order_dashboard_data():
         }
     except Exception as e:
         logger.error("Sales Order dashboard query failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        pg.close()
+
+
+
+@app.get("/api/dashboard/sales-orders/{sales_order_id}/details", tags=["Dashboard"])
+async def sales_order_dashboard_detail(sales_order_id: int):
+    """Return heavy expanded detail sections for one Sales Order row."""
+    sql = text("""
+        SELECT
+            sales_order_id,
+            rkb_lines,
+            purchase_order_lines
+        FROM vw_dashboard_sales_order_traceability
+        WHERE sales_order_id = :sales_order_id
+    """)
+
+    pg = PostgresClient()
+    try:
+        with pg.engine.connect() as conn:
+            row = conn.execute(sql, {"sales_order_id": sales_order_id}).mappings().first()
+
+        if row is None:
+            raise HTTPException(status_code=404, detail="Sales Order not found")
+
+        return {key: _json_safe(value) for key, value in row.items()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Sales Order dashboard detail query failed", sales_order_id=sales_order_id, error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         pg.close()

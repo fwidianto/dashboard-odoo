@@ -4,6 +4,7 @@ const state = {
   rows: [],
   filteredRows: [],
   expanded: new Set(),
+  detailLoading: new Set(),
   sortKey: "commitment_date",
 sortDirection: "asc",
   filterOptions: {
@@ -116,6 +117,7 @@ function setSingleFilter(filterKey, value) {
 
 function selectionMatches(filterKey, value) {
   const selected = state.filters[filterKey];
+  if (filterKey === "status" && !selected.size) return false;
   return !selected.size || selected.has(String(value || ""));
 }
 
@@ -140,6 +142,31 @@ const checklistConfigs = {
   status: { el: () => els.statusFilter, allLabel: "All statuses", label: (value) => safeText(value) },
   followUp: { el: () => els.followUpFilter, allLabel: "All follow-up", label: followUpLabel },
 };
+const quickFilterLabels = {
+  DELIVERED_SO: "Delivered SO",
+  INVOICED_SO: "Invoiced SO",
+};
+
+function setActiveOnlyStatus() {
+  state.filters.status = new Set(activeStatusValues());
+}
+
+function setAllStatuses() {
+  state.filters.status = new Set(state.filterOptions.status);
+}
+
+function toggleQuickFilter(value) {
+  state.quickFilter = state.quickFilter === value ? "" : value;
+  applyFilters();
+}
+
+function setFollowUpFilter(status) {
+  const selected = state.filters.followUp;
+  if (selected.size === 1 && selected.has(status)) selected.clear();
+  else state.filters.followUp = new Set([status]);
+  state.quickFilter = "";
+  applyFilters();
+}
 const ioQtyStatusLabels = {
   NO_IO_MO_FOUND: "No IO MO found",
   IO_QTY_SURPLUS_VS_LINKED_SO: "IO qty surplus vs linked SO",
@@ -302,6 +329,15 @@ function renderKpis(rows, sourceRows = rows) {
   document.querySelectorAll("[data-source-type]").forEach((card) => {
     card.classList.toggle("is-active", state.filters.source.size === 1 && state.filters.source.has(card.dataset.sourceType));
   });
+  document.querySelectorAll("[data-kpi-action]").forEach((card) => {
+    const action = card.dataset.kpiAction;
+    const isActiveOnly = action === "ACTIVE_SO" && setsEqualToArray(state.filters.status, activeStatusValues()) && !state.quickFilter;
+    const isQuick = action === state.quickFilter;
+    const isFollowUp = action === "DELAYED_DELIVERY" || action === "WAITING_INVOICE"
+      ? state.filters.followUp.size === 1 && state.filters.followUp.has(action)
+      : false;
+    card.classList.toggle("is-active", isActiveOnly || isQuick || isFollowUp);
+  });
   els.barQtyDelivery.style.width = progressWidth(summary.qtyDeliveryProgress);
   els.barQtyInvoice.style.width = progressWidth(summary.qtyInvoiceProgress);
   els.barAmountDelivery.style.width = progressWidth(summary.amountDeliveryProgress);
@@ -381,12 +417,15 @@ function renderLineRows(lines) {
       <thead>
         <tr>
           <th>Product</th>
-          <th class="num">Ordered</th>
-          <th class="num">Delivered</th>
-          <th class="num">Invoiced</th>
-          <th class="num">Unit Price</th>
-          <th>Qty Delivery</th>
-          <th>Qty Invoice</th>
+          <th class="num">Ordered Qty</th>
+          <th class="num">Delivered Qty</th>
+          <th class="num">Invoiced Qty</th>
+          <th class="num">Unit Price IDR</th>
+          <th class="num">Ordered Amount IDR</th>
+          <th class="num">Delivered Amount IDR</th>
+          <th class="num">Invoiced Amount IDR</th>
+          <th>Qty Delivery %</th>
+          <th>Qty Invoice %</th>
           <th>Source</th>
         </tr>
       </thead>
@@ -397,30 +436,13 @@ function renderLineRows(lines) {
             <td class="num">${formatQty(line.ordered_qty)}</td>
             <td class="num">${formatQty(line.delivered_qty)}</td>
             <td class="num">${formatQty(line.invoiced_qty)}</td>
-            <td class="num">${formatAmount(line.unit_price)}</td>
+            <td class="num">${formatAmount(line.unit_price_idr)}</td>
+            <td class="num">${formatAmount(line.ordered_amount_idr)}</td>
+            <td class="num">${formatAmount(line.delivered_amount_idr)}</td>
+            <td class="num">${formatAmount(line.invoiced_amount_idr)}</td>
             <td>${formatPercent(line.qty_delivery_progress_ratio)}</td>
             <td>${formatPercent(line.qty_invoice_progress_ratio)}</td>
             <td>${sourceBadge(line.line_source_type)}</td>
-          </tr>
-        `).join("")}
-      </tbody>
-    </table>
-  `;
-}
-
-function renderInternalOrders(orders) {
-  if (!orders || !orders.length) {
-    return '<div class="detail-empty">No linked Internal Orders.</div>';
-  }
-  return `
-    <table class="detail-table">
-      <thead><tr><th>Internal Order ID</th><th>Internal Order Number</th><th>Raw SO IO Field</th></tr></thead>
-      <tbody>
-        ${orders.map((order) => `
-          <tr>
-            <td>${safeText(order.internal_order_id)}</td>
-            <td>${safeText(order.internal_order_number)}</td>
-            <td>${safeText(order.raw_x_studio_io_1)}</td>
           </tr>
         `).join("")}
       </tbody>
@@ -490,41 +512,78 @@ function renderIoBackedManufacturing(correlations) {
   `;
 }
 
+function renderRkbRows(lines) {
+  if (!lines || !lines.length) {
+    return '<div class="detail-empty">No related RKB lines found.</div>';
+  }
+  return `
+    <table class="detail-table">
+      <thead><tr><th>RKB Reference</th><th>Link Basis</th><th>Product</th><th>Description</th><th class="num">Qty</th><th>UoM</th><th class="num">Unit Price</th><th class="num">Amount</th><th>Status</th><th>Requester</th><th>Needed Date</th><th>IO</th><th>JO / Production SO</th></tr></thead>
+      <tbody>
+        ${lines.map((line) => `
+          <tr>
+            <td>${safeText(line.rkb_reference)}</td>
+            <td>${safeText(line.rkb_link_basis)}</td>
+            <td>${safeText(line.product_name)}</td>
+            <td>${safeText(line.description)}</td>
+            <td class="num">${formatQty(line.quantity)}</td>
+            <td>${safeText(line.unit_of_measure)}</td>
+            <td class="num">${formatAmount(line.unit_price)}</td>
+            <td class="num">${formatAmount(line.amount)}</td>
+            <td>${safeText(line.status)}</td>
+            <td>${safeText(line.requester)}</td>
+            <td>${formatDate(line.needed_date)}</td>
+            <td>${safeText(line.internal_order_number)}</td>
+            <td>${safeText(line.job_order_number)}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderPurchaseOrderRows(lines) {
+  if (!lines || !lines.length) {
+    return '<div class="detail-empty">No related Purchase Order lines found.</div>';
+  }
+  return `
+    <table class="detail-table">
+      <thead><tr><th>PO Reference</th><th>Link Basis</th><th>Vendor</th><th>Product</th><th>Description</th><th class="num">Ordered Qty</th><th class="num">Received Qty</th><th class="num">Billed Qty</th><th>UoM</th><th>Currency</th><th class="num">Unit Price Original</th><th class="num">Amount Original</th><th class="num">Unit Price IDR</th><th class="num">Amount IDR</th><th>Status</th><th>Expected Arrival</th><th>IO</th><th>JO / Production SO</th></tr></thead>
+      <tbody>
+        ${lines.map((line) => `
+          <tr>
+            <td>${safeText(line.po_reference)}</td>
+            <td>${safeText(line.po_link_basis)}</td>
+            <td>${safeText(line.vendor_name)}</td>
+            <td>${safeText(line.product_name)}</td>
+            <td>${safeText(line.description)}</td>
+            <td class="num">${formatQty(line.ordered_quantity)}</td>
+            <td class="num">${formatQty(line.received_quantity)}</td>
+            <td class="num">${formatQty(line.billed_quantity)}</td>
+            <td>${safeText(line.unit_of_measure)}</td>
+            <td>${safeText(line.currency)}</td>
+            <td class="num">${formatAmount(line.unit_price_original)}</td>
+            <td class="num">${formatAmount(line.amount_original)}</td>
+            <td class="num">${formatAmount(line.po_unit_price_idr)}</td>
+            <td class="num">${formatAmount(line.po_amount_idr)}</td>
+            <td>${safeText(line.status)}</td>
+            <td>${formatDate(line.expected_arrival)}</td>
+            <td>${safeText(line.internal_order_number)}</td>
+            <td>${safeText(line.job_order_number)}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
 function detailRow(row) {
-  const diagnostics = row.diagnostics || {};
   return `
     <tr class="detail-row">
       <td colspan="22">
-        <div class="detail-grid">
-          <div class="detail-item"><span>Company</span><strong>${safeText(row.company_id)}</strong></div>
-          <div class="detail-item"><span>Raw Product Type</span><strong>${safeText(row.product_type_raw)}</strong></div>
-          <div class="detail-item"><span>Delivery Status</span><strong>${safeText(row.delivery_status)}</strong></div>
-          <div class="detail-item"><span>Invoice Status</span><strong>${safeText(row.invoice_status)}</strong></div>
-          <div class="detail-item"><span>IO Count</span><strong>${formatNumber(row.internal_order_count)}</strong></div>
-          <div class="detail-item"><span>Direct MO Count</span><strong>${formatNumber(row.direct_mo_count)}</strong></div>
-          <div class="detail-item"><span>Related IO MO Count</span><strong>${formatNumber(row.io_backed_mo_count)}</strong></div>
-          <div class="detail-item"><span>Related IO MO Qty</span><strong>${formatQty(row.io_backed_mo_qty)}</strong></div>
-          <div class="detail-item"><span>Related MO Qty</span><strong>${formatQty(row.total_related_mo_qty)}</strong></div>
-          <div class="detail-item"><span>Produced MO Qty</span><strong>${formatQty(row.total_done_mo_qty)}</strong></div>
-          <div class="detail-item"><span>Manufacturing In Progress Qty</span><strong>${formatQty(row.total_in_progress_mo_qty)}</strong></div>
-          <div class="detail-item"><span>Total Related MO Count</span><strong>${formatNumber(row.total_related_mo_count)}</strong></div>
-          <div class="detail-item"><span>Shared IO</span><strong>${safeText(row.shared_io_numbers)}</strong></div>
-          <div class="detail-item"><span>Shared IO Count</span><strong>${formatNumber(row.shared_io_count)}</strong></div>
-          <div class="detail-item"><span>Multi-IO SO Count</span><strong>${formatNumber(row.multi_io_so_count)}</strong></div>
-          <div class="detail-item"><span>Has Multi-IO SO</span><strong>${row.has_multi_io_so ? "Yes" : "No"}</strong></div>
-          <div class="detail-item"><span>Linked SO Qty Basis</span><strong>${safeText(row.linked_so_qty_basis)}</strong></div>
-          <div class="detail-item"><span>IO Qty Status</span><strong>${safeText(ioQtyStatusLabel(row.io_qty_correlation_status))}</strong></div>
-          <div class="detail-item"><span>Accounting Lines</span><strong>${formatNumber(row.accounting_line_count)}</strong></div>
-          <div class="detail-item"><span>Source Link</span><strong>${safeText(row.source_link_status)}</strong></div>
-          <div class="detail-item"><span>Stock Moves</span><strong>${formatNumber(diagnostics.stock_movement_diagnostic_count)}</strong></div>
-          <div class="detail-item"><span>Unknown Moves</span><strong>${formatNumber(diagnostics.unknown_movement_diagnostic_count)}</strong></div>
+        <div class="detail-sections">
           <div class="detail-section">
             <h3>SO Lines</h3>
             ${renderLineRows(row.sales_order_lines || [])}
-          </div>
-          <div class="detail-section">
-            <h3>Internal Orders</h3>
-            ${renderInternalOrders(row.internal_orders || [])}
           </div>
           <div class="detail-section">
             <h3>Manufacturing Orders / JO</h3>
@@ -534,12 +593,41 @@ function detailRow(row) {
             <h3>IO-backed Manufacturing</h3>
             ${renderIoBackedManufacturing(row.io_manufacturing_correlations || [])}
           </div>
+          <div class="detail-section">
+            <h3>RKB</h3>
+            ${row.detail_loaded ? renderRkbRows(row.rkb_lines || []) : '<div class="detail-empty">Loading RKB lines...</div>'}
+          </div>
+          <div class="detail-section">
+            <h3>Purchase Orders</h3>
+            ${row.detail_loaded ? renderPurchaseOrderRows(row.purchase_order_lines || []) : '<div class="detail-empty">Loading Purchase Order lines...</div>'}
+          </div>
         </div>
       </td>
     </tr>
   `;
 }
 
+async function loadRowDetails(soId) {
+  const row = state.rows.find((item) => String(item.sales_order_id) === String(soId));
+  if (!row || row.detail_loaded || state.detailLoading.has(String(soId))) return;
+  state.detailLoading.add(String(soId));
+  try {
+    const response = await fetch(`/api/dashboard/sales-orders/${encodeURIComponent(soId)}/details`, { headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error(`Detail request failed: ${response.status}`);
+    const detail = await response.json();
+    row.rkb_lines = detail.rkb_lines || [];
+    row.purchase_order_lines = detail.purchase_order_lines || [];
+    row.detail_loaded = true;
+  } catch (error) {
+    row.rkb_lines = [];
+    row.purchase_order_lines = [];
+    row.detail_loaded = true;
+    console.error(error);
+  } finally {
+    state.detailLoading.delete(String(soId));
+    renderTable(state.filteredRows);
+  }
+}
 function tableRow(row) {
   const expanded = state.expanded.has(String(row.sales_order_id));
   return `
@@ -561,9 +649,9 @@ function tableRow(row) {
       <td class="num">${formatQty(row.invoiced_qty)}</td>
       <td class="progress-cell">${miniProgress(row.qty_delivery_progress_ratio)}</td>
       <td class="progress-cell">${miniProgress(row.qty_invoice_progress_ratio)}</td>
-      <td class="num">${formatAmount(row.ordered_amount)}</td>
-      <td class="num">${formatAmount(row.delivered_amount)}</td>
-      <td class="num">${formatAmount(row.invoiced_amount)}</td>
+      <td class="num">${formatAmount(row.ordered_amount_idr)}</td>
+      <td class="num">${formatAmount(row.delivered_amount_idr)}</td>
+      <td class="num">${formatAmount(row.invoiced_amount_idr)}</td>
       <td class="progress-cell">${miniProgress(row.amount_delivery_progress_ratio)}</td>
       <td class="progress-cell">${miniProgress(row.amount_invoice_progress_ratio)}</td>
     </tr>
@@ -639,15 +727,23 @@ function renderChecklist(filterKey) {
   const options = state.filterOptions[filterKey] || [];
   const selected = state.filters[filterKey];
   const summary = checklistSummary(filterKey, config.allLabel, config.label);
+  const actions = filterKey === "status"
+    ? `
+      <div class="checklist-actions">
+        <button type="button" data-checklist-action="active" data-filter="${filterKey}">Active only</button>
+        <button type="button" data-checklist-action="all" data-filter="${filterKey}">All statuses</button>
+      </div>`
+    : `
+      <div class="checklist-actions">
+        <button type="button" data-checklist-action="select" data-filter="${filterKey}">Select All</button>
+        <button type="button" data-checklist-action="clear" data-filter="${filterKey}">Clear</button>
+      </div>`;
   config.el().innerHTML = `
     <button class="checklist-button" type="button" data-checklist-toggle="${filterKey}" aria-expanded="false">
       <span>${summary}</span>
     </button>
     <div class="checklist-menu" role="group" aria-label="${config.allLabel}">
-      <div class="checklist-actions">
-        <button type="button" data-checklist-action="select" data-filter="${filterKey}">Select All</button>
-        <button type="button" data-checklist-action="clear" data-filter="${filterKey}">Clear</button>
-      </div>
+      ${actions}
       <div class="checklist-options">
         ${options.map((value) => `
           <label class="checklist-option">
@@ -706,6 +802,9 @@ function rowMatchesCurrentFilters(row, options = {}) {
   const matchesSource = options.skipSource || selectionMatches("source", row.source_type);
   const matchesStatus = options.skipStatus || selectionMatches("status", row.sales_order_state);
   const matchesFollowUp = options.skipFollowUp || selectionMatches("followUp", row.follow_up_status);
+  const matchesQuickFilter = !state.quickFilter
+    || (state.quickFilter === "DELIVERED_SO" && row.has_delivered_qty)
+    || (state.quickFilter === "INVOICED_SO" && row.has_invoiced_qty);
 
   return matchesSo
     && matchesYear
@@ -762,9 +861,9 @@ function exportFilteredRows() {
     ["Invoiced Qty", "invoiced_qty"],
     ["Qty Delivery %", (row) => formatPercent(row.qty_delivery_progress_ratio)],
     ["Qty Invoice %", (row) => formatPercent(row.qty_invoice_progress_ratio)],
-    ["Ordered Amount", "ordered_amount"],
-    ["Delivered Amount", "delivered_amount"],
-    ["Invoiced Amount", "invoiced_amount"],
+    ["Ordered Amount IDR", "ordered_amount_idr"],
+    ["Delivered Amount IDR", "delivered_amount_idr"],
+    ["Invoiced Amount IDR", "invoiced_amount_idr"],
     ["Amount Delivery %", (row) => formatPercent(row.amount_delivery_progress_ratio)],
     ["Amount Invoice %", (row) => formatPercent(row.amount_invoice_progress_ratio)],
     ["IO Count", "internal_order_count"],
@@ -809,8 +908,9 @@ async function loadDashboard() {
       throw new Error(`Request failed: ${response.status}`);
     }
     const payload = await response.json();
-    state.rows = payload.rows || [];
+    state.rows = (payload.rows || []).map((row) => ({ ...row, detail_loaded: false }));
     state.expanded.clear();
+    state.detailLoading.clear();
     populateFilters(payload.filters || {});
     applyFilters();
     els.lastLoaded.textContent = `Loaded ${new Date().toLocaleString()}`;
@@ -829,7 +929,8 @@ function clearFilters() {
   state.filters.productType.clear();
   state.filters.source.clear();
   state.filters.followUp.clear();
-  state.filters.status = new Set(activeStatusValues());
+  setActiveOnlyStatus();
+  state.quickFilter = "";
   applyFilters();
 }
 
@@ -854,6 +955,8 @@ function handleChecklistClick(event) {
   if (action) {
     const filterKey = action.dataset.filter;
     if (action.dataset.checklistAction === "select") state.filters[filterKey] = new Set(state.filterOptions[filterKey]);
+    else if (action.dataset.checklistAction === "active") setActiveOnlyStatus();
+    else if (action.dataset.checklistAction === "all") setAllStatuses();
     else state.filters[filterKey].clear();
     applyFilters();
     event.stopPropagation();
@@ -910,17 +1013,42 @@ els.sourceStrip.addEventListener("click", (event) => {
   if (!chip) return;
   setSingleFilter("source", chip.dataset.sourceType);
 });
+function handleKpiAction(card) {
+  const action = card.dataset.kpiAction;
+  if (action === "ACTIVE_SO") {
+    setActiveOnlyStatus();
+    state.quickFilter = "";
+    applyFilters();
+    return;
+  }
+  if (action === "DELIVERED_SO" || action === "INVOICED_SO") {
+    toggleQuickFilter(action);
+    return;
+  }
+  if (action === "DELAYED_DELIVERY" || action === "WAITING_INVOICE") {
+    setFollowUpFilter(action);
+  }
+}
+
 els.kpiGrid.addEventListener("click", (event) => {
-  const card = event.target.closest("[data-source-type]");
-  if (!card) return;
-  setSingleFilter("source", card.dataset.sourceType);
+  const kpiCard = event.target.closest("[data-kpi-action]");
+  if (kpiCard) {
+    handleKpiAction(kpiCard);
+    return;
+  }
+  const sourceCard = event.target.closest("[data-source-type]");
+  if (!sourceCard) return;
+  setSingleFilter("source", sourceCard.dataset.sourceType);
 });
 els.kpiGrid.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" && event.key !== " ") return;
-  const card = event.target.closest("[data-source-type]");
+  const kpiCard = event.target.closest("[data-kpi-action]");
+  const sourceCard = event.target.closest("[data-source-type]");
+  const card = kpiCard || sourceCard;
   if (!card) return;
   event.preventDefault();
-  setSingleFilter("source", card.dataset.sourceType);
+  if (kpiCard) handleKpiAction(kpiCard);
+  else setSingleFilter("source", sourceCard.dataset.sourceType);
 });
 els.dashboardRows.addEventListener("click", (event) => {
   const button = event.target.closest("[data-so]");

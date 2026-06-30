@@ -278,3 +278,19 @@ docs/06_Investigations/IO_BACKED_MO_CORRELATION_AUDIT.sql
 - Shared IO now shows actual shared IO reference values.
 - MO Qty remains traceability/correlation-only, with done/in-progress distinction.
 - No profitability, cost, AR, margin, or allocation added.
+## Phase 2A.1 Follow-Up Patch After `997e21a`
+
+- Follow-up patch after commit `997e21a`.
+- SO Status checklist behavior made safer with explicit Active only / All statuses behavior.
+- More KPI cards became clickable where filterable.
+- Expanded Sales Order detail simplified.
+- Removed noisy scorecard summary cards from expanded detail.
+- Removed separate Internal Orders section from expanded Sales Order detail.
+- Kept SO Lines, Manufacturing Orders / JO, and IO-backed Manufacturing tables.
+- Added RKB table to expanded Sales Order detail.
+- Added Purchase Orders table to expanded Sales Order detail.
+- RKB and Purchase Order detail arrays load on row expansion to keep the main dashboard response usable.
+- Sales Order monetary values are displayed in IDR using `sale_order.currency_rate` as a multiplier with fallback rate 1.
+- Purchase Order monetary values are displayed in IDR using verified PO line field `purchase_order_line.x_studio_currency_rate_inverse` as a multiplier with fallback rate 1.
+- Manufacturing Orders remain quantity/status traceability only unless a valid monetary source exists.
+- No profitability, cost, AR, margin, or allocation added.
