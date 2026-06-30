@@ -286,11 +286,14 @@ docs/06_Investigations/IO_BACKED_MO_CORRELATION_AUDIT.sql
 - Expanded Sales Order detail simplified.
 - Removed noisy scorecard summary cards from expanded detail.
 - Removed separate Internal Orders section from expanded Sales Order detail.
-- Kept SO Lines, Manufacturing Orders / JO, and IO-backed Manufacturing tables.
-- Added RKB table to expanded Sales Order detail.
-- Added Purchase Orders table to expanded Sales Order detail.
-- RKB and Purchase Order detail arrays load on row expansion to keep the main dashboard response usable.
+- Kept SO Lines, Manufacturing Orders / JO, and IO-backed Manufacturing tables only.
+- Changed direction: RKB, ROP, and Purchase Order detail are dropped from expanded Sales Order detail for now.
+- Reason: RKB, ROP, and Purchase Order detail is too heavy for this dashboard and better suited for a separate procurement/material traceability report.
+- Current Sales Order dashboard remains lightweight and operational.
+- Amount Delivery % and Amount Invoice % are capped at 100%.
+- Non-product, down-payment, no-product, and placeholder SO lines are excluded from progress calculations where detectable from synced Sales Order line fields.
+- Default Year filter is current year `2026` on first load and main Clear.
 - Sales Order monetary values are displayed in IDR using `sale_order.currency_rate` as a multiplier with fallback rate 1.
-- Purchase Order monetary values are displayed in IDR using verified PO line field `purchase_order_line.x_studio_currency_rate_inverse` as a multiplier with fallback rate 1.
 - Manufacturing Orders remain quantity/status traceability only unless a valid monetary source exists.
+- Future report direction: separate Sales Order / Internal Order -> RKB -> ROP / Procurement Request -> Purchase Order -> Receipt / Stock -> Manufacturing Order -> Finished Good flow.
 - No profitability, cost, AR, margin, or allocation added.

@@ -1,4 +1,5 @@
 const ACTIVE_STATUS_FILTER = "__ACTIVE__";
+const DEFAULT_YEAR_FILTER = "2026";
 
 const state = {
   rows: [],
@@ -24,6 +25,7 @@ sortDirection: "asc",
     followUp: new Set(),
   },
   filtersInitialized: false,
+  quickFilter: "",
 };
 
 const els = {
@@ -147,6 +149,11 @@ const quickFilterLabels = {
   INVOICED_SO: "Invoiced SO",
 };
 
+function setDefaultYearFilter() {
+  state.filters.year = state.filterOptions.year.includes(DEFAULT_YEAR_FILTER)
+    ? new Set([DEFAULT_YEAR_FILTER])
+    : new Set();
+}
 function setActiveOnlyStatus() {
   state.filters.status = new Set(activeStatusValues());
 }
@@ -426,6 +433,7 @@ function renderLineRows(lines) {
           <th class="num">Invoiced Amount IDR</th>
           <th>Qty Delivery %</th>
           <th>Qty Invoice %</th>
+          <th>Progress Basis</th>
           <th>Source</th>
         </tr>
       </thead>
@@ -442,6 +450,7 @@ function renderLineRows(lines) {
             <td class="num">${formatAmount(line.invoiced_amount_idr)}</td>
             <td>${formatPercent(line.qty_delivery_progress_ratio)}</td>
             <td>${formatPercent(line.qty_invoice_progress_ratio)}</td>
+            <td>${safeText(line.progress_basis || (line.is_countable_sales_line ? "Counted" : "Excluded"))}</td>
             <td>${sourceBadge(line.line_source_type)}</td>
           </tr>
         `).join("")}
@@ -512,70 +521,6 @@ function renderIoBackedManufacturing(correlations) {
   `;
 }
 
-function renderRkbRows(lines) {
-  if (!lines || !lines.length) {
-    return '<div class="detail-empty">No related RKB lines found.</div>';
-  }
-  return `
-    <table class="detail-table">
-      <thead><tr><th>RKB Reference</th><th>Link Basis</th><th>Product</th><th>Description</th><th class="num">Qty</th><th>UoM</th><th class="num">Unit Price</th><th class="num">Amount</th><th>Status</th><th>Requester</th><th>Needed Date</th><th>IO</th><th>JO / Production SO</th></tr></thead>
-      <tbody>
-        ${lines.map((line) => `
-          <tr>
-            <td>${safeText(line.rkb_reference)}</td>
-            <td>${safeText(line.rkb_link_basis)}</td>
-            <td>${safeText(line.product_name)}</td>
-            <td>${safeText(line.description)}</td>
-            <td class="num">${formatQty(line.quantity)}</td>
-            <td>${safeText(line.unit_of_measure)}</td>
-            <td class="num">${formatAmount(line.unit_price)}</td>
-            <td class="num">${formatAmount(line.amount)}</td>
-            <td>${safeText(line.status)}</td>
-            <td>${safeText(line.requester)}</td>
-            <td>${formatDate(line.needed_date)}</td>
-            <td>${safeText(line.internal_order_number)}</td>
-            <td>${safeText(line.job_order_number)}</td>
-          </tr>
-        `).join("")}
-      </tbody>
-    </table>
-  `;
-}
-
-function renderPurchaseOrderRows(lines) {
-  if (!lines || !lines.length) {
-    return '<div class="detail-empty">No related Purchase Order lines found.</div>';
-  }
-  return `
-    <table class="detail-table">
-      <thead><tr><th>PO Reference</th><th>Link Basis</th><th>Vendor</th><th>Product</th><th>Description</th><th class="num">Ordered Qty</th><th class="num">Received Qty</th><th class="num">Billed Qty</th><th>UoM</th><th>Currency</th><th class="num">Unit Price Original</th><th class="num">Amount Original</th><th class="num">Unit Price IDR</th><th class="num">Amount IDR</th><th>Status</th><th>Expected Arrival</th><th>IO</th><th>JO / Production SO</th></tr></thead>
-      <tbody>
-        ${lines.map((line) => `
-          <tr>
-            <td>${safeText(line.po_reference)}</td>
-            <td>${safeText(line.po_link_basis)}</td>
-            <td>${safeText(line.vendor_name)}</td>
-            <td>${safeText(line.product_name)}</td>
-            <td>${safeText(line.description)}</td>
-            <td class="num">${formatQty(line.ordered_quantity)}</td>
-            <td class="num">${formatQty(line.received_quantity)}</td>
-            <td class="num">${formatQty(line.billed_quantity)}</td>
-            <td>${safeText(line.unit_of_measure)}</td>
-            <td>${safeText(line.currency)}</td>
-            <td class="num">${formatAmount(line.unit_price_original)}</td>
-            <td class="num">${formatAmount(line.amount_original)}</td>
-            <td class="num">${formatAmount(line.po_unit_price_idr)}</td>
-            <td class="num">${formatAmount(line.po_amount_idr)}</td>
-            <td>${safeText(line.status)}</td>
-            <td>${formatDate(line.expected_arrival)}</td>
-            <td>${safeText(line.internal_order_number)}</td>
-            <td>${safeText(line.job_order_number)}</td>
-          </tr>
-        `).join("")}
-      </tbody>
-    </table>
-  `;
-}
 function detailRow(row) {
   return `
     <tr class="detail-row">
@@ -583,23 +528,15 @@ function detailRow(row) {
         <div class="detail-sections">
           <div class="detail-section">
             <h3>SO Lines</h3>
-            ${renderLineRows(row.sales_order_lines || [])}
+            ${row.detail_loaded ? renderLineRows(row.sales_order_lines || []) : '<div class="detail-empty">Loading SO lines...</div>'}
           </div>
           <div class="detail-section">
             <h3>Manufacturing Orders / JO</h3>
-            ${renderManufacturingOrders(row.manufacturing_orders || [])}
+            ${row.detail_loaded ? renderManufacturingOrders(row.manufacturing_orders || []) : '<div class="detail-empty">Loading Manufacturing Orders / JO...</div>'}
           </div>
           <div class="detail-section">
             <h3>IO-backed Manufacturing</h3>
-            ${renderIoBackedManufacturing(row.io_manufacturing_correlations || [])}
-          </div>
-          <div class="detail-section">
-            <h3>RKB</h3>
-            ${row.detail_loaded ? renderRkbRows(row.rkb_lines || []) : '<div class="detail-empty">Loading RKB lines...</div>'}
-          </div>
-          <div class="detail-section">
-            <h3>Purchase Orders</h3>
-            ${row.detail_loaded ? renderPurchaseOrderRows(row.purchase_order_lines || []) : '<div class="detail-empty">Loading Purchase Order lines...</div>'}
+            ${row.detail_loaded ? renderIoBackedManufacturing(row.io_manufacturing_correlations || []) : '<div class="detail-empty">Loading IO-backed Manufacturing...</div>'}
           </div>
         </div>
       </td>
@@ -615,12 +552,14 @@ async function loadRowDetails(soId) {
     const response = await fetch(`/api/dashboard/sales-orders/${encodeURIComponent(soId)}/details`, { headers: { Accept: "application/json" } });
     if (!response.ok) throw new Error(`Detail request failed: ${response.status}`);
     const detail = await response.json();
-    row.rkb_lines = detail.rkb_lines || [];
-    row.purchase_order_lines = detail.purchase_order_lines || [];
+    row.sales_order_lines = detail.sales_order_lines || [];
+    row.manufacturing_orders = detail.manufacturing_orders || [];
+    row.io_manufacturing_correlations = detail.io_manufacturing_correlations || [];
     row.detail_loaded = true;
   } catch (error) {
-    row.rkb_lines = [];
-    row.purchase_order_lines = [];
+    row.sales_order_lines = [];
+    row.manufacturing_orders = [];
+    row.io_manufacturing_correlations = [];
     row.detail_loaded = true;
     console.error(error);
   } finally {
@@ -775,7 +714,8 @@ function populateFilters(filters) {
 
   Object.keys(state.filters).forEach(keepValidSelections);
   if (!state.filtersInitialized) {
-    state.filters.status = new Set(activeStatusValues());
+    setDefaultYearFilter();
+    setActiveOnlyStatus();
     state.filtersInitialized = true;
   }
   renderChecklists();
@@ -813,6 +753,7 @@ function rowMatchesCurrentFilters(row, options = {}) {
     && matchesSource
     && matchesStatus
     && matchesFollowUp
+    && matchesQuickFilter
     && dateOverlaps(row, commitmentFrom, commitmentTo);
 }
 
@@ -924,7 +865,7 @@ function clearFilters() {
   els.soFilter.value = "";
   els.commitmentFromFilter.value = "";
   els.commitmentToFilter.value = "";
-  state.filters.year.clear();
+  setDefaultYearFilter();
   state.filters.customer.clear();
   state.filters.productType.clear();
   state.filters.source.clear();

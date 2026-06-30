@@ -459,12 +459,9 @@ async def sales_order_dashboard_data():
             unknown_movement_diagnostic_count,
             follow_up_status,
             follow_up_status_priority,
-            sales_order_lines,
-            internal_orders,
-            manufacturing_orders,
-            io_manufacturing_correlations,
-            '[]'::jsonb AS rkb_lines,
-            '[]'::jsonb AS purchase_order_lines,
+            '[]'::jsonb AS sales_order_lines,
+            '[]'::jsonb AS manufacturing_orders,
+            '[]'::jsonb AS io_manufacturing_correlations,
             diagnostics
         FROM vw_dashboard_sales_order_traceability
         ORDER BY
@@ -504,14 +501,17 @@ async def sales_order_dashboard_data():
 
 
 
+
+
 @app.get("/api/dashboard/sales-orders/{sales_order_id}/details", tags=["Dashboard"])
 async def sales_order_dashboard_detail(sales_order_id: int):
-    """Return heavy expanded detail sections for one Sales Order row."""
+    """Return allowed expanded detail sections for one Sales Order row."""
     sql = text("""
         SELECT
             sales_order_id,
-            rkb_lines,
-            purchase_order_lines
+            sales_order_lines,
+            manufacturing_orders,
+            io_manufacturing_correlations
         FROM vw_dashboard_sales_order_traceability
         WHERE sales_order_id = :sales_order_id
     """)
@@ -532,7 +532,6 @@ async def sales_order_dashboard_detail(sales_order_id: int):
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         pg.close()
-
 
 @app.get("/api/dashboard/internal-order-rekap", tags=["Dashboard"])
 async def internal_order_rekap_dashboard_data(
