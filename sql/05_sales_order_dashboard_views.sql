@@ -87,6 +87,7 @@ line_agg AS (
         COALESCE(SUM(CASE WHEN is_countable_sales_line THEN ordered_qty ELSE 0 END), 0)::numeric AS ordered_qty,
         COALESCE(SUM(CASE WHEN is_countable_sales_line THEN delivered_qty ELSE 0 END), 0)::numeric AS delivered_qty,
         COALESCE(SUM(CASE WHEN is_countable_sales_line THEN invoiced_qty ELSE 0 END), 0)::numeric AS invoiced_qty,
+        COALESCE(SUM(CASE WHEN is_countable_sales_line AND line_source_type = 'FROM_INTERNAL_ORDER' THEN ordered_qty ELSE 0 END), 0)::numeric AS ordered_qty_from_internal_order,
         COALESCE(SUM(CASE WHEN is_countable_sales_line AND line_source_type = 'FROM_INTERNAL_ORDER' THEN delivered_qty ELSE 0 END), 0)::numeric AS delivered_qty_from_internal_order,
         COALESCE(SUM(CASE WHEN is_countable_sales_line AND line_source_type = 'FROM_STOCK' THEN delivered_qty ELSE 0 END), 0)::numeric AS delivered_qty_from_stock,
         COALESCE(SUM(CASE WHEN is_countable_sales_line AND line_source_type = 'MAKE_TO_ORDER' THEN delivered_qty ELSE 0 END), 0)::numeric AS delivered_qty_make_to_order,
@@ -462,51 +463,159 @@ so_base AS (
     FROM sale_order so
     WHERE so.company_id::text = 'Nobi Putra Angkasa, PT'
 ),
-rkb_related_rows AS (
-    SELECT DISTINCT ON (sales_order_id, rkb_line_id)
+direct_rkb_rows AS (
+    SELECT DISTINCT
+        so.sales_order_id,
+        rkb.rkb_line_id,
+        COALESCE(rkb.planned_subtotal, 0)::numeric AS planned_subtotal
+    FROM so_base so
+    JOIN vw_rkb_planning_lines rkb
+        ON rkb.is_valid_for_metrics
+       AND rkb.job_order_number IS NOT NULL
+       AND rkb.job_order_number = so.sales_order_number
+),
+direct_rkb_cost_agg AS (
+    SELECT
         sales_order_id,
-        rkb_line_id,
-        rkb_link_basis,
-        COALESCE(planned_subtotal, 0)::numeric AS planned_subtotal
+        COALESCE(SUM(planned_subtotal), 0)::numeric AS direct_rkb_planned_cost
+    FROM direct_rkb_rows
+    GROUP BY sales_order_id
+),
+io_rkb_rows AS (
+    SELECT DISTINCT
+        io.internal_order_id,
+        io.internal_order_number,
+        rkb.rkb_line_id,
+        COALESCE(rkb.planned_subtotal, 0)::numeric AS planned_subtotal
     FROM (
-        SELECT
-            so.sales_order_id,
-            rkb.rkb_line_id,
-            'DIRECT_SO_OR_JO_RKB'::text AS rkb_link_basis,
-            rkb.planned_subtotal
-        FROM so_base so
-        JOIN vw_rkb_planning_lines rkb
-            ON rkb.is_valid_for_metrics
-           AND rkb.job_order_number IS NOT NULL
-           AND rkb.job_order_number = so.sales_order_number
-        UNION ALL
-        SELECT
-            links.sales_order_id,
-            rkb.rkb_line_id,
-            'IO_CORRELATED_RKB_UNALLOCATED'::text AS rkb_link_basis,
-            rkb.planned_subtotal
-        FROM so_io_links links
-        JOIN vw_rkb_planning_lines rkb
-            ON rkb.is_valid_for_metrics
-           AND rkb.internal_order_number IS NOT NULL
-           AND (
-                rkb.internal_order_number = links.internal_order_number
-                OR rkb.internal_order_number = links.internal_order_id::text
-           )
-    ) rkb_links
-    ORDER BY sales_order_id, rkb_line_id,
-        CASE rkb_link_basis WHEN 'DIRECT_SO_OR_JO_RKB' THEN 1 ELSE 2 END
+        SELECT DISTINCT internal_order_id, internal_order_number
+        FROM so_io_links
+    ) io
+    JOIN vw_rkb_planning_lines rkb
+        ON rkb.is_valid_for_metrics
+       AND rkb.internal_order_number IS NOT NULL
+       AND (
+            rkb.internal_order_number = io.internal_order_number
+            OR rkb.internal_order_number = io.internal_order_id::text
+       )
+),
+io_rkb_pool_by_internal_order AS (
+    SELECT
+        io.internal_order_id,
+        io.internal_order_number,
+        COALESCE(SUM(rkb_rows.planned_subtotal), 0)::numeric AS io_correlated_rkb_planned_cost_full,
+        COALESCE(corr.io_mo_qty, 0)::numeric AS io_finished_goods_qty,
+        CASE
+            WHEN COALESCE(corr.io_mo_qty, 0) > 0 THEN COALESCE(SUM(rkb_rows.planned_subtotal), 0)::numeric / NULLIF(COALESCE(corr.io_mo_qty, 0)::numeric, 0)
+        END AS io_rkb_planned_cost_per_unit,
+        CASE
+            WHEN COALESCE(corr.io_mo_qty, 0) > 0 THEN GREATEST(
+                COALESCE(SUM(rkb_rows.planned_subtotal), 0)::numeric
+                - (
+                    LEAST(COALESCE(corr.linked_so_ordered_qty, 0)::numeric, COALESCE(corr.io_mo_qty, 0)::numeric)
+                    * (COALESCE(SUM(rkb_rows.planned_subtotal), 0)::numeric / NULLIF(COALESCE(corr.io_mo_qty, 0)::numeric, 0))
+                ),
+                0
+            )::numeric
+            ELSE COALESCE(SUM(rkb_rows.planned_subtotal), 0)::numeric
+        END AS io_rkb_unallocated_planned_cost_current
+    FROM (
+        SELECT DISTINCT internal_order_id, internal_order_number
+        FROM so_io_links
+    ) io
+    LEFT JOIN io_rkb_rows rkb_rows
+        ON rkb_rows.internal_order_id = io.internal_order_id
+       AND rkb_rows.internal_order_number = io.internal_order_number
+    LEFT JOIN io_correlation_by_internal_order corr
+        ON corr.internal_order_id = io.internal_order_id
+       AND corr.internal_order_number = io.internal_order_number
+    GROUP BY io.internal_order_id, io.internal_order_number, corr.io_mo_qty, corr.linked_so_ordered_qty
+),
+so_io_rkb_allocation_rows AS (
+    SELECT
+        links.sales_order_id,
+        links.internal_order_id,
+        links.internal_order_number,
+        COALESCE(pool.io_correlated_rkb_planned_cost_full, 0)::numeric AS io_correlated_rkb_planned_cost_full,
+        pool.io_finished_goods_qty,
+        pool.io_rkb_planned_cost_per_unit,
+        CASE
+            WHEN COALESCE(counts.linked_io_count, 1) = 1 THEN COALESCE(line.ordered_qty_from_internal_order, 0)::numeric
+            ELSE 0::numeric
+        END AS so_ordered_qty_linked_to_io,
+        CASE
+            WHEN pool.io_rkb_planned_cost_per_unit IS NOT NULL
+             AND COALESCE(counts.linked_io_count, 1) = 1
+             AND COALESCE(line.ordered_qty_from_internal_order, 0) > 0
+                THEN COALESCE(line.ordered_qty_from_internal_order, 0)::numeric * pool.io_rkb_planned_cost_per_unit
+            ELSE 0::numeric
+        END AS io_correlated_rkb_planned_cost_allocated,
+        COALESCE(pool.io_rkb_unallocated_planned_cost_current, 0)::numeric AS io_rkb_unallocated_planned_cost,
+        CASE
+            WHEN COALESCE(pool.io_correlated_rkb_planned_cost_full, 0) = 0 THEN 'NO_RKB_FOUND'
+            WHEN COALESCE(counts.linked_io_count, 1) > 1 THEN 'IO_RKB_ALLOCATION_UNCLEAR_MULTI_IO_SO'
+            WHEN pool.io_rkb_planned_cost_per_unit IS NULL THEN 'IO_RKB_ALLOCATION_NO_FG_QTY_BASIS'
+            WHEN COALESCE(line.ordered_qty_from_internal_order, 0) > 0 THEN 'IO_RKB_COST_POOL_PER_SO_ORDERED_QTY'
+            ELSE 'NO_RKB_FOUND'
+        END AS io_rkb_allocation_basis
+    FROM so_io_links links
+    LEFT JOIN so_io_link_counts counts
+        ON counts.sales_order_id = links.sales_order_id
+    LEFT JOIN line_agg line
+        ON line.sales_order_id = links.sales_order_id
+    LEFT JOIN io_rkb_pool_by_internal_order pool
+        ON pool.internal_order_id = links.internal_order_id
+       AND pool.internal_order_number = links.internal_order_number
+),
+so_io_rkb_cost_agg AS (
+    SELECT
+        sales_order_id,
+        COALESCE(SUM(io_correlated_rkb_planned_cost_full), 0)::numeric AS io_correlated_rkb_planned_cost_full,
+        CASE
+            WHEN COALESCE(SUM(io_finished_goods_qty), 0)::numeric > 0 THEN COALESCE(SUM(io_correlated_rkb_planned_cost_full), 0)::numeric / NULLIF(COALESCE(SUM(io_finished_goods_qty), 0)::numeric, 0)
+        END AS io_rkb_planned_cost_per_unit,
+        COALESCE(SUM(io_correlated_rkb_planned_cost_allocated), 0)::numeric AS io_correlated_rkb_planned_cost_allocated,
+        COALESCE(SUM(io_rkb_unallocated_planned_cost), 0)::numeric AS io_rkb_unallocated_planned_cost,
+        BOOL_OR(io_correlated_rkb_planned_cost_full > 0) AS has_io_rkb,
+        BOOL_OR(io_correlated_rkb_planned_cost_full > io_correlated_rkb_planned_cost_allocated) AS has_io_rkb_unallocated,
+        BOOL_OR(io_rkb_allocation_basis = 'IO_RKB_ALLOCATION_NO_FG_QTY_BASIS') AS has_io_fg_qty_basis_missing,
+        BOOL_OR(io_rkb_allocation_basis = 'IO_RKB_ALLOCATION_UNCLEAR_MULTI_IO_SO') AS has_multi_io_rkb_unclear
+    FROM so_io_rkb_allocation_rows
+    GROUP BY sales_order_id
 ),
 rkb_cost_agg AS (
     SELECT
-        sales_order_id,
-        COALESCE(SUM(planned_subtotal), 0)::numeric AS rkb_planned_cost,
-        COALESCE(SUM(planned_subtotal) FILTER (WHERE rkb_link_basis = 'DIRECT_SO_OR_JO_RKB'), 0)::numeric AS direct_rkb_planned_cost,
-        COALESCE(SUM(planned_subtotal) FILTER (WHERE rkb_link_basis = 'IO_CORRELATED_RKB_UNALLOCATED'), 0)::numeric AS io_correlated_rkb_planned_cost,
-        BOOL_OR(rkb_link_basis = 'DIRECT_SO_OR_JO_RKB') AS has_direct_rkb,
-        BOOL_OR(rkb_link_basis = 'IO_CORRELATED_RKB_UNALLOCATED') AS has_io_rkb
-    FROM rkb_related_rows
-    GROUP BY sales_order_id
+        so.sales_order_id,
+        COALESCE(direct.direct_rkb_planned_cost, 0)::numeric AS direct_rkb_planned_cost,
+        COALESCE(io.io_correlated_rkb_planned_cost_full, 0)::numeric AS io_correlated_rkb_planned_cost_full,
+        COALESCE(io.io_rkb_planned_cost_per_unit, 0)::numeric AS io_rkb_planned_cost_per_unit,
+        COALESCE(io.io_correlated_rkb_planned_cost_allocated, 0)::numeric AS io_correlated_rkb_planned_cost_allocated,
+        COALESCE(io.io_rkb_unallocated_planned_cost, 0)::numeric AS io_rkb_unallocated_planned_cost,
+        COALESCE(direct.direct_rkb_planned_cost, 0)::numeric + COALESCE(io.io_correlated_rkb_planned_cost_allocated, 0)::numeric AS rkb_planned_cost,
+        COALESCE(io.io_correlated_rkb_planned_cost_allocated, 0)::numeric AS io_correlated_rkb_planned_cost,
+        CASE
+            WHEN COALESCE(direct.direct_rkb_planned_cost, 0) > 0 AND COALESCE(io.io_correlated_rkb_planned_cost_allocated, 0) > 0 THEN 'DIRECT_AND_IO_RKB_COST_POOL'
+            WHEN COALESCE(direct.direct_rkb_planned_cost, 0) > 0 THEN 'DIRECT_SO_OR_JO_RKB'
+            WHEN COALESCE(io.io_correlated_rkb_planned_cost_allocated, 0) > 0 THEN 'IO_RKB_COST_POOL_PER_SO_ORDERED_QTY'
+            WHEN COALESCE(io.io_correlated_rkb_planned_cost_full, 0) > 0 AND COALESCE(io.has_io_fg_qty_basis_missing, FALSE) THEN 'IO_RKB_ALLOCATION_NO_FG_QTY_BASIS'
+            WHEN COALESCE(io.io_correlated_rkb_planned_cost_full, 0) > 0 AND COALESCE(io.has_multi_io_rkb_unclear, FALSE) THEN 'IO_RKB_ALLOCATION_UNCLEAR_MULTI_IO_SO'
+            ELSE 'NO_RKB_FOUND'
+        END AS rkb_allocation_basis,
+        CASE
+            WHEN COALESCE(direct.direct_rkb_planned_cost, 0) > 0 AND COALESCE(io.io_correlated_rkb_planned_cost_allocated, 0) > 0 THEN 'DIRECT_AND_IO_RKB_COST_POOL'
+            WHEN COALESCE(direct.direct_rkb_planned_cost, 0) > 0 THEN 'DIRECT_SO_OR_JO_RKB'
+            WHEN COALESCE(io.io_correlated_rkb_planned_cost_allocated, 0) > 0 THEN 'IO_RKB_COST_POOL_PER_SO_ORDERED_QTY'
+            WHEN COALESCE(io.io_correlated_rkb_planned_cost_full, 0) > 0 AND COALESCE(io.has_io_fg_qty_basis_missing, FALSE) THEN 'IO_RKB_ALLOCATION_NO_FG_QTY_BASIS'
+            WHEN COALESCE(io.io_correlated_rkb_planned_cost_full, 0) > 0 AND COALESCE(io.has_multi_io_rkb_unclear, FALSE) THEN 'IO_RKB_ALLOCATION_UNCLEAR_MULTI_IO_SO'
+            ELSE 'NO_RKB_FOUND'
+        END AS rkb_cost_basis,
+        COALESCE(io.has_io_rkb, FALSE) AS has_io_rkb,
+        COALESCE(io.has_io_rkb_unallocated, FALSE) AS has_io_rkb_unallocated
+    FROM so_base so
+    LEFT JOIN direct_rkb_cost_agg direct
+        ON direct.sales_order_id = so.sales_order_id
+    LEFT JOIN so_io_rkb_cost_agg io
+        ON io.sales_order_id = so.sales_order_id
 ),
 actual_cost_inputs AS (
     SELECT
@@ -517,7 +626,7 @@ actual_cost_inputs AS (
         COALESCE(line.delivered_qty_make_to_order, 0)::numeric AS delivered_qty_make_to_order,
         COALESCE(line.delivered_qty_mixed_source, 0)::numeric AS delivered_qty_mixed_source,
         COALESCE(line.ordered_amount_idr, 0)::numeric AS sales_amount_idr,
-        COALESCE(rkb.has_io_rkb, FALSE) AS has_io_rkb,
+        COALESCE(rkb.has_io_rkb_unallocated, FALSE) AS has_io_rkb,
         COALESCE(mo.direct_actual_cost_full, 0)::numeric AS direct_actual_cost_full,
         mo.direct_actual_cost_per_unit,
         COALESCE(io_corr.io_backed_actual_cost_full, 0)::numeric AS io_backed_actual_cost_full,
@@ -727,12 +836,12 @@ SELECT
     COALESCE(rkb.rkb_planned_cost, 0) AS rkb_planned_cost,
     COALESCE(rkb.direct_rkb_planned_cost, 0) AS direct_rkb_planned_cost,
     COALESCE(rkb.io_correlated_rkb_planned_cost, 0) AS io_correlated_rkb_planned_cost,
-    CASE
-        WHEN COALESCE(rkb.has_direct_rkb, FALSE) AND COALESCE(rkb.has_io_rkb, FALSE) THEN 'DIRECT_AND_IO_CORRELATED_RKB'
-        WHEN COALESCE(rkb.has_direct_rkb, FALSE) THEN 'DIRECT_SO_OR_JO_RKB'
-        WHEN COALESCE(rkb.has_io_rkb, FALSE) THEN 'IO_CORRELATED_RKB_UNALLOCATED'
-        ELSE 'NO_RKB_FOUND'
-    END AS rkb_cost_basis,
+    COALESCE(rkb.io_correlated_rkb_planned_cost_full, 0) AS io_correlated_rkb_planned_cost_full,
+    COALESCE(rkb.io_rkb_planned_cost_per_unit, 0) AS io_rkb_planned_cost_per_unit,
+    COALESCE(rkb.io_correlated_rkb_planned_cost_allocated, 0) AS io_correlated_rkb_planned_cost_allocated,
+    COALESCE(rkb.io_rkb_unallocated_planned_cost, 0) AS io_rkb_unallocated_planned_cost,
+    rkb.rkb_allocation_basis,
+    rkb.rkb_cost_basis,
     COALESCE(line.delivered_amount_idr, 0) AS delivered_amount_idr,
     COALESCE(line.invoiced_amount_idr, 0) AS invoiced_amount_idr,
     COALESCE(line.currency_rate_used, 1) AS currency_rate_used,
