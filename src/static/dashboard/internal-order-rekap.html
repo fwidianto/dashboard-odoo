@@ -51,24 +51,22 @@
       <article class="kpi-card"><span class="kpi-label">Sales Order Link Status</span><strong id="kpiSalesOrderLink">-</strong></article>
       <article class="kpi-card"><span class="kpi-label">Product Count</span><strong id="kpiProductCount">-</strong></article>
       <article class="kpi-card"><span class="kpi-label">Full RKB Actual</span><strong id="kpiFullRkb">-</strong></article>
-      <article class="kpi-card"><span class="kpi-label">Trackable RKB Actual</span><strong id="kpiTrackableRkb">-</strong></article>
-      <article class="kpi-card"><span class="kpi-label">Non-Trackable RKB</span><strong id="kpiNonTrackableRkb">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">Product Item RKB</span><strong id="kpiTrackableRkb">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">Non-Product / Service Item RKB</span><strong id="kpiNonTrackableRkb">-</strong></article>
       <article class="kpi-card"><span class="kpi-label">ROP Amount</span><strong id="kpiRopAmount">-</strong></article>
       <article class="kpi-card"><span class="kpi-label">PO Amount</span><strong id="kpiPoAmount">-</strong></article>
-      <article class="kpi-card"><span class="kpi-label">Not Yet ROP Amount</span><strong id="kpiNotYetRopAmount">-</strong></article>
       <article class="kpi-card"><span class="kpi-label">Excess ROP Amount</span><strong id="kpiExcessRopAmount">-</strong></article>
       <article class="kpi-card"><span class="kpi-label">PO Received Ratio</span><strong id="kpiReceivedRatio">-</strong></article>
       <article class="kpi-card"><span class="kpi-label">PO Invoiced Ratio</span><strong id="kpiInvoicedRatio">-</strong></article>
-      <article class="kpi-card"><span class="kpi-label">Mixed UoM Count</span><strong id="kpiMixedUomCount">-</strong></article>
     </section>
 
     <section class="panel explanation-panel" aria-label="Dashboard explanation">
       <strong>How to read this view</strong>
       <ul>
         <li>Full RKB Actual includes all Odoo RKB rows.</li>
-        <li>Trackable RKB Actual is the normal product/material subset.</li>
-        <li>Non-Trackable RKB includes valid `!! - OTHERS`, budget/service, and adjustment rows.</li>
-        <li>Non-trackable rows are valid operational data, not an error.</li>
+        <li>Product Item RKB is the normal product/material subset.</li>
+        <li>Non-Product / Service Item RKB includes valid budget, service, and adjustment rows.</li>
+        <li>Non-product/service rows are valid operational data, not an error.</li>
       </ul>
     </section>
 
@@ -151,14 +149,13 @@
               <th class="num">PO Amount</th>
               <th class="num">PO Received Qty</th>
               <th class="num">PO Invoiced Qty</th>
-              <th class="num">Not Yet ROP Amount</th>
               <th class="num">Excess ROP Amount</th>
               <th>Flags</th>
             </tr>
           </thead>
           <tbody id="lineTableBody">
             <tr>
-              <td colspan="16" class="empty-cell">Loading Internal Order data...</td>
+              <td colspan="15" class="empty-cell">Loading Internal Order data...</td>
             </tr>
           </tbody>
         </table>
