@@ -136,32 +136,87 @@
           <span id="tableSubtitle">Loading Internal Order...</span>
         </div>
         <div class="table-toolbar-actions">
-          <span class="filter-state" id="activeFilterLabel">All Lines</span>
-          <button class="secondary-button clear-filter-button" id="clearFilterButton" type="button">Clear Filter</button>
+          <span class="filter-state" id="activeFilterLabel">Active filters: All Lines</span>
+          <button class="secondary-button clear-filter-button" id="clearFilterButton" type="button">Clear All Filters</button>
+          <button class="secondary-button clear-filter-button" id="clearSortButton" type="button">Clear Sort</button>
           <div class="toolbar-meta" id="tableMeta">-</div>
+        </div>
+      </div>
+      <div class="table-filter-controls">
+        <div class="filter-control-grid">
+          <label class="filter-control">
+            <span>Item Type</span>
+            <select id="itemTypeFilter" data-filter-control="itemType">
+              <option value="all">All Item Types</option>
+              <option value="TRACKABLE_PRODUCT">Product Item</option>
+              <option value="NON_TRACKABLE_OTHERS">Non-Product / Service Item</option>
+              <option value="BUDGET_SERVICE_ADJUSTMENT">Budget / Service Item</option>
+              <option value="UNKNOWN_PRODUCT_CLASS">Unclassified Item</option>
+            </select>
+          </label>
+          <label class="filter-control">
+            <span>Material Status</span>
+            <select id="materialStatusFilter" data-filter-control="materialStatus">
+              <option value="all">All Material Statuses</option>
+              <option value="RKB Only">RKB Only</option>
+              <option value="ROP Created">ROP Created</option>
+              <option value="PO Created">PO Created</option>
+              <option value="Partially Received">Partially Received</option>
+              <option value="Fully Received">Fully Received</option>
+              <option value="Needs Review">Needs Review</option>
+            </select>
+          </label>
+          <label class="filter-control">
+            <span>Sales Order Status</span>
+            <select id="salesOrderStatusFilter" data-filter-control="salesOrderStatus">
+              <option value="all">All Sales Order Statuses</option>
+              <option value="linked">Linked</option>
+              <option value="pre_so">Pre-SO</option>
+            </select>
+          </label>
+          <label class="filter-control">
+            <span>Presence / Document Status</span>
+            <select id="presenceStatusFilter" data-filter-control="presenceStatus">
+              <option value="all">All Presence States</option>
+              <option value="RKB_ONLY">RKB Only</option>
+              <option value="ROP_ONLY">ROP Only</option>
+              <option value="PO_ONLY">PO Only</option>
+              <option value="RKB_ROP">RKB and ROP</option>
+              <option value="RKB_PO">RKB and PO</option>
+              <option value="ROP_PO">ROP and PO</option>
+              <option value="RKB_ROP_PO">RKB, ROP, and PO</option>
+            </select>
+          </label>
+        </div>
+        <div class="flag-filter-group" aria-label="Flags">
+          <span class="filter-group-label">Flags</span>
+          <label class="flag-filter-checkbox" data-flag-filter="po_without_rop"><input type="checkbox" data-flag-filter="po_without_rop"> <span>PO Without ROP</span></label>
+          <label class="flag-filter-checkbox" data-flag-filter="rop_without_po"><input type="checkbox" data-flag-filter="rop_without_po"> <span>ROP Without PO</span></label>
+          <label class="flag-filter-checkbox" data-flag-filter="mixed_uom"><input type="checkbox" data-flag-filter="mixed_uom"> <span>Mixed UoM</span></label>
+          <label class="flag-filter-checkbox" data-flag-filter="non_trackable"><input type="checkbox" data-flag-filter="non_trackable"> <span>Non-Product / Service</span></label>
         </div>
       </div>
       <div class="table-scroll">
         <table>
           <thead>
             <tr>
-              <th>Internal Order</th>
-              <th>Sales Order Status</th>
-              <th>RKB Number</th>
-              <th>ROP / Approval Number</th>
-              <th>Related PO Number</th>
-              <th>Product Name</th>
-              <th>Item Type</th>
-              <th>Material Status</th>
-              <th>UoM</th>
-              <th class="num">RKB Qty</th>
-              <th class="num">RKB Amount</th>
-              <th class="num">ROP Qty</th>
-              <th class="num">ROP Amount</th>
-              <th class="num">PO Qty</th>
-              <th class="num">PO Amount</th>
-              <th class="num">Received Qty</th>
-              <th class="num">Invoiced Qty</th>
+              <th><button class="sort-button" type="button" data-sort-key="internal_order_number">Internal Order<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th><button class="sort-button" type="button" data-sort-key="sales_order_status">Sales Order Status<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th><button class="sort-button" type="button" data-sort-key="rkb_request">RKB Number<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th><button class="sort-button" type="button" data-sort-key="rop_request">ROP / Approval Number<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th><button class="sort-button" type="button" data-sort-key="related_po">Related PO Number<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th><button class="sort-button" type="button" data-sort-key="product_name">Product Name<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th><button class="sort-button" type="button" data-sort-key="item_type">Item Type<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th><button class="sort-button" type="button" data-sort-key="material_status">Material Status<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th><button class="sort-button" type="button" data-sort-key="uom">UoM<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th class="num"><button class="sort-button sort-button-num" type="button" data-sort-key="rkb_qty">RKB Qty<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th class="num"><button class="sort-button sort-button-num" type="button" data-sort-key="rkb_amount">RKB Amount<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th class="num"><button class="sort-button sort-button-num" type="button" data-sort-key="rop_qty">ROP Qty<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th class="num"><button class="sort-button sort-button-num" type="button" data-sort-key="rop_amount">ROP Amount<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th class="num"><button class="sort-button sort-button-num" type="button" data-sort-key="po_qty">PO Qty<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th class="num"><button class="sort-button sort-button-num" type="button" data-sort-key="po_amount">PO Amount<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th class="num"><button class="sort-button sort-button-num" type="button" data-sort-key="received_qty">Received Qty<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th class="num"><button class="sort-button sort-button-num" type="button" data-sort-key="invoiced_qty">Invoiced Qty<span class="sort-indicator" aria-hidden="true"></span></button></th>
               <th>Flags</th>
             </tr>
           </thead>

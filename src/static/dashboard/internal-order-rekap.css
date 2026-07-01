@@ -273,6 +273,105 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
+}
+
+.table-filter-controls {
+  display: grid;
+  gap: 12px;
+  margin-top: 10px;
+  margin-bottom: 12px;
+}
+
+.filter-control-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.filter-control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.filter-control span,
+.filter-group-label {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--muted);
+}
+
+.filter-control select {
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  padding: 0 10px;
+}
+
+.flag-filter-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.flag-filter-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 10px;
+  background: #fff;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.flag-filter-checkbox input {
+  margin: 0;
+}
+
+.sort-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sort-button-num {
+  justify-content: flex-end;
+  text-align: right;
+}
+
+.sort-button-num .sort-indicator {
+  order: -1;
+}
+
+.sort-indicator {
+  display: inline-block;
+  min-width: 12px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.sort-button.active .sort-indicator {
+  color: var(--accent-strong);
+}
+
+.table-toolbar-actions {
+  flex-wrap: wrap;
 }
 
 .filter-state {
@@ -310,6 +409,14 @@
 
 .table-panel table {
   min-width: 1880px;
+}
+
+.table-panel th {
+  vertical-align: top;
+}
+
+.table-panel th .sort-button {
+  white-space: normal;
 }
 
 .doc-ref-inline {

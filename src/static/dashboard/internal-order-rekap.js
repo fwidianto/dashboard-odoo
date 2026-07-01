@@ -40,6 +40,41 @@ const CARD_FILTER_DEFS = [
 
 const FILTER_DEFS = [...TAB_DEFS, ...CARD_FILTER_DEFS];
 
+const ITEM_TYPE_OPTIONS = [
+  { value: "all", label: "All Item Types" },
+  { value: "TRACKABLE_PRODUCT", label: "Product Item" },
+  { value: "NON_TRACKABLE_OTHERS", label: "Non-Product / Service Item" },
+  { value: "BUDGET_SERVICE_ADJUSTMENT", label: "Budget / Service Item" },
+  { value: "UNKNOWN_PRODUCT_CLASS", label: "Unclassified Item" },
+];
+
+const MATERIAL_STATUS_OPTIONS = [
+  { value: "all", label: "All Material Statuses" },
+  { value: "RKB Only", label: "RKB Only" },
+  { value: "ROP Created", label: "ROP Created" },
+  { value: "PO Created", label: "PO Created" },
+  { value: "Partially Received", label: "Partially Received" },
+  { value: "Fully Received", label: "Fully Received" },
+  { value: "Needs Review", label: "Needs Review" },
+];
+
+const SALES_ORDER_STATUS_OPTIONS = [
+  { value: "all", label: "All Sales Order Statuses" },
+  { value: "linked", label: "Linked" },
+  { value: "pre_so", label: "Pre-SO" },
+];
+
+const PRESENCE_STATUS_OPTIONS = [
+  { value: "all", label: "All Presence States" },
+  { value: "RKB_ONLY", label: "RKB Only" },
+  { value: "ROP_ONLY", label: "ROP Only" },
+  { value: "PO_ONLY", label: "PO Only" },
+  { value: "RKB_ROP", label: "RKB and ROP" },
+  { value: "RKB_PO", label: "RKB and PO" },
+  { value: "ROP_PO", label: "ROP and PO" },
+  { value: "RKB_ROP_PO", label: "RKB, ROP, and PO" },
+];
+
 const CLASSIFICATION_REASON_LABELS = {
   BRACKETED_PRODUCT_CODE: "Product Code",
   DOUBLE_BANG_OTHERS: "Other Item",
@@ -64,7 +99,24 @@ function mappedLabel(labels, value) {
 const state = {
   payload: null,
   lines: [],
-  activeTab: "all",
+  filters: {
+    tab: "all",
+    card: "all",
+    itemType: "all",
+    materialStatus: "all",
+    salesOrderStatus: "all",
+    presenceStatus: "all",
+    flags: {
+      po_without_rop: false,
+      rop_without_po: false,
+      mixed_uom: false,
+      non_trackable: false,
+    },
+  },
+  sort: {
+    key: null,
+    direction: "asc",
+  },
   loading: false,
 };
 
@@ -93,7 +145,12 @@ const els = {
   kpiInvoicedRatio: document.getElementById("kpiInvoicedRatio"),
   kpiGrid: document.querySelector(".kpi-grid-io"),
   clearFilterButton: document.getElementById("clearFilterButton"),
+  clearSortButton: document.getElementById("clearSortButton"),
   activeFilterLabel: document.getElementById("activeFilterLabel"),
+  itemTypeFilter: document.getElementById("itemTypeFilter"),
+  materialStatusFilter: document.getElementById("materialStatusFilter"),
+  salesOrderStatusFilter: document.getElementById("salesOrderStatusFilter"),
+  presenceStatusFilter: document.getElementById("presenceStatusFilter"),
   trackabilitySummary: document.getElementById("trackabilitySummary"),
   presenceSummary: document.getElementById("presenceSummary"),
   trackabilityBreakdownBody: document.getElementById("trackabilityBreakdownBody"),
@@ -263,6 +320,27 @@ function clearEmptyState() {
   els.warningList.innerHTML = "";
 }
 
+function resetInteractiveState() {
+  state.filters = {
+    tab: "all",
+    card: "all",
+    itemType: "all",
+    materialStatus: "all",
+    salesOrderStatus: "all",
+    presenceStatus: "all",
+    flags: {
+      po_without_rop: false,
+      rop_without_po: false,
+      mixed_uom: false,
+      non_trackable: false,
+    },
+  };
+  state.sort = {
+    key: null,
+    direction: "asc",
+  };
+}
+
 function renderWarnings(summary, metadata) {
   const warnings = Array.isArray(metadata?.warnings) ? metadata.warnings : [];
   if (!warnings.length) {
@@ -291,7 +369,7 @@ function renderSummary(summary, metadata) {
   els.kpiReceivedRatio.textContent = formatRatio(summary.received_ratio);
   els.kpiInvoicedRatio.textContent = formatRatio(summary.invoiced_ratio);
 
-  const infoBits = [summary.comparison_basis, summary.summary_scope, metadata?.generated_at, `Filter: ${activeTabLabel()}`].filter(Boolean);
+  const infoBits = [summary.comparison_basis, summary.summary_scope, metadata?.generated_at, activeFilterSummary()].filter(Boolean);
   els.tableSubtitle.textContent = infoBits.join(" | ");
   els.tableMeta.textContent = metadata?.line_count !== undefined ? `${formatCount(metadata.line_count)} lines` : "-";
 }
@@ -344,38 +422,127 @@ function matchesTab(row, tabKey) {
   return getFilterDefinition(tabKey).predicate(row);
 }
 
-function activeLines() {
-  return state.lines.filter((row) => matchesTab(row, state.activeTab));
+function selectOptionLabel(options, value) {
+  return options.find((entry) => entry.value === value)?.label || humanizeEnum(value);
 }
 
-function setActiveFilter(filterKey) {
+function activeFilterSummary() {
+  const entries = [];
+  if (state.filters.tab !== "all") entries.push(`Tab: ${getFilterDefinition(state.filters.tab).label}`);
+  if (state.filters.card !== "all") entries.push(`Card: ${getFilterDefinition(state.filters.card).label}`);
+  if (state.filters.itemType !== "all") entries.push(`Item Type: ${selectOptionLabel(ITEM_TYPE_OPTIONS, state.filters.itemType)}`);
+  if (state.filters.materialStatus !== "all") entries.push(`Material Status: ${selectOptionLabel(MATERIAL_STATUS_OPTIONS, state.filters.materialStatus)}`);
+  if (state.filters.salesOrderStatus !== "all") entries.push(`Sales Order Status: ${selectOptionLabel(SALES_ORDER_STATUS_OPTIONS, state.filters.salesOrderStatus)}`);
+  if (state.filters.presenceStatus !== "all") entries.push(`Presence: ${selectOptionLabel(PRESENCE_STATUS_OPTIONS, state.filters.presenceStatus)}`);
+  if (state.filters.flags.po_without_rop) entries.push("Flag: PO Without ROP");
+  if (state.filters.flags.rop_without_po) entries.push("Flag: ROP Without PO");
+  if (state.filters.flags.mixed_uom) entries.push("Flag: Mixed UoM");
+  if (state.filters.flags.non_trackable) entries.push("Flag: Non-Product / Service");
+  return entries.length ? `Active filters: ${entries.join(", ")}` : "Active filters: All Lines";
+}
+
+function setSingleFilter(group, filterKey) {
   const nextFilter = FILTER_DEFS.some((entry) => entry.key === filterKey) ? filterKey : "all";
-  state.activeTab = state.activeTab === nextFilter ? "all" : nextFilter;
+  const current = state.filters[group] || "all";
+  state.filters[group] = current === nextFilter ? "all" : nextFilter;
+  renderDashboard();
+}
+
+function setSelectFilter(group, value) {
+  state.filters[group] = value || "all";
+  renderDashboard();
+}
+
+function setFlagFilter(flagKey, checked) {
+  if (!(flagKey in state.filters.flags)) return;
+  state.filters.flags[flagKey] = checked;
+  renderDashboard();
+}
+
+function clearAllFilters() {
+  state.filters.tab = "all";
+  state.filters.card = "all";
+  state.filters.itemType = "all";
+  state.filters.materialStatus = "all";
+  state.filters.salesOrderStatus = "all";
+  state.filters.presenceStatus = "all";
+  state.filters.flags = {
+    po_without_rop: false,
+    rop_without_po: false,
+    mixed_uom: false,
+    non_trackable: false,
+  };
+  renderDashboard();
+}
+
+function clearSort() {
+  state.sort.key = null;
+  state.sort.direction = "asc";
   renderDashboard();
 }
 
 function renderTabs() {
   const buttons = TAB_DEFS.map((tab) => {
     const count = state.lines.filter((row) => tab.predicate(row)).length;
-    const active = tab.key === state.activeTab ? "active" : "";
-    return `<button class="tab-button ${active}" type="button" data-filter="${tab.key}" data-tab="${tab.key}" aria-pressed="${tab.key === state.activeTab}"><span>${escapeHtml(tab.label)}</span><strong>${formatCount(count)}</strong></button>`;
+    const active = tab.key === state.filters.tab ? "active" : "";
+    return `<button class="tab-button ${active}" type="button" data-filter="${tab.key}" data-tab="${tab.key}" aria-pressed="${tab.key === state.filters.tab}"><span>${escapeHtml(tab.label)}</span><strong>${formatCount(count)}</strong></button>`;
   });
   els.tabBar.innerHTML = buttons.join("");
 }
 
 function renderFilterState() {
-  const definition = getFilterDefinition(state.activeTab);
   if (els.activeFilterLabel) {
-    els.activeFilterLabel.textContent = definition.label;
+    els.activeFilterLabel.textContent = activeFilterSummary();
   }
   if (els.clearFilterButton) {
-    els.clearFilterButton.disabled = state.activeTab === "all";
+    const hasActiveFilters =
+      state.filters.tab !== "all" ||
+      state.filters.card !== "all" ||
+      state.filters.itemType !== "all" ||
+      state.filters.materialStatus !== "all" ||
+      state.filters.salesOrderStatus !== "all" ||
+      state.filters.presenceStatus !== "all" ||
+      Object.values(state.filters.flags).some(Boolean);
+    els.clearFilterButton.disabled = !hasActiveFilters;
   }
+  if (els.clearSortButton) {
+    els.clearSortButton.disabled = !state.sort.key;
+  }
+  if (els.itemTypeFilter) els.itemTypeFilter.value = state.filters.itemType;
+  if (els.materialStatusFilter) els.materialStatusFilter.value = state.filters.materialStatus;
+  if (els.salesOrderStatusFilter) els.salesOrderStatusFilter.value = state.filters.salesOrderStatus;
+  if (els.presenceStatusFilter) els.presenceStatusFilter.value = state.filters.presenceStatus;
+  document.querySelectorAll("input[data-flag-filter]").forEach((input) => {
+    const flagKey = input.dataset.flagFilter;
+    if (flagKey in state.filters.flags) {
+      input.checked = !!state.filters.flags[flagKey];
+    }
+  });
 
-  document.querySelectorAll("[data-filter]").forEach((element) => {
-    const isActive = element.dataset.filter === state.activeTab;
+  document.querySelectorAll("#tabBar [data-filter]").forEach((element) => {
+    const isActive = element.dataset.filter === state.filters.tab;
     element.classList.toggle("active", isActive);
     element.setAttribute("aria-pressed", String(isActive));
+  });
+
+  document.querySelectorAll(".kpi-grid-io [data-filter]").forEach((element) => {
+    const isActive = element.dataset.filter === state.filters.card;
+    element.classList.toggle("active", isActive);
+    element.setAttribute("aria-pressed", String(isActive));
+  });
+}
+
+function renderSortState() {
+  document.querySelectorAll("[data-sort-key]").forEach((button) => {
+    const key = button.dataset.sortKey;
+    const indicator = button.querySelector(".sort-indicator");
+    const isActive = key && key === state.sort.key;
+    const direction = isActive ? state.sort.direction : "";
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-sort", isActive ? (direction === "asc" ? "ascending" : "descending") : "none");
+    if (indicator) {
+      indicator.textContent = isActive ? (direction === "asc" ? "↑" : "↓") : "";
+    }
   });
 }
 
@@ -441,13 +608,115 @@ function renderLineFlags(row) {
   return flags.length ? `<div class="line-flags">${flags.join("")}</div>` : "-";
 }
 
+function matchesSelectFilter(value, selectedValue) {
+  return selectedValue === "all" || value === selectedValue;
+}
+
+function matchesMaterialStatus(row, selectedValue) {
+  return selectedValue === "all" || materialStatusMeta(row).label === selectedValue;
+}
+
+function matchesSalesOrderStatus(row, selectedValue) {
+  if (selectedValue === "all") return true;
+  const rowValue = row.has_sales_order_link ? "linked" : "pre_so";
+  return rowValue === selectedValue;
+}
+
+function matchesFlags(row) {
+  const { flags } = state.filters;
+  if (flags.po_without_rop && !row.po_without_rop_flag) return false;
+  if (flags.rop_without_po && !row.rop_without_po_flag) return false;
+  if (flags.mixed_uom && !row.mixed_uom_flag) return false;
+  if (flags.non_trackable && row.product_trackability_class === "TRACKABLE_PRODUCT") return false;
+  return true;
+}
+
+function matchesAllFilters(row) {
+  const { tab, card, itemType, materialStatus, salesOrderStatus, presenceStatus } = state.filters;
+  if (!matchesTab(row, tab)) return false;
+  if (!getFilterDefinition(card).predicate(row)) return false;
+  if (!matchesSelectFilter(row.product_trackability_class, itemType)) return false;
+  if (!matchesMaterialStatus(row, materialStatus)) return false;
+  if (!matchesSalesOrderStatus(row, salesOrderStatus)) return false;
+  if (!matchesSelectFilter(row.product_presence_status, presenceStatus)) return false;
+  if (!matchesFlags(row)) return false;
+  return true;
+}
+
+function getSortValue(row, key) {
+  switch (key) {
+    case "internal_order_number":
+      return row.internal_order_number || "";
+    case "sales_order_status":
+      return row.has_sales_order_link ? 1 : 0;
+    case "rkb_request":
+      return row.rkb_actual_request_summary || row.rkb_actual_request_numeric_summary || "";
+    case "rop_request":
+      return row.rop_request_summary || row.rop_request_numeric_summary || "";
+    case "related_po":
+      return row.po_order_reference_summary || "";
+    case "product_name":
+      return row.product_name || "";
+    case "item_type":
+      return mappedLabel(TRACKABILITY_LABELS, row.product_trackability_class);
+    case "material_status":
+      return materialStatusMeta(row).label;
+    case "uom":
+      return row.uom_summary || "";
+    case "rkb_qty":
+      return numberValue(row.rkb_actual_qty);
+    case "rkb_amount":
+      return numberValue(row.rkb_actual_subtotal);
+    case "rop_qty":
+      return numberValue(row.rop_qty);
+    case "rop_amount":
+      return numberValue(row.rop_subtotal);
+    case "po_qty":
+      return numberValue(row.po_qty);
+    case "po_amount":
+      return numberValue(row.po_subtotal);
+    case "received_qty":
+      return numberValue(row.po_received_qty);
+    case "invoiced_qty":
+      return numberValue(row.po_invoiced_qty);
+    default:
+      return "";
+  }
+}
+
+function sortRows(rows) {
+  if (!state.sort.key) return rows.slice();
+  const collator = new Intl.Collator("id", { numeric: true, sensitivity: "base" });
+  const direction = state.sort.direction === "desc" ? -1 : 1;
+  return rows.slice().sort((left, right) => {
+    const a = getSortValue(left, state.sort.key);
+    const b = getSortValue(right, state.sort.key);
+
+    const aEmpty = a === null || a === undefined || a === "";
+    const bEmpty = b === null || b === undefined || b === "";
+    if (aEmpty && bEmpty) return 0;
+    if (aEmpty) return 1 * direction;
+    if (bEmpty) return -1 * direction;
+
+    if (typeof a === "number" && typeof b === "number") {
+      return (a - b) * direction;
+    }
+
+    return collator.compare(String(a), String(b)) * direction;
+  });
+}
+
+function visibleRows() {
+  return sortRows(state.lines.filter((row) => matchesAllFilters(row)));
+}
+
 function renderLines() {
-  const rows = activeLines();
+  const rows = visibleRows();
   const total = state.lines.length;
   els.lineCount.textContent = `${formatCount(rows.length)} / ${formatCount(total)} lines`;
 
   if (!rows.length) {
-    els.lineTableBody.innerHTML = '<tr><td colspan="18" class="empty-cell">No Internal Order lines match the selected tab.</td></tr>';
+    els.lineTableBody.innerHTML = '<tr><td colspan="18" class="empty-cell">No Internal Order lines match the selected filters.</td></tr>';
     return;
   }
 
@@ -486,6 +755,7 @@ function renderDashboard() {
     renderTabs();
     renderLines();
     renderFilterState();
+    renderSortState();
     return;
   }
 
@@ -498,6 +768,7 @@ function renderDashboard() {
   renderTabs();
   renderLines();
   renderFilterState();
+  renderSortState();
 }
 
 async function loadDashboard(internalOrderNumber) {
@@ -524,16 +795,19 @@ async function loadDashboard(internalOrderNumber) {
 
     state.payload = payload;
     state.lines = Array.isArray(payload.lines) ? payload.lines : [];
-    state.activeTab = "all";
+    resetInteractiveState();
     renderDashboard();
     history.replaceState({}, "", `${location.pathname}?internal_order_number=${encodeURIComponent(normalized)}`);
     els.loadStatus.textContent = `Loaded ${normalized}`;
   } catch (error) {
     state.payload = null;
     state.lines = [];
+    resetInteractiveState();
     clearEmptyState();
     renderTabs();
     renderLines();
+    renderFilterState();
+    renderSortState();
     showError(error.message || "Failed to load Internal Order Rekap data.");
     els.loadStatus.textContent = "Failed to load";
   } finally {
@@ -541,28 +815,81 @@ async function loadDashboard(internalOrderNumber) {
   }
 }
 
-function activeTabLabel() {
-  return getFilterDefinition(state.activeTab).label;
-}
-
-function handleFilterInteraction(event) {
+function handleTabInteraction(event) {
   const control = event.target.closest("[data-filter]");
   if (!control) return;
-  setActiveFilter(control.dataset.filter || "all");
+  setSingleFilter("tab", control.dataset.filter || "all");
 }
 
-function handleFilterKeydown(event) {
+function handleCardInteraction(event) {
+  const control = event.target.closest("[data-filter]");
+  if (!control) return;
+  setSingleFilter("card", control.dataset.filter || "all");
+}
+
+function handleTabKeydown(event) {
   if (event.key !== "Enter" && event.key !== " ") return;
   const control = event.target.closest("[data-filter]");
   if (!control) return;
   event.preventDefault();
-  setActiveFilter(control.dataset.filter || "all");
+  setSingleFilter("tab", control.dataset.filter || "all");
 }
 
-els.tabBar.addEventListener("click", handleFilterInteraction);
-els.kpiGrid?.addEventListener("click", handleFilterInteraction);
-els.kpiGrid?.addEventListener("keydown", handleFilterKeydown);
-els.clearFilterButton?.addEventListener("click", () => setActiveFilter("all"));
+function handleCardKeydown(event) {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const control = event.target.closest("[data-filter]");
+  if (!control) return;
+  event.preventDefault();
+  setSingleFilter("card", control.dataset.filter || "all");
+}
+
+function handleSortInteraction(event) {
+  const control = event.target.closest("[data-sort-key]");
+  if (!control) return;
+  const key = control.dataset.sortKey;
+  if (!key) return;
+  if (state.sort.key !== key) {
+    state.sort.key = key;
+    state.sort.direction = "asc";
+  } else if (state.sort.direction === "asc") {
+    state.sort.direction = "desc";
+  } else {
+    state.sort.key = null;
+    state.sort.direction = "asc";
+  }
+  renderDashboard();
+}
+
+function handleSortKeydown(event) {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const control = event.target.closest("[data-sort-key]");
+  if (!control) return;
+  event.preventDefault();
+  handleSortInteraction(event);
+}
+
+function handleControlChange(event) {
+  const select = event.target.closest("[data-filter-control]");
+  if (select) {
+    setSelectFilter(select.dataset.filterControl, select.value);
+    return;
+  }
+
+  const checkbox = event.target.closest("[data-flag-filter]");
+  if (checkbox) {
+    setFlagFilter(checkbox.dataset.flagFilter, checkbox.checked);
+  }
+}
+
+els.tabBar.addEventListener("click", handleTabInteraction);
+els.tabBar.addEventListener("keydown", handleTabKeydown);
+els.kpiGrid?.addEventListener("click", handleCardInteraction);
+els.kpiGrid?.addEventListener("keydown", handleCardKeydown);
+els.clearFilterButton?.addEventListener("click", clearAllFilters);
+els.clearSortButton?.addEventListener("click", clearSort);
+document.addEventListener("click", handleSortInteraction);
+document.addEventListener("keydown", handleSortKeydown);
+document.addEventListener("change", handleControlChange);
 
 els.loadButton.addEventListener("click", () => loadDashboard(els.internalOrderInput.value));
 els.refreshButton.addEventListener("click", () => loadDashboard(els.internalOrderInput.value));
