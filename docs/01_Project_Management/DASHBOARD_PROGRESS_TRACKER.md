@@ -3,7 +3,7 @@
 **Date:** 2026-07-01  
 **Current project phase:** Phase 2A.3 - Order Material Tracking / Interactive Table Controls  
 **Current stable base:** Sales Order dashboard and Internal Order dashboard  
-**Next focus:** Basic local login/protected dashboard routes, then decide whether to add Sales Order Perspective before Material Search
+**Next focus:** LAN/hotspot demo validation, then decide whether to add Sales Order Perspective before Material Search
 
 ---
 
@@ -107,7 +107,8 @@ Universal search by product, SO, IO, RKB, ROP, PO, supplier, or customer.
 - [x] Define the local/demo login flow for dashboard access
 - [x] Protect dashboard routes for unauthenticated users
 - [x] Protect dashboard API routes for unauthenticated users
-- [ ] Validate redirects for unauthenticated dashboard and API access
+- [x] Validate redirects for unauthenticated dashboard and API access
+- [x] Confirm local login/logout flow on a fresh uvicorn instance
 
 ### Step 2 - Perspective planning
 
@@ -123,7 +124,8 @@ Universal search by product, SO, IO, RKB, ROP, PO, supplier, or customer.
 
 ### Step 4 - VP readiness
 
-- [ ] Run locally from PC
+- [x] Add VP demo runbook
+- [x] Run locally from PC
 - [ ] Test access from same Wi-Fi / hotspot
 - [ ] Prepare temporary tunnel only if needed
 - [ ] Tag first review version as `v0.1-vp-review`
@@ -183,6 +185,7 @@ Universal search by product, SO, IO, RKB, ROP, PO, supplier, or customer.
 - [x] No accounting profit claims
 - [x] No raw technical enum labels
 - [ ] Ready for VP review demo
+- [x] Local login/logout smoke test passed
 
 ---
 

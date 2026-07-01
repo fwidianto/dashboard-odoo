@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-01  
 **Status:** Phase 2A.3 implemented on the current page
-**Current next step:** Basic local login/protected dashboard routes for demo use
+**Current next step:** LAN/hotspot demo validation and VP prep
 **Primary base:** Internal Order Rekap  
 **Goal:** Track material/procurement chain from either Internal Order or Sales Order perspective.
 
@@ -337,5 +337,5 @@ Table readability and unified theme polish are postponed for now.
 Keep Material Search as a future separate page.
 Decide whether Sales Order Perspective should come next.
 
-Current next step: add basic local login and protect dashboard/API routes for demo use.
+Current next step: finish LAN/hotspot demo validation and VP prep.
 ```
