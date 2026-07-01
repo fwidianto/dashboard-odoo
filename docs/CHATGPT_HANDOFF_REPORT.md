@@ -800,10 +800,11 @@ Risk areas:
 
 Frontend readiness:
 
-- The read-only Internal Order traceability dashboard is implemented from `vw_dashboard_internal_order_traceability`. It now has linked SO amount, SO ordered/delivered/invoiced quantities, SO delivery/invoice progress ratios, PO ordered/received/invoiced quantities, PO receipt/invoice progress ratios, and accounting link counts.
-- A profitability dashboard is not ready.
-- Page 1 is implemented and the default table has been simplified. The safest next step is business-user review of the simplified table before adding drill-downs or profitability.
-- Phase 2A Sales Order Traceability is implemented as a traceability-only dashboard at `/dashboard/sales-orders`.
+- The current Internal Order Rekap has evolved into Order Material Tracking direction with compact KPI cards, document chain fields, IO Reference Amount, RKB Kontribusi, clickable KPI filters, and sortable/combinable table controls.
+- The implementation remains conservative: Sales Order Status is shown, but a true linked Sales Order Number display is still pending.
+- The safest next step is table readability and VP demo polish before any Sales Order Perspective work.
+- Material Search remains a separate future page, not part of the current implementation.
+- Phase 2A is now in the interactive table control stage on the Internal Order Rekap page.
 
 ## 8. Suggested Next Codex Task
 

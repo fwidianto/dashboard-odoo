@@ -1,7 +1,7 @@
 # Order Material Tracking Plan
 
 **Date:** 2026-07-01  
-**Status:** Planning agreed  
+**Status:** Phase 2A.3 implemented on the current page  
 **Primary base:** Internal Order Rekap  
 **Goal:** Track material/procurement chain from either Internal Order or Sales Order perspective.
 
@@ -9,13 +9,15 @@
 
 ## 1. Agreed Page Direction
 
-The current `Internal Order Rekap` should evolve into:
+The current `Internal Order Rekap` continues to evolve into:
 
 ```text
 Order Material Tracking
 ```
 
-The page should not be limited to Internal Order only. It should support two order perspectives:
+The page should stay order-based, but business-friendly.
+
+It should still support two order perspectives:
 
 ```text
 1. Internal Order Perspective
@@ -31,12 +33,12 @@ Are they still at RKB, ROP, PO, receipt, production, stock, or delivery?
 
 ---
 
-## 2. Perspective A — Internal Order
+## 2. Perspective A - Internal Order
 
 Flow:
 
 ```text
-IO → RKB IO → ROP → PO → Receipt → MO / Finished Goods → Linked SO
+IO -> RKB IO -> ROP -> PO -> Receipt -> MO / Finished Goods -> Linked SO
 ```
 
 This perspective is useful when:
@@ -61,12 +63,12 @@ For this IO:
 
 ---
 
-## 3. Perspective B — Sales Order
+## 3. Perspective B - Sales Order
 
 Flow:
 
 ```text
-SO → Related RKB / Request → ROP → PO → Receipt → MO / Delivery
+SO -> Related RKB / Request -> ROP -> PO -> Receipt -> MO / Delivery
 ```
 
 This perspective is useful when:
@@ -98,7 +100,7 @@ Included:
 
 ```text
 - Internal Order
-- Sales Order
+- Sales Order status
 - RKB
 - ROP / Procurement Request
 - Purchase Order
@@ -128,9 +130,9 @@ Cards should use compact number display.
 Examples:
 
 ```text
-1,250,000,000 → 1.25B
-845,000,000 → 845M
-12,500,000 → 12.5M
+1,250,000,000 -> 1.25B
+845,000,000 -> 845M
+12,500,000 -> 12.5M
 ```
 
 Tables may still show full numbers or formatted IDR where useful.
@@ -200,16 +202,16 @@ Unclassified Item
 
 ### 5.5 Cards should act as filters
 
-All summary cards should be clickable filters, similar to Sales Order dashboard.
+Summary cards should remain clickable filters, similar to Sales Order dashboard.
 
 Examples:
 
 ```text
-Click Product Item RKB → filter table to Product Item rows
-Click Non-Product / Service Item RKB → filter table to service/non-product rows
-Click RKB Only → filter table to RKB-only rows
-Click ROP Only → filter table to ROP-only rows
-Click PO Only → filter table to PO-only rows
+Click Product Item RKB -> filter table to Product Item rows
+Click Non-Product / Service Item RKB -> filter table to service/non-product rows
+Click RKB Only -> filter table to RKB-only rows
+Click ROP Only -> filter table to ROP-only rows
+Click PO Only -> filter table to PO-only rows
 ```
 
 ---
@@ -222,7 +224,7 @@ Important fields:
 
 ```text
 - Internal Order Number
-- Sales Order Number
+- Sales Order Number or Sales Order Status
 - Product Name
 - Product Item / Non-Product Service Item
 - RKB Number
@@ -271,52 +273,66 @@ Avoid overly technical statuses on the main screen.
 
 ## 8. Progress Checklist
 
-### Phase 1 — Stabilize current page
+### Phase 1 - Stabilize current page
 
-- [ ] Confirm `vw_internal_order_rekap_summary` loads
-- [ ] Confirm `vw_internal_order_rekap_lines` loads
-- [ ] Confirm current Internal Order Rekap API loads
-- [ ] Confirm selected IO example works, such as `426IO026`
+- [x] Confirm `vw_internal_order_rekap_summary` loads
+- [x] Confirm `vw_internal_order_rekap_lines` loads
+- [x] Confirm current Internal Order Rekap API loads
+- [x] Confirm selected IO example works, such as `426IO026`
 
-### Phase 2 — UI label cleanup
+### Phase 2 - UI label cleanup
 
-- [ ] Rename Trackable RKB Actual to Product Item RKB
-- [ ] Rename Non-Trackable RKB to Non-Product / Service Item RKB
-- [ ] Rename Trackable Product to Product Item
-- [ ] Remove underscores from visible labels
-- [ ] Hide Mixed UOM Count from main cards
-- [ ] Hide Not Yet ROP Amount from main cards
+- [x] Rename Trackable RKB Actual to Product Item RKB
+- [x] Rename Non-Trackable RKB to Non-Product / Service Item RKB
+- [x] Rename Trackable Product to Product Item
+- [x] Remove underscores from visible labels
+- [x] Hide Mixed UOM Count from main cards
+- [x] Hide Not Yet ROP Amount from main cards
 
-### Phase 3 — Card filtering
+### Phase 3 - Card filtering
 
-- [ ] Make summary cards clickable
-- [ ] Add active filter indicator
-- [ ] Add clear filter button
-- [ ] Ensure behavior matches Sales Order dashboard card filters
+- [x] Make summary cards clickable
+- [x] Add active filter indicator
+- [x] Add clear filter button
+- [x] Ensure behavior matches Sales Order dashboard card filters
 
-### Phase 4 — Table relationship fields
+### Phase 4 - Table relationship fields
 
-- [ ] Show Internal Order Number
-- [ ] Show Sales Order Number
-- [ ] Show RKB Number
-- [ ] Show ROP Number / Approval Number
-- [ ] Show Related PO Number
-- [ ] Show Product Name
-- [ ] Show RKB / ROP / PO / Receipt quantities
-- [ ] Show current material status
+- [x] Show Internal Order Number
+- [ ] Show actual linked Sales Order Number
+- [x] Show Sales Order Status as Linked / Pre-SO
+- [x] Show RKB Number
+- [x] Show ROP Number / Approval Number
+- [x] Show Related PO Number
+- [x] Show Product Name
+- [x] Show RKB / ROP / PO / Receipt quantities
+- [x] Show current material status
 
-### Phase 5 — Perspective toggle
+### Phase 5 - Interactive table controls
 
-- [ ] Add Internal Order Perspective
-- [ ] Add Sales Order Perspective
-- [ ] Confirm both perspectives use familiar business terms
-- [ ] Avoid overcrowding the first screen
+- [x] Add sortable table headers
+- [x] Add combined filters
+- [x] Add clear all filters
+- [x] Add clear sort
+- [x] Keep document references inline and comma-separated
 
-### Phase 6 — VP readiness
+### Phase 6 - VP readiness
 
-- [ ] Compact numbers on cards
-- [ ] Clear labels
-- [ ] No confusing diagnostics on main screen
-- [ ] No accounting profit claims
-- [ ] No raw technical enum labels
+- [x] Compact numbers on cards
+- [x] Clear labels
+- [x] No confusing diagnostics on main screen
+- [x] No accounting profit claims
+- [x] No raw technical enum labels
 - [ ] Ready for VP review demo
+
+---
+
+## 9. Next Work
+
+Suggested next prompt:
+
+```text
+Review the current Internal Order Rekap table for readability and VP demo polish.
+Keep Material Search as a future separate page.
+Decide whether Sales Order Perspective should come next.
+```
