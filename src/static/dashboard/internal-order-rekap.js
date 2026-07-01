@@ -27,6 +27,14 @@ const PRESENCE_LABELS = {
   RKB_ROP_PO: "RKB, ROP, and PO",
 };
 
+const CLASSIFICATION_REASON_LABELS = {
+  BRACKETED_PRODUCT_CODE: "Product Code",
+  DOUBLE_BANG_OTHERS: "Other Item",
+  CONTAINS_OTHERS: "Other Item",
+  BUDGET_SERVICE_TEXT: "Budget / Service Text",
+  UNKNOWN_FALLBACK: "Unclassified",
+};
+
 function humanizeEnum(value) {
   if (!value) return "-";
   return String(value)
