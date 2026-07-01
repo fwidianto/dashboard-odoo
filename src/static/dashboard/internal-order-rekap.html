@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Internal Order Rekap</title>
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/static/dashboard/internal-order-rekap.css">
 </head>
 <body>
@@ -49,15 +50,15 @@
       <article class="kpi-card"><span class="kpi-label">Internal Order Number</span><strong id="kpiInternalOrderNumber">-</strong></article>
       <article class="kpi-card"><span class="kpi-label">Company</span><strong id="kpiCompany">-</strong></article>
       <article class="kpi-card"><span class="kpi-label">Sales Order Link Status</span><strong id="kpiSalesOrderLink">-</strong></article>
-      <article class="kpi-card"><span class="kpi-label">Product Count</span><strong id="kpiProductCount">-</strong></article>
+      <article class="kpi-card kpi-card-filterable" data-filter="all" role="button" tabindex="0" aria-pressed="false"><span class="kpi-label">Product Count</span><strong id="kpiProductCount">-</strong></article>
       <article class="kpi-card"><span class="kpi-label">Full RKB Actual</span><strong id="kpiFullRkb">-</strong></article>
-      <article class="kpi-card"><span class="kpi-label">Product Item RKB</span><strong id="kpiTrackableRkb">-</strong></article>
-      <article class="kpi-card"><span class="kpi-label">Non-Product / Service Item RKB</span><strong id="kpiNonTrackableRkb">-</strong></article>
-      <article class="kpi-card"><span class="kpi-label">ROP Amount</span><strong id="kpiRopAmount">-</strong></article>
-      <article class="kpi-card"><span class="kpi-label">PO Amount</span><strong id="kpiPoAmount">-</strong></article>
-      <article class="kpi-card"><span class="kpi-label">Excess ROP Amount</span><strong id="kpiExcessRopAmount">-</strong></article>
-      <article class="kpi-card"><span class="kpi-label">PO Received Ratio</span><strong id="kpiReceivedRatio">-</strong></article>
-      <article class="kpi-card"><span class="kpi-label">PO Invoiced Ratio</span><strong id="kpiInvoicedRatio">-</strong></article>
+      <article class="kpi-card kpi-card-filterable" data-filter="trackable" role="button" tabindex="0" aria-pressed="false"><span class="kpi-label">Product Item RKB</span><strong id="kpiTrackableRkb">-</strong></article>
+      <article class="kpi-card kpi-card-filterable" data-filter="non_trackable" role="button" tabindex="0" aria-pressed="false"><span class="kpi-label">Non-Product / Service Item RKB</span><strong id="kpiNonTrackableRkb">-</strong></article>
+      <article class="kpi-card kpi-card-filterable" data-filter="rop_amount" role="button" tabindex="0" aria-pressed="false"><span class="kpi-label">ROP Amount</span><strong id="kpiRopAmount">-</strong></article>
+      <article class="kpi-card kpi-card-filterable" data-filter="po_amount" role="button" tabindex="0" aria-pressed="false"><span class="kpi-label">PO Amount</span><strong id="kpiPoAmount">-</strong></article>
+      <article class="kpi-card kpi-card-filterable" data-filter="excess_rop_amount" role="button" tabindex="0" aria-pressed="false"><span class="kpi-label">Excess ROP Amount</span><strong id="kpiExcessRopAmount">-</strong></article>
+      <article class="kpi-card kpi-card-filterable" data-filter="po_received_ratio" role="button" tabindex="0" aria-pressed="false"><span class="kpi-label">PO Received Ratio</span><strong id="kpiReceivedRatio">-</strong></article>
+      <article class="kpi-card kpi-card-filterable" data-filter="po_invoiced_ratio" role="button" tabindex="0" aria-pressed="false"><span class="kpi-label">PO Invoiced Ratio</span><strong id="kpiInvoicedRatio">-</strong></article>
     </section>
 
     <section class="panel explanation-panel" aria-label="Dashboard explanation">
@@ -130,7 +131,11 @@
           <strong id="lineCount">- lines</strong>
           <span id="tableSubtitle">Loading Internal Order...</span>
         </div>
-        <div class="toolbar-meta" id="tableMeta">-</div>
+        <div class="table-toolbar-actions">
+          <span class="filter-state" id="activeFilterLabel">All Lines</span>
+          <button class="secondary-button clear-filter-button" id="clearFilterButton" type="button">Clear Filter</button>
+          <div class="toolbar-meta" id="tableMeta">-</div>
+        </div>
       </div>
       <div class="table-scroll">
         <table>

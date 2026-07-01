@@ -27,6 +27,19 @@ const PRESENCE_LABELS = {
   RKB_ROP_PO: "RKB, ROP, and PO",
 };
 
+const CARD_FILTER_DEFS = [
+  { key: "all", label: "All Lines", predicate: () => true },
+  { key: "trackable", label: "Product Items", predicate: (row) => row.is_trackable_product === true },
+  { key: "non_trackable", label: "Non-Product / Service Items", predicate: (row) => row.product_trackability_class !== "TRACKABLE_PRODUCT" },
+  { key: "rop_amount", label: "ROP Amount", predicate: (row) => numberValue(row.rop_qty) > 0 || Math.abs(numberValue(row.rop_subtotal)) > 0 },
+  { key: "po_amount", label: "PO Amount", predicate: (row) => numberValue(row.po_qty) > 0 || Math.abs(numberValue(row.po_subtotal)) > 0 },
+  { key: "excess_rop_amount", label: "Excess ROP Amount", predicate: (row) => Math.abs(numberValue(row.excess_rop_amount)) > 0 },
+  { key: "po_received_ratio", label: "PO Received Ratio", predicate: (row) => numberValue(row.po_qty) > 0 || numberValue(row.po_received_qty) > 0 },
+  { key: "po_invoiced_ratio", label: "PO Invoiced Ratio", predicate: (row) => numberValue(row.po_qty) > 0 || numberValue(row.po_invoiced_qty) > 0 },
+];
+
+const FILTER_DEFS = [...TAB_DEFS, ...CARD_FILTER_DEFS];
+
 const CLASSIFICATION_REASON_LABELS = {
   BRACKETED_PRODUCT_CODE: "Product Code",
   DOUBLE_BANG_OTHERS: "Other Item",
@@ -75,6 +88,9 @@ const els = {
   kpiExcessRopAmount: document.getElementById("kpiExcessRopAmount"),
   kpiReceivedRatio: document.getElementById("kpiReceivedRatio"),
   kpiInvoicedRatio: document.getElementById("kpiInvoicedRatio"),
+  kpiGrid: document.querySelector(".kpi-grid-io"),
+  clearFilterButton: document.getElementById("clearFilterButton"),
+  activeFilterLabel: document.getElementById("activeFilterLabel"),
   trackabilitySummary: document.getElementById("trackabilitySummary"),
   presenceSummary: document.getElementById("presenceSummary"),
   trackabilityBreakdownBody: document.getElementById("trackabilityBreakdownBody"),
@@ -259,7 +275,7 @@ function renderSummary(summary, metadata) {
   els.kpiReceivedRatio.textContent = formatRatio(summary.received_ratio);
   els.kpiInvoicedRatio.textContent = formatRatio(summary.invoiced_ratio);
 
-  const infoBits = [summary.comparison_basis, summary.summary_scope, metadata?.generated_at].filter(Boolean);
+  const infoBits = [summary.comparison_basis, summary.summary_scope, metadata?.generated_at, `Filter: ${activeTabLabel()}`].filter(Boolean);
   els.tableSubtitle.textContent = infoBits.join(" | ");
   els.tableMeta.textContent = metadata?.line_count !== undefined ? `${formatCount(metadata.line_count)} lines` : "-";
 }
@@ -304,22 +320,47 @@ function renderPresenceBreakdown(rows) {
   `).join("");
 }
 
+function getFilterDefinition(filterKey) {
+  return FILTER_DEFS.find((entry) => entry.key === filterKey) || FILTER_DEFS[0];
+}
+
 function matchesTab(row, tabKey) {
-  const tab = TAB_DEFS.find((entry) => entry.key === tabKey) || TAB_DEFS[0];
-  return tab.predicate(row);
+  return getFilterDefinition(tabKey).predicate(row);
 }
 
 function activeLines() {
   return state.lines.filter((row) => matchesTab(row, state.activeTab));
 }
 
+function setActiveFilter(filterKey) {
+  const nextFilter = FILTER_DEFS.some((entry) => entry.key === filterKey) ? filterKey : "all";
+  state.activeTab = state.activeTab === nextFilter ? "all" : nextFilter;
+  renderDashboard();
+}
+
 function renderTabs() {
   const buttons = TAB_DEFS.map((tab) => {
     const count = state.lines.filter((row) => tab.predicate(row)).length;
     const active = tab.key === state.activeTab ? "active" : "";
-    return `<button class="tab-button ${active}" type="button" data-tab="${tab.key}"><span>${escapeHtml(tab.label)}</span><strong>${formatCount(count)}</strong></button>`;
+    return `<button class="tab-button ${active}" type="button" data-filter="${tab.key}" data-tab="${tab.key}" aria-pressed="${tab.key === state.activeTab}"><span>${escapeHtml(tab.label)}</span><strong>${formatCount(count)}</strong></button>`;
   });
   els.tabBar.innerHTML = buttons.join("");
+}
+
+function renderFilterState() {
+  const definition = getFilterDefinition(state.activeTab);
+  if (els.activeFilterLabel) {
+    els.activeFilterLabel.textContent = definition.label;
+  }
+  if (els.clearFilterButton) {
+    els.clearFilterButton.disabled = state.activeTab === "all";
+  }
+
+  document.querySelectorAll("[data-filter]").forEach((element) => {
+    const isActive = element.dataset.filter === state.activeTab;
+    element.classList.toggle("active", isActive);
+    element.setAttribute("aria-pressed", String(isActive));
+  });
 }
 
 function renderLineFlags(row) {
@@ -365,6 +406,7 @@ function renderDashboard() {
   if (!state.payload) {
     renderTabs();
     renderLines();
+    renderFilterState();
     return;
   }
 
@@ -376,6 +418,7 @@ function renderDashboard() {
   renderPresenceBreakdown(state.payload.breakdowns?.by_product_presence_status || []);
   renderTabs();
   renderLines();
+  renderFilterState();
 }
 
 async function loadDashboard(internalOrderNumber) {
@@ -420,16 +463,27 @@ async function loadDashboard(internalOrderNumber) {
 }
 
 function activeTabLabel() {
-  return (TAB_DEFS.find((entry) => entry.key === state.activeTab) || TAB_DEFS[0]).label;
+  return getFilterDefinition(state.activeTab).label;
 }
 
-els.tabBar.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-tab]");
-  if (!button) return;
-  state.activeTab = button.dataset.tab || "all";
-  renderTabs();
-  renderLines();
-});
+function handleFilterInteraction(event) {
+  const control = event.target.closest("[data-filter]");
+  if (!control) return;
+  setActiveFilter(control.dataset.filter || "all");
+}
+
+function handleFilterKeydown(event) {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const control = event.target.closest("[data-filter]");
+  if (!control) return;
+  event.preventDefault();
+  setActiveFilter(control.dataset.filter || "all");
+}
+
+els.tabBar.addEventListener("click", handleFilterInteraction);
+els.kpiGrid?.addEventListener("click", handleFilterInteraction);
+els.kpiGrid?.addEventListener("keydown", handleFilterKeydown);
+els.clearFilterButton?.addEventListener("click", () => setActiveFilter("all"));
 
 els.loadButton.addEventListener("click", () => loadDashboard(els.internalOrderInput.value));
 els.refreshButton.addEventListener("click", () => loadDashboard(els.internalOrderInput.value));
