@@ -6,6 +6,7 @@ DROP VIEW IF EXISTS vw_internal_order_po_agg CASCADE;
 DROP VIEW IF EXISTS vw_internal_order_rop_agg CASCADE; 
 DROP VIEW IF EXISTS vw_internal_order_rkb_actual_agg CASCADE; 
 DROP VIEW IF EXISTS vw_internal_order_rekap_scope CASCADE;
+DROP VIEW IF EXISTS vw_internal_order_reference_amount CASCADE;
 
 CREATE VIEW vw_internal_order_rekap_scope AS 
 WITH source_rows AS (     
@@ -53,6 +54,20 @@ LEFT JOIN bridge_flags     ON bridge_flags.internal_order_number = src.internal_
 GROUP BY src.internal_order_number;
 
 COMMENT ON VIEW vw_internal_order_rekap_scope IS     'Phase 1 Internal Order scope. One row per internal_order_number with RKB / ROP / PO source presence and Sales Order bridge flag.';
+
+CREATE VIEW vw_internal_order_reference_amount AS 
+WITH source_rows AS (     
+SELECT         NULLIF(BTRIM(COALESCE(io.internal_order_number::text, '')), '') AS internal_order_number,         io.company_name::text AS company_name,         io.approval_line_id,         COALESCE(io.planned_subtotal, 0)::numeric AS io_reference_subtotal,         NULLIF(BTRIM(COALESCE(io.approval_status::text, '')), '') AS approval_status,         NULLIF(BTRIM(COALESCE(io.normalized_status::text, '')), '') AS normalized_status     
+    FROM vw_approval_product_line_context io     WHERE io.approval_business_type = 'INTERNAL_ORDER'       AND io.is_valid_for_metrics       AND NULLIF(BTRIM(COALESCE(io.internal_order_number::text, '')), '') IS NOT NULL       AND NOT (             COALESCE(io.approval_status::text, '') ILIKE '%cancel%'          OR COALESCE(io.normalized_status::text, '') ILIKE '%cancel%'          OR COALESCE(io.approval_status::text, '') ILIKE '%reject%'          OR COALESCE(io.normalized_status::text, '') ILIKE '%reject%'       ) )
+
+SELECT     source_rows.internal_order_number,     STRING_AGG(DISTINCT source_rows.company_name, ', ' 
+ORDER BY source_rows.company_name)         
+        FILTER (WHERE NULLIF(BTRIM(COALESCE(source_rows.company_name, '')), '') IS NOT NULL) AS company_name,     COUNT(DISTINCT source_rows.approval_line_id) AS io_reference_line_count,     COALESCE(SUM(source_rows.io_reference_subtotal), 0)::numeric AS io_reference_amount 
+FROM source_rows 
+
+GROUP BY source_rows.internal_order_number;
+
+COMMENT ON VIEW vw_internal_order_reference_amount IS     'Aggregates MANUFACTURE approval product line subtotals by internal_order_number as the Internal Order reference amount.';
 
 CREATE VIEW vw_internal_order_rkb_actual_agg AS 
 WITH source_rows AS (     
@@ -371,6 +386,8 @@ SELECT
     lines.internal_order_number,
     MAX(lines.company_name) AS company_name,
     COALESCE(BOOL_OR(lines.has_sales_order_link), FALSE) AS has_sales_order_link,
+    MAX(io_ref.io_reference_line_count) AS io_reference_line_count,
+    MAX(io_ref.io_reference_amount)::numeric AS io_reference_amount,
     COUNT(*) AS product_count,
     COUNT(*) 
         FILTER (WHERE COALESCE(lines.rkb_actual_qty, 0) > 0) AS rkb_actual_product_count,
@@ -379,6 +396,14 @@ SELECT
     COUNT(*) 
         FILTER (WHERE COALESCE(lines.po_qty, 0) > 0) AS po_product_count,
     SUM(lines.rkb_actual_subtotal)::numeric AS rkb_actual_amount,
+    CASE
+        WHEN MAX(io_ref.io_reference_amount) IS NULL THEN NULL
+        ELSE (MAX(io_ref.io_reference_amount)::numeric - SUM(lines.rkb_actual_subtotal)::numeric)
+    END AS rkb_kontribusi,
+    CASE
+        WHEN MAX(io_ref.io_reference_amount) IS NULL OR MAX(io_ref.io_reference_amount) = 0 THEN NULL
+        ELSE ((MAX(io_ref.io_reference_amount)::numeric - SUM(lines.rkb_actual_subtotal)::numeric) / NULLIF(MAX(io_ref.io_reference_amount)::numeric, 0))
+    END AS rkb_kontribusi_pct,
     SUM(
     CASE 
         WHEN lines.product_trackability_class = 'TRACKABLE_PRODUCT'  THEN lines.rkb_actual_subtotal 
@@ -460,6 +485,8 @@ SELECT
     'ODOO_RKB_ACTUAL_BASELINE'::text AS comparison_basis,
     'INTERNAL_ORDER_REKAP_OPERATIONAL_SUMMARY'::text AS summary_scope
 FROM vw_internal_order_rekap_lines lines
+LEFT JOIN vw_internal_order_reference_amount io_ref
+    ON io_ref.internal_order_number = lines.internal_order_number
 
 GROUP BY lines.internal_order_number;
 

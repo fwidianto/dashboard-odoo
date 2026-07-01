@@ -51,7 +51,10 @@
       <article class="kpi-card"><span class="kpi-label">Company</span><strong id="kpiCompany">-</strong></article>
       <article class="kpi-card"><span class="kpi-label">Sales Order Link Status</span><strong id="kpiSalesOrderLink">-</strong></article>
       <article class="kpi-card kpi-card-filterable" data-filter="all" role="button" tabindex="0" aria-pressed="false"><span class="kpi-label">Product Count</span><strong id="kpiProductCount">-</strong></article>
-      <article class="kpi-card"><span class="kpi-label">Full RKB Actual</span><strong id="kpiFullRkb">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">IO Reference Amount</span><strong id="kpiIoReferenceAmount">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">RKB Actual Amount</span><strong id="kpiFullRkb">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">RKB Kontribusi</span><strong id="kpiRkbKontribusi">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label">RKB Kontribusi %</span><strong id="kpiRkbKontribusiPct">-</strong></article>
       <article class="kpi-card kpi-card-filterable" data-filter="trackable" role="button" tabindex="0" aria-pressed="false"><span class="kpi-label">Product Item RKB</span><strong id="kpiTrackableRkb">-</strong></article>
       <article class="kpi-card kpi-card-filterable" data-filter="non_trackable" role="button" tabindex="0" aria-pressed="false"><span class="kpi-label">Non-Product / Service Item RKB</span><strong id="kpiNonTrackableRkb">-</strong></article>
       <article class="kpi-card kpi-card-filterable" data-filter="rop_amount" role="button" tabindex="0" aria-pressed="false"><span class="kpi-label">ROP Amount</span><strong id="kpiRopAmount">-</strong></article>
@@ -64,7 +67,8 @@
     <section class="panel explanation-panel" aria-label="Dashboard explanation">
       <strong>How to read this view</strong>
       <ul>
-        <li>Full RKB Actual includes all Odoo RKB rows.</li>
+        <li>IO Reference Amount is the Marketing-submitted Internal Order value for future SO reference.</li>
+        <li>RKB Actual Amount includes all Odoo RKB rows.</li>
         <li>Product Item RKB is the normal product/material subset.</li>
         <li>Non-Product / Service Item RKB includes valid budget, service, and adjustment rows.</li>
         <li>Non-product/service rows are valid operational data, not an error.</li>

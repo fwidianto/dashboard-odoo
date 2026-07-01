@@ -80,7 +80,10 @@ const els = {
   kpiCompany: document.getElementById("kpiCompany"),
   kpiSalesOrderLink: document.getElementById("kpiSalesOrderLink"),
   kpiProductCount: document.getElementById("kpiProductCount"),
+  kpiIoReferenceAmount: document.getElementById("kpiIoReferenceAmount"),
   kpiFullRkb: document.getElementById("kpiFullRkb"),
+  kpiRkbKontribusi: document.getElementById("kpiRkbKontribusi"),
+  kpiRkbKontribusiPct: document.getElementById("kpiRkbKontribusiPct"),
   kpiTrackableRkb: document.getElementById("kpiTrackableRkb"),
   kpiNonTrackableRkb: document.getElementById("kpiNonTrackableRkb"),
   kpiRopAmount: document.getElementById("kpiRopAmount"),
@@ -159,6 +162,13 @@ function formatCompactAmount(value) {
   }
   return `Rp ${formatCompactNumber(value)}`;
 }
+
+function formatCompactAmountOrNA(value) {
+  if (value === null || value === undefined || value === "") {
+    return "N/A";
+  }
+  return formatCompactAmount(value);
+}
 function formatQty(value) {
   const numeric = numberValue(value);
   const digits = Math.abs(numeric % 1) > 0 ? 2 : 0;
@@ -226,7 +236,10 @@ function clearEmptyState() {
     els.kpiCompany,
     els.kpiSalesOrderLink,
     els.kpiProductCount,
+    els.kpiIoReferenceAmount,
     els.kpiFullRkb,
+    els.kpiRkbKontribusi,
+    els.kpiRkbKontribusiPct,
     els.kpiTrackableRkb,
     els.kpiNonTrackableRkb,
     els.kpiRopAmount,
@@ -266,7 +279,10 @@ function renderSummary(summary, metadata) {
   els.kpiCompany.textContent = safeText(summary.company_name);
   els.kpiSalesOrderLink.innerHTML = boolBadge(summary.has_sales_order_link);
   els.kpiProductCount.textContent = formatCompactNumber(summary.product_count);
+  els.kpiIoReferenceAmount.textContent = formatCompactAmountOrNA(summary.io_reference_amount);
   els.kpiFullRkb.textContent = formatCompactAmount(summary.rkb_actual_amount);
+  els.kpiRkbKontribusi.textContent = formatCompactAmountOrNA(summary.rkb_kontribusi);
+  els.kpiRkbKontribusiPct.textContent = formatRatio(summary.rkb_kontribusi_pct);
   els.kpiTrackableRkb.textContent = formatCompactAmount(summary.rkb_actual_trackable_amount);
   els.kpiNonTrackableRkb.textContent = formatCompactAmount(summary.rkb_actual_non_trackable_amount);
   els.kpiRopAmount.textContent = formatCompactAmount(summary.rop_amount);
