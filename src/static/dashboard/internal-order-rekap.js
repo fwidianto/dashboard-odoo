@@ -57,6 +57,7 @@ const MATERIAL_STATUS_OPTIONS = [
   { value: "Partially Received", label: "Partially Received" },
   { value: "Fully Received", label: "Fully Received" },
   { value: "Needs Review", label: "Needs Review" },
+  { value: "From Stock", label: "From Stock" },
 ];
 
 const SALES_ORDER_STATUS_OPTIONS = [
@@ -75,6 +76,14 @@ const PRESENCE_STATUS_OPTIONS = [
   { value: "ROP_PO", label: "ROP and PO" },
   { value: "RKB_ROP_PO", label: "RKB, ROP, and PO" },
 ];
+
+const SOURCE_PATH_LABELS = {
+  INTERNAL_ORDER: "Internal Order",
+  LINKED_INTERNAL_ORDER: "Linked IO",
+  DIRECT_SALES_ORDER: "Direct SO / JO",
+  FROM_STOCK: "From Stock",
+  UNKNOWN_SOURCE: "Needs Review",
+};
 
 const CLASSIFICATION_REASON_LABELS = {
   BRACKETED_PRODUCT_CODE: "Product Code",
@@ -140,6 +149,7 @@ const els = {
   kpiCompany: document.getElementById("kpiCompany"),
   kpiLinkStatusLabel: document.getElementById("kpiLinkStatusLabel"),
   kpiSalesOrderLink: document.getElementById("kpiSalesOrderLink"),
+  kpiProductCountLabel: document.getElementById("kpiProductCountLabel"),
   kpiProductCount: document.getElementById("kpiProductCount"),
   kpiIoReferenceLabel: document.getElementById("kpiIoReferenceLabel"),
   kpiIoReferenceAmount: document.getElementById("kpiIoReferenceAmount"),
@@ -351,7 +361,7 @@ function clearEmptyState() {
   els.presenceSummary.textContent = "-";
   els.trackabilityBreakdownBody.innerHTML = '<tr><td colspan="7" class="empty-cell">Loading breakdown...</td></tr>';
   els.presenceBreakdownBody.innerHTML = '<tr><td colspan="5" class="empty-cell">Loading breakdown...</td></tr>';
-  els.lineTableBody.innerHTML = '<tr><td colspan="19" class="empty-cell">Loading data...</td></tr>';
+  els.lineTableBody.innerHTML = '<tr><td colspan="20" class="empty-cell">Loading data...</td></tr>';
   els.tableSubtitle.textContent = `Loading ${perspectiveLabel()}...`;
   els.tableMeta.textContent = "-";
   els.lineCount.textContent = "- lines";
@@ -398,6 +408,7 @@ function renderSummary(summary, metadata) {
   if (els.kpiIoReferenceLabel) els.kpiIoReferenceLabel.textContent = isSalesOrder ? "Linked IO Reference Amount" : "IO Reference Amount";
   if (els.kpiRkbKontribusiLabel) els.kpiRkbKontribusiLabel.textContent = isSalesOrder ? "Linked IO RKB Kontribusi" : "RKB Kontribusi";
   if (els.kpiRkbKontribusiPctLabel) els.kpiRkbKontribusiPctLabel.textContent = isSalesOrder ? "Linked IO RKB Kontribusi %" : "RKB Kontribusi %";
+  if (els.kpiProductCountLabel) els.kpiProductCountLabel.textContent = isSalesOrder ? "Material Chain Rows" : "Product Count";
 
   els.kpiInternalOrderNumber.textContent = isSalesOrder
     ? safeText(metadata?.selected_sales_order_number || state.payload?.sales_order_number)
@@ -405,13 +416,24 @@ function renderSummary(summary, metadata) {
   els.kpiCompany.textContent = safeText(summary.company_name);
   if (isSalesOrder) {
     const linkedCount = numberValue(metadata?.linked_internal_order_count);
-    els.kpiSalesOrderLink.innerHTML = linkedCount > 0
-      ? badge(`${formatCount(linkedCount)} Linked IO`, "status-progress")
-      : badge("No Linked IO", "status-muted");
+    const directCount = numberValue(metadata?.direct_sales_order_chain_count) + numberValue(metadata?.from_stock_chain_count);
+    if (linkedCount > 0 && directCount > 0) {
+      els.kpiSalesOrderLink.innerHTML = badge(`${formatCount(linkedCount)} Linked IO + ${formatCount(directCount)} Direct Rows`, "status-progress");
+    } else if (linkedCount > 0) {
+      els.kpiSalesOrderLink.innerHTML = badge(`${formatCount(linkedCount)} Linked IO`, "status-progress");
+    } else if (directCount > 0) {
+      els.kpiSalesOrderLink.innerHTML = badge(`${formatCount(directCount)} Direct Rows`, "status-progress");
+    } else {
+      els.kpiSalesOrderLink.innerHTML = badge("No Material Chain", "status-muted");
+    }
   } else {
     els.kpiSalesOrderLink.innerHTML = boolBadge(summary.has_sales_order_link);
   }
   els.kpiProductCount.textContent = formatCompactNumber(summary.product_count);
+  const showLinkedIoAmountCards = !isSalesOrder || numberValue(metadata?.linked_internal_order_count) > 0;
+  [els.kpiIoReferenceAmount, els.kpiRkbKontribusi, els.kpiRkbKontribusiPct].forEach((element) => {
+    if (element?.closest) element.closest(".kpi-card").hidden = !showLinkedIoAmountCards;
+  });
   els.kpiIoReferenceAmount.textContent = formatCompactAmountOrNA(summary.io_reference_amount);
   els.kpiFullRkb.textContent = formatCompactAmount(summary.rkb_actual_amount);
   els.kpiRkbKontribusi.textContent = formatCompactAmountOrNA(summary.rkb_kontribusi);
@@ -427,7 +449,10 @@ function renderSummary(summary, metadata) {
   const linkedIoText = isSalesOrder && metadata?.linked_internal_order_numbers
     ? `Linked IO: ${metadata.linked_internal_order_numbers}`
     : null;
-  const infoBits = [linkedIoText, summary.comparison_basis, summary.summary_scope, metadata?.generated_at, activeFilterSummary()].filter(Boolean);
+  const directText = isSalesOrder && (numberValue(metadata?.direct_sales_order_chain_count) > 0 || numberValue(metadata?.from_stock_chain_count) > 0)
+    ? `Direct SO/JO rows: ${formatCount(numberValue(metadata.direct_sales_order_chain_count) + numberValue(metadata.from_stock_chain_count))}`
+    : null;
+  const infoBits = [linkedIoText, directText, summary.comparison_basis, summary.summary_scope, metadata?.generated_at, activeFilterSummary()].filter(Boolean);
   els.tableSubtitle.textContent = infoBits.join(" | ");
   els.tableMeta.textContent = metadata?.line_count !== undefined ? `${formatCount(metadata.line_count)} lines` : "-";
 }
@@ -626,6 +651,15 @@ function renderSalesOrderLinkCell(row) {
     : badge("Pre-SO", "status-muted");
 }
 
+function renderSourcePathCell(row) {
+  const source = row.material_chain_source || "UNKNOWN_SOURCE";
+  const label = mappedLabel(SOURCE_PATH_LABELS, source);
+  const tone = source === "FROM_STOCK"
+    ? "status-complete"
+    : (source === "DIRECT_SALES_ORDER" || source === "LINKED_INTERNAL_ORDER" ? "status-progress" : "status-muted");
+  return badge(label, tone);
+}
+
 function materialStatusMeta(row) {
   const poQty = numberValue(row.po_qty);
   const receivedQty = numberValue(row.po_received_qty);
@@ -634,6 +668,10 @@ function materialStatusMeta(row) {
   const poAmount = Math.abs(numberValue(row.po_subtotal));
   const ropAmount = Math.abs(numberValue(row.rop_subtotal));
   const rkbAmount = Math.abs(numberValue(row.rkb_actual_subtotal));
+
+  if (row.material_chain_source === "FROM_STOCK") {
+    return { label: "From Stock", tone: "status-complete" };
+  }
 
   if (receivedQty > 0) {
     if (poQty > 0 && receivedQty >= poQty) {
@@ -705,6 +743,8 @@ function getSortValue(row, key) {
   switch (key) {
     case "internal_order_number":
       return row.internal_order_number || "";
+    case "source_path":
+      return mappedLabel(SOURCE_PATH_LABELS, row.material_chain_source || "UNKNOWN_SOURCE");
     case "sales_order_status":
       return row.has_sales_order_link ? 1 : 0;
     case "linked_sales_order":
@@ -778,8 +818,8 @@ function renderLines() {
   if (!rows.length) {
     const emptyMessage = total === 0
       ? (state.payload?.metadata?.empty_state_message || `No ${perspectiveLabel()} material rows found.`)
-      : "No Internal Order lines match the selected filters.";
-    els.lineTableBody.innerHTML = `<tr><td colspan="19" class="empty-cell">${safeText(emptyMessage)}</td></tr>`;
+      : `No ${perspectiveLabel()} rows match the selected filters.`;
+    els.lineTableBody.innerHTML = `<tr><td colspan="20" class="empty-cell">${safeText(emptyMessage)}</td></tr>`;
     return;
   }
 
@@ -788,6 +828,7 @@ function renderLines() {
     return `
     <tr>
       <td>${safeText(row.internal_order_number)}</td>
+      <td>${renderSourcePathCell(row)}</td>
       <td>${renderSalesOrderLinkCell(row)}</td>
       <td>${renderDocumentReferences(row.linked_sales_order_numbers)}</td>
       <td>${renderDocumentReferences(row.rkb_actual_request_summary || row.rkb_actual_request_numeric_summary)}</td>

@@ -1,8 +1,8 @@
 # Order Material Tracking Plan
 
 **Date:** 2026-07-01
-**Status:** Phase 2A.4 Sales Order Perspective implemented on the current page
-**Current next step:** LAN/hotspot demo validation, VP prep, then Material Search planning
+**Status:** Phase 2A.4 Sales Order Perspective supports linked IO and standalone/direct SO material chain context
+**Current next step:** Validate linked-IO and standalone/direct SO examples, then VP prep
 **Primary base:** Internal Order Rekap
 **Goal:** Track material/procurement chain from either Internal Order or Sales Order perspective.
 
@@ -69,7 +69,8 @@ For this IO:
 Flow:
 
 ```text
-SO -> approved SO-to-IO bridge -> linked IO material chain -> RKB -> ROP -> PO -> Receipt
+Path A: SO -> approved SO-to-IO bridge -> linked IO material chain -> RKB -> ROP -> PO -> Receipt
+Path B: SO / JO -> direct RKB / ROP / PO / stock material chain
 ```
 
 This perspective is useful when:
@@ -95,7 +96,7 @@ For this SO:
 Important limitation:
 
 ```text
-Sales Order Perspective is IO-level linked material chain context only.
+Sales Order Perspective is linked IO and/or direct SO/JO material chain context only.
 It is not product-level allocation, COGS, accounting gross profit, margin, AR/payment, or final profitability.
 ```
 
@@ -333,7 +334,9 @@ Note: linked Sales Order display is IO-level bridge context only, not product al
 - [x] Search by Sales Order number
 - [x] Resolve linked Internal Orders through the approved SO-to-IO bridge
 - [x] Return linked IO material/procurement chain rows from existing Internal Order Rekap lines
-- [x] Show no-linked-IO empty state without inferring from MO
+- [x] Return standalone/direct SO or JO material chain rows from existing normalized RKB/ROP/PO/stock references
+- [x] Add Source Path labels: Linked IO, Direct SO / JO, From Stock
+- [x] Show empty state only when no linked IO and no direct chain exists
 - [x] Keep labels as context, not allocation or profitability
 
 ### Phase 7 - VP readiness
@@ -353,8 +356,8 @@ Suggested next prompt:
 
 ```text
 Table readability and unified theme polish are postponed for now.
-Sales Order Perspective is implemented as approved bridge context.
+Sales Order Perspective is implemented for approved bridge context and standalone/direct SO/JO traceability context.
 Keep Material Search as a future separate page.
 
-Current next step: finish LAN/hotspot demo validation and VP prep, then plan Material Search separately.
+Current next step: validate linked-IO and standalone/direct SO examples, then continue VP prep.
 ```

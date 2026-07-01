@@ -66,6 +66,10 @@ http://<demo-ip>:8000/login
 
 - `426IO026`
 
+**Standalone / Direct Sales Order Example**
+
+- `4250385`
+
 **What Not to Claim**
 
 - Not final profitability
@@ -73,7 +77,7 @@ http://<demo-ip>:8000/login
 - Not COGS
 - Not AR/payment
 - Material Search is not implemented yet
-- Sales Order Perspective for Order Material Tracking is implemented as IO-level bridge context, not product allocation
+- Sales Order Perspective for Order Material Tracking supports linked IO and standalone/direct SO/JO material chain context, not product allocation
 
 **Troubleshooting**
 

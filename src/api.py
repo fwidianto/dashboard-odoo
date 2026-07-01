@@ -893,7 +893,7 @@ async def internal_order_rekap_dashboard_data(
             )
 
         normalized_sales_order_number = sales_order_number.strip()
-        context_note = "Sales Order Perspective shows IO-level linked material chain context, not product-level allocation or accounting margin."
+        context_note = "Sales Order Perspective shows linked IO and/or direct SO/JO material chain context. This is traceability context, not product-level allocation or accounting margin."
 
         selected_sales_order_sql = text("""
             SELECT
@@ -1072,6 +1072,7 @@ async def internal_order_rekap_dashboard_data(
 
         sales_order_lines_sql = text("""
             SELECT
+                'LINKED_INTERNAL_ORDER'::text AS material_chain_source,
                 lines.internal_order_number,
                 lines.company_name,
                 lines.linked_sales_order_count,
@@ -1124,6 +1125,213 @@ async def internal_order_rekap_dashboard_data(
                 lines.product_key
         """).bindparams(bindparam("internal_order_numbers", expanding=True))
 
+
+        direct_lines_sql = text(r"""
+            WITH rkb_rows AS (
+                SELECT
+                    COALESCE(NULLIF(BTRIM((regexp_match(COALESCE(apl.product_name::text, ''), '^\[([^\]]+)\]'))[1]), ''), NULLIF(LOWER(REGEXP_REPLACE(BTRIM(COALESCE(apl.product_name::text, '')), '[[:space:]]+', ' ', 'g')), '')) AS product_key,
+                    NULLIF(BTRIM(COALESCE(apl.product_name::text, '')), '') AS product_name,
+                    NULLIF(BTRIM(COALESCE(apl.unit_of_measure::text, '')), '') AS unit_of_measure,
+                    COALESCE(apl.planned_quantity, 0)::numeric AS quantity,
+                    COALESCE(apl.planned_unit_price, 0)::numeric AS unit_price,
+                    COALESCE(apl.planned_subtotal, 0)::numeric AS subtotal,
+                    NULLIF(BTRIM(COALESCE(apl.approval_request_id::text, '')), '') AS request_reference,
+                    apl.approval_request_numeric_id::text AS request_numeric_reference,
+                    NULLIF(BTRIM(COALESCE(apl.company_name::text, '')), '') AS company_name
+                FROM vw_approval_product_line_context apl
+                WHERE apl.normalized_jo_number = :sales_order_number
+                  AND apl.approval_business_type = 'RKB_PLANNING'
+                  AND apl.is_valid_for_metrics
+                  AND NOT (COALESCE(apl.approval_status::text, '') ILIKE '%cancel%' OR COALESCE(apl.normalized_status::text, '') ILIKE '%cancel%' OR COALESCE(apl.approval_status::text, '') ILIKE '%reject%' OR COALESCE(apl.normalized_status::text, '') ILIKE '%reject%')
+            ), rop_rows AS (
+                SELECT
+                    COALESCE(NULLIF(BTRIM((regexp_match(COALESCE(apl.product_name::text, ''), '^\[([^\]]+)\]'))[1]), ''), NULLIF(LOWER(REGEXP_REPLACE(BTRIM(COALESCE(apl.product_name::text, '')), '[[:space:]]+', ' ', 'g')), '')) AS product_key,
+                    NULLIF(BTRIM(COALESCE(apl.product_name::text, '')), '') AS product_name,
+                    NULLIF(BTRIM(COALESCE(apl.unit_of_measure::text, '')), '') AS unit_of_measure,
+                    COALESCE(apl.planned_quantity, 0)::numeric AS quantity,
+                    COALESCE(apl.planned_unit_price, 0)::numeric AS unit_price,
+                    COALESCE(apl.planned_subtotal, 0)::numeric AS subtotal,
+                    NULLIF(BTRIM(COALESCE(apl.approval_request_id::text, '')), '') AS request_reference,
+                    apl.approval_request_numeric_id::text AS request_numeric_reference,
+                    NULLIF(BTRIM(COALESCE(apl.company_name::text, '')), '') AS company_name
+                FROM vw_approval_product_line_context apl
+                WHERE apl.normalized_jo_number = :sales_order_number
+                  AND apl.approval_business_type = 'ROP_PROCUREMENT_REQUEST'
+                  AND apl.is_valid_for_metrics
+                  AND NOT (COALESCE(apl.approval_status::text, '') ILIKE '%cancel%' OR COALESCE(apl.normalized_status::text, '') ILIKE '%cancel%' OR COALESCE(apl.approval_status::text, '') ILIKE '%reject%' OR COALESCE(apl.normalized_status::text, '') ILIKE '%reject%')
+            ), po_rows AS (
+                SELECT
+                    COALESCE(NULLIF(BTRIM((regexp_match(COALESCE(po.product_name::text, ''), '^\[([^\]]+)\]'))[1]), ''), NULLIF(LOWER(REGEXP_REPLACE(BTRIM(COALESCE(po.product_name::text, '')), '[[:space:]]+', ' ', 'g')), '')) AS product_key,
+                    NULLIF(BTRIM(COALESCE(po.product_name::text, '')), '') AS product_name,
+                    NULLIF(BTRIM(COALESCE(po.unit_of_measure::text, '')), '') AS unit_of_measure,
+                    COALESCE(po.ordered_quantity, 0)::numeric AS quantity,
+                    COALESCE(po.received_quantity, 0)::numeric AS received_quantity,
+                    COALESCE(po.invoiced_quantity, 0)::numeric AS invoiced_quantity,
+                    COALESCE(po.unit_price, 0)::numeric AS unit_price,
+                    COALESCE(po.line_subtotal, 0)::numeric AS subtotal,
+                    NULLIF(BTRIM(COALESCE(po.purchase_order_reference::text, '')), '') AS purchase_order_reference,
+                    NULLIF(BTRIM(COALESCE(po.company_name::text, '')), '') AS company_name
+                FROM vw_procurement_lines po
+                WHERE po.normalized_jo_number = :sales_order_number
+                  AND po.is_valid_for_metrics
+                  AND NOT (COALESCE(po.purchase_line_state::text, '') ILIKE '%cancel%' OR COALESCE(po.normalized_status::text, '') ILIKE '%cancel%' OR COALESCE(po.purchase_line_state::text, '') ILIKE '%reject%' OR COALESCE(po.normalized_status::text, '') ILIKE '%reject%')
+            ), stock_rows AS (
+                SELECT
+                    COALESCE(NULLIF(BTRIM((regexp_match(COALESCE(sml.product_id::text, ''), '^\[([^\]]+)\]'))[1]), ''), NULLIF(LOWER(REGEXP_REPLACE(BTRIM(COALESCE(sml.product_id::text, '')), '[[:space:]]+', ' ', 'g')), '')) AS product_key,
+                    NULLIF(BTRIM(COALESCE(sml.product_id::text, '')), '') AS product_name,
+                    NULLIF(BTRIM(COALESCE(sml.product_uom_id::text, '')), '') AS unit_of_measure,
+                    COALESCE(sml.quantity, 0)::numeric AS quantity,
+                    NULLIF(BTRIM(COALESCE(sml.company_id::text, '')), '') AS company_name
+                FROM stock_move_line sml
+                WHERE BTRIM(COALESCE(sml.x_studio_source_document::text, '')) = :sales_order_number
+                  AND COALESCE(sml.state::text, '') NOT ILIKE '%cancel%'
+            ), rkb AS (
+                SELECT product_key, MAX(product_name) product_name, STRING_AGG(DISTINCT unit_of_measure, ' ; ' ORDER BY unit_of_measure) FILTER (WHERE unit_of_measure IS NOT NULL) uom_summary, SUM(quantity) qty, CASE WHEN SUM(quantity)=0 THEN NULL ELSE SUM(subtotal)/NULLIF(SUM(quantity),0) END unit_price, SUM(subtotal) subtotal, STRING_AGG(DISTINCT request_reference, ', ' ORDER BY request_reference) FILTER (WHERE request_reference IS NOT NULL) request_summary, STRING_AGG(DISTINCT request_numeric_reference, ', ' ORDER BY request_numeric_reference) FILTER (WHERE request_numeric_reference IS NOT NULL) request_numeric_summary, MAX(company_name) company_name FROM rkb_rows WHERE product_key IS NOT NULL GROUP BY product_key
+            ), rop AS (
+                SELECT product_key, MAX(product_name) product_name, STRING_AGG(DISTINCT unit_of_measure, ' ; ' ORDER BY unit_of_measure) FILTER (WHERE unit_of_measure IS NOT NULL) uom_summary, SUM(quantity) qty, CASE WHEN SUM(quantity)=0 THEN NULL ELSE SUM(subtotal)/NULLIF(SUM(quantity),0) END unit_price, SUM(subtotal) subtotal, STRING_AGG(DISTINCT request_reference, ', ' ORDER BY request_reference) FILTER (WHERE request_reference IS NOT NULL) request_summary, STRING_AGG(DISTINCT request_numeric_reference, ', ' ORDER BY request_numeric_reference) FILTER (WHERE request_numeric_reference IS NOT NULL) request_numeric_summary, MAX(company_name) company_name FROM rop_rows WHERE product_key IS NOT NULL GROUP BY product_key
+            ), po AS (
+                SELECT product_key, MAX(product_name) product_name, STRING_AGG(DISTINCT unit_of_measure, ' ; ' ORDER BY unit_of_measure) FILTER (WHERE unit_of_measure IS NOT NULL) uom_summary, SUM(quantity) qty, SUM(received_quantity) received_qty, SUM(invoiced_quantity) invoiced_qty, CASE WHEN SUM(quantity)=0 THEN NULL ELSE SUM(subtotal)/NULLIF(SUM(quantity),0) END unit_price, SUM(subtotal) subtotal, STRING_AGG(DISTINCT purchase_order_reference, ', ' ORDER BY purchase_order_reference) FILTER (WHERE purchase_order_reference IS NOT NULL) po_refs, MAX(company_name) company_name FROM po_rows WHERE product_key IS NOT NULL GROUP BY product_key
+            ), stock AS (
+                SELECT product_key, MAX(product_name) product_name, STRING_AGG(DISTINCT unit_of_measure, ' ; ' ORDER BY unit_of_measure) FILTER (WHERE unit_of_measure IS NOT NULL) uom_summary, SUM(quantity) qty, MAX(company_name) company_name FROM stock_rows WHERE product_key IS NOT NULL GROUP BY product_key
+            ), universe AS (
+                SELECT product_key FROM rkb UNION SELECT product_key FROM rop UNION SELECT product_key FROM po UNION SELECT product_key FROM stock
+            ), line_rows AS (
+                SELECT universe.product_key, COALESCE(rkb.product_name, rop.product_name, po.product_name, stock.product_name) product_name, COALESCE(rkb.company_name, rop.company_name, po.company_name, stock.company_name) company_name, rkb.uom_summary rkb_uom, rop.uom_summary rop_uom, po.uom_summary po_uom, stock.uom_summary stock_uom, COALESCE(rkb.qty,0)::numeric rkb_qty, rkb.unit_price rkb_unit_price, COALESCE(rkb.subtotal,0)::numeric rkb_subtotal, rkb.request_summary rkb_request_summary, rkb.request_numeric_summary rkb_request_numeric_summary, COALESCE(rop.qty,0)::numeric rop_qty, rop.unit_price rop_unit_price, COALESCE(rop.subtotal,0)::numeric rop_subtotal, rop.request_summary rop_request_summary, rop.request_numeric_summary rop_request_numeric_summary, COALESCE(po.qty,0)::numeric po_qty, po.unit_price po_unit_price, COALESCE(po.subtotal,0)::numeric po_subtotal, COALESCE(po.received_qty,0)::numeric po_received_qty, COALESCE(po.invoiced_qty,0)::numeric po_invoiced_qty, po.po_refs po_order_reference_summary, COALESCE(stock.qty,0)::numeric stock_qty, CONCAT_WS(' ; ', rkb.uom_summary, rop.uom_summary, po.uom_summary, stock.uom_summary) uom_summary FROM universe LEFT JOIN rkb ON rkb.product_key=universe.product_key LEFT JOIN rop ON rop.product_key=universe.product_key LEFT JOIN po ON po.product_key=universe.product_key LEFT JOIN stock ON stock.product_key=universe.product_key
+            )
+            SELECT
+                CASE WHEN rkb_qty=0 AND rop_qty=0 AND po_qty=0 AND stock_qty<>0 THEN 'FROM_STOCK' ELSE 'DIRECT_SALES_ORDER' END AS material_chain_source,
+                NULL::text AS internal_order_number,
+                company_name,
+                1 AS linked_sales_order_count,
+                CAST(:sales_order_number AS text) AS linked_sales_order_numbers,
+                TRUE AS has_sales_order_link,
+                product_key,
+                product_name,
+                CASE WHEN COALESCE(product_key,'') ILIKE '!!%%' OR COALESCE(product_name,'') ILIKE '!!%%' THEN 'NON_TRACKABLE_OTHERS' WHEN COALESCE(product_key,'') ILIKE '%%others%%' OR COALESCE(product_name,'') ILIKE '%%others%%' THEN 'NON_TRACKABLE_OTHERS' WHEN COALESCE(product_key,'') ILIKE '%%sisa budget%%' OR COALESCE(product_name,'') ILIKE '%%sisa budget%%' OR COALESCE(product_key,'') ILIKE '%%estimator%%' OR COALESCE(product_name,'') ILIKE '%%estimator%%' OR COALESCE(product_key,'') ILIKE '%%jasa%%' OR COALESCE(product_name,'') ILIKE '%%jasa%%' OR COALESCE(product_key,'') ILIKE '%%machining%%' OR COALESCE(product_name,'') ILIKE '%%machining%%' THEN 'BUDGET_SERVICE_ADJUSTMENT' WHEN COALESCE(product_key,'') ~ '^\[[0-9]{5}\]' OR COALESCE(product_name,'') ~ '^\[[0-9]{5}\]' THEN 'TRACKABLE_PRODUCT' ELSE 'UNKNOWN_PRODUCT_CLASS' END AS product_trackability_class,
+                CASE WHEN COALESCE(product_key,'') ILIKE '!!%%' OR COALESCE(product_name,'') ILIKE '!!%%' THEN 'DOUBLE_BANG_OTHERS' WHEN COALESCE(product_key,'') ILIKE '%%others%%' OR COALESCE(product_name,'') ILIKE '%%others%%' THEN 'CONTAINS_OTHERS' WHEN COALESCE(product_key,'') ILIKE '%%sisa budget%%' OR COALESCE(product_name,'') ILIKE '%%sisa budget%%' OR COALESCE(product_key,'') ILIKE '%%estimator%%' OR COALESCE(product_name,'') ILIKE '%%estimator%%' OR COALESCE(product_key,'') ILIKE '%%jasa%%' OR COALESCE(product_name,'') ILIKE '%%jasa%%' OR COALESCE(product_key,'') ILIKE '%%machining%%' OR COALESCE(product_name,'') ILIKE '%%machining%%' THEN 'BUDGET_SERVICE_TEXT' WHEN COALESCE(product_key,'') ~ '^\[[0-9]{5}\]' OR COALESCE(product_name,'') ~ '^\[[0-9]{5}\]' THEN 'BRACKETED_PRODUCT_CODE' ELSE 'UNKNOWN_FALLBACK' END AS product_classification_reason,
+                (COALESCE(product_key,'') ~ '^\[[0-9]{5}\]' OR COALESCE(product_name,'') ~ '^\[[0-9]{5}\]') AS is_trackable_product,
+                CASE WHEN rkb_qty<>0 AND rop_qty<>0 AND po_qty<>0 THEN 'RKB_ROP_PO' WHEN rkb_qty<>0 AND rop_qty<>0 AND po_qty=0 THEN 'RKB_ROP' WHEN rkb_qty<>0 AND rop_qty=0 AND po_qty<>0 THEN 'RKB_PO' WHEN rkb_qty=0 AND rop_qty<>0 AND po_qty<>0 THEN 'ROP_PO' WHEN rkb_qty<>0 AND rop_qty=0 AND po_qty=0 THEN 'RKB_ONLY' WHEN rkb_qty=0 AND rop_qty<>0 AND po_qty=0 THEN 'ROP_ONLY' WHEN rkb_qty=0 AND rop_qty=0 AND po_qty<>0 THEN 'PO_ONLY' ELSE 'UNKNOWN_PRODUCT_CLASS' END AS product_presence_status,
+                uom_summary,
+                rkb_uom AS rkb_actual_uom_summary,
+                rop_uom AS rop_uom_summary,
+                po_uom AS po_uom_summary,
+                (SELECT COUNT(DISTINCT NULLIF(BTRIM(uom_value), '')) FROM unnest(ARRAY[rkb_uom, rop_uom, po_uom]) AS uom_value) > 1 AS mixed_uom_flag,
+                rkb_qty AS rkb_actual_qty,
+                rkb_unit_price AS rkb_actual_unit_price,
+                rkb_subtotal AS rkb_actual_subtotal,
+                rkb_request_summary AS rkb_actual_request_summary,
+                rkb_request_numeric_summary AS rkb_actual_request_numeric_summary,
+                rop_qty,
+                rop_unit_price,
+                rop_subtotal,
+                rop_request_summary,
+                rop_request_numeric_summary,
+                po_qty,
+                po_unit_price,
+                po_subtotal,
+                po_received_qty,
+                po_invoiced_qty,
+                po_order_reference_summary,
+                0::numeric AS not_yet_rop_qty,
+                0::numeric AS not_yet_rop_amount,
+                GREATEST(rop_qty-rkb_qty,0)::numeric AS excess_rop_qty,
+                GREATEST(rop_subtotal-rkb_subtotal,0)::numeric AS excess_rop_amount,
+                (po_qty<>0 AND rop_qty=0) AS po_without_rop_flag,
+                (rop_qty<>0 AND po_qty=0) AS rop_without_po_flag,
+                'DIRECT_SO_JO_CONTEXT'::text AS comparison_scope
+            FROM line_rows
+            ORDER BY product_trackability_class, product_presence_status, COALESCE(rkb_subtotal, 0) DESC, product_key
+        """)
+
+
+        def _decimal_value(value) -> Decimal:
+            if value is None or value == "":
+                return Decimal("0")
+            return Decimal(str(value))
+
+        def _ratio_value(numerator: Decimal, denominator: Decimal):
+            if denominator == 0:
+                return None
+            return numerator / denominator
+
+        def _aggregate_sales_order_lines(lines: list[dict], selected_so_number: str, linked_internal_orders: list[str], linked_context: dict | None = None) -> dict:
+            linked_context = linked_context or {}
+            rkb_amount = sum((_decimal_value(row.get("rkb_actual_subtotal")) for row in lines), Decimal("0"))
+            rop_amount = sum((_decimal_value(row.get("rop_subtotal")) for row in lines), Decimal("0"))
+            po_amount = sum((_decimal_value(row.get("po_subtotal")) for row in lines), Decimal("0"))
+            po_qty = sum((_decimal_value(row.get("po_qty")) for row in lines), Decimal("0"))
+            po_received_qty = sum((_decimal_value(row.get("po_received_qty")) for row in lines), Decimal("0"))
+            po_invoiced_qty = sum((_decimal_value(row.get("po_invoiced_qty")) for row in lines), Decimal("0"))
+
+            def amount_for(class_name: str, field_name: str) -> Decimal:
+                return sum((_decimal_value(row.get(field_name)) for row in lines if row.get("product_trackability_class") == class_name), Decimal("0"))
+
+            return {
+                "internal_order_number": ", ".join(linked_internal_orders) if linked_internal_orders else None,
+                "company_name": ", ".join(sorted({str(row.get("company_name")) for row in lines if row.get("company_name")})) or None,
+                "linked_sales_order_count": 1,
+                "linked_sales_order_numbers": selected_so_number,
+                "has_sales_order_link": True,
+                "io_reference_line_count": linked_context.get("io_reference_line_count"),
+                "io_reference_amount": linked_context.get("io_reference_amount"),
+                "product_count": len(lines),
+                "rkb_actual_product_count": sum(1 for row in lines if _decimal_value(row.get("rkb_actual_qty")) != 0 or _decimal_value(row.get("rkb_actual_subtotal")) != 0),
+                "rop_product_count": sum(1 for row in lines if _decimal_value(row.get("rop_qty")) != 0 or _decimal_value(row.get("rop_subtotal")) != 0),
+                "po_product_count": sum(1 for row in lines if _decimal_value(row.get("po_qty")) != 0 or _decimal_value(row.get("po_subtotal")) != 0),
+                "rkb_actual_amount": rkb_amount,
+                "rkb_kontribusi": linked_context.get("rkb_kontribusi"),
+                "rkb_kontribusi_pct": linked_context.get("rkb_kontribusi_pct"),
+                "rkb_actual_trackable_amount": amount_for("TRACKABLE_PRODUCT", "rkb_actual_subtotal"),
+                "rkb_actual_non_trackable_amount": sum((_decimal_value(row.get("rkb_actual_subtotal")) for row in lines if row.get("product_trackability_class") != "TRACKABLE_PRODUCT"), Decimal("0")),
+                "rkb_actual_unknown_class_amount": amount_for("UNKNOWN_PRODUCT_CLASS", "rkb_actual_subtotal"),
+                "rop_amount": rop_amount,
+                "rop_trackable_amount": amount_for("TRACKABLE_PRODUCT", "rop_subtotal"),
+                "rop_non_trackable_amount": sum((_decimal_value(row.get("rop_subtotal")) for row in lines if row.get("product_trackability_class") != "TRACKABLE_PRODUCT"), Decimal("0")),
+                "rop_unknown_class_amount": amount_for("UNKNOWN_PRODUCT_CLASS", "rop_subtotal"),
+                "po_amount": po_amount,
+                "po_trackable_amount": amount_for("TRACKABLE_PRODUCT", "po_subtotal"),
+                "po_non_trackable_amount": sum((_decimal_value(row.get("po_subtotal")) for row in lines if row.get("product_trackability_class") != "TRACKABLE_PRODUCT"), Decimal("0")),
+                "po_unknown_class_amount": amount_for("UNKNOWN_PRODUCT_CLASS", "po_subtotal"),
+                "not_yet_rop_amount": sum((_decimal_value(row.get("not_yet_rop_amount")) for row in lines), Decimal("0")),
+                "excess_rop_amount": sum((_decimal_value(row.get("excess_rop_amount")) for row in lines), Decimal("0")),
+                "po_received_qty": po_received_qty,
+                "po_invoiced_qty": po_invoiced_qty,
+                "mixed_uom_count": sum(1 for row in lines if row.get("mixed_uom_flag")),
+                "rkb_only_count": sum(1 for row in lines if row.get("product_presence_status") == "RKB_ONLY"),
+                "rop_only_count": sum(1 for row in lines if row.get("product_presence_status") == "ROP_ONLY"),
+                "po_only_count": sum(1 for row in lines if row.get("product_presence_status") == "PO_ONLY"),
+                "rkb_rop_po_count": sum(1 for row in lines if row.get("product_presence_status") == "RKB_ROP_PO"),
+                "po_without_rop_count": sum(1 for row in lines if row.get("po_without_rop_flag")),
+                "rop_without_po_count": sum(1 for row in lines if row.get("rop_without_po_flag")),
+                "received_ratio": _ratio_value(po_received_qty, po_qty),
+                "invoiced_ratio": _ratio_value(po_invoiced_qty, po_qty),
+                "rop_progress_ratio": _ratio_value(rop_amount, rkb_amount),
+                "not_yet_rop_ratio": _ratio_value(sum((_decimal_value(row.get("not_yet_rop_amount")) for row in lines), Decimal("0")), rkb_amount),
+                "comparison_basis": "Sales Order linked IO and/or direct SO/JO context",
+                "summary_scope": "Traceability context only; not product allocation or accounting margin",
+            }
+
+        def _aggregate_sales_order_breakdowns(lines: list[dict]) -> tuple[list[dict], list[dict]]:
+            trackability_groups = {}
+            presence_groups = {}
+            for row in lines:
+                t_key = (row.get("product_trackability_class"), row.get("product_classification_reason"), bool(row.get("is_trackable_product")))
+                t_group = trackability_groups.setdefault(t_key, {"product_trackability_class": t_key[0], "product_classification_reason": t_key[1], "is_trackable_product": t_key[2], "product_count": 0, "rkb_actual_amount": Decimal("0"), "rop_amount": Decimal("0"), "po_amount": Decimal("0")})
+                t_group["product_count"] += 1
+                t_group["rkb_actual_amount"] += _decimal_value(row.get("rkb_actual_subtotal"))
+                t_group["rop_amount"] += _decimal_value(row.get("rop_subtotal"))
+                t_group["po_amount"] += _decimal_value(row.get("po_subtotal"))
+                p_key = row.get("product_presence_status") or "UNKNOWN_PRODUCT_CLASS"
+                p_group = presence_groups.setdefault(p_key, {"product_presence_status": p_key, "product_count": 0, "rkb_actual_amount": Decimal("0"), "rop_amount": Decimal("0"), "po_amount": Decimal("0")})
+                p_group["product_count"] += 1
+                p_group["rkb_actual_amount"] += _decimal_value(row.get("rkb_actual_subtotal"))
+                p_group["rop_amount"] += _decimal_value(row.get("rop_subtotal"))
+                p_group["po_amount"] += _decimal_value(row.get("po_subtotal"))
+            return (
+                [{key: _json_safe(value) for key, value in group.items()} for group in sorted(trackability_groups.values(), key=lambda item: (str(item["product_trackability_class"]), str(item["product_classification_reason"]), str(item["is_trackable_product"])))],
+                [{key: _json_safe(value) for key, value in group.items()} for group in sorted(presence_groups.values(), key=lambda item: str(item["product_presence_status"]))],
+            )
+
         pg = PostgresClient()
         try:
             with pg.engine.connect() as conn:
@@ -1150,83 +1358,47 @@ async def internal_order_rekap_dashboard_data(
                     if row["internal_order_number"]
                 ]
 
+                linked_context = {}
+                linked_lines = []
                 if linked_internal_orders:
                     params = {
                         "internal_order_numbers": linked_internal_orders,
                         "sales_order_number": selected_sales_order["sales_order_number"],
                     }
                     summary_row = conn.execute(sales_order_summary_sql, params).fetchone()
-                    summary = {
+                    linked_context = {
                         key: _json_safe(value)
                         for key, value in summary_row._mapping.items()
                     } if summary_row is not None else {}
-                    trackability_breakdowns = [
-                        {key: _json_safe(value) for key, value in row._mapping.items()}
-                        for row in conn.execute(sales_order_breakdown_trackability_sql, params).fetchall()
-                    ]
-                    presence_breakdowns = [
-                        {key: _json_safe(value) for key, value in row._mapping.items()}
-                        for row in conn.execute(sales_order_breakdown_presence_sql, params).fetchall()
-                    ]
-                    lines = [
+                    linked_lines = [
                         {key: _json_safe(value) for key, value in row._mapping.items()}
                         for row in conn.execute(sales_order_lines_sql, params).fetchall()
                     ]
-                else:
-                    summary = {
-                        "internal_order_number": None,
-                        "company_name": None,
-                        "linked_sales_order_count": 1,
-                        "linked_sales_order_numbers": selected_sales_order["sales_order_number"],
-                        "has_sales_order_link": False,
-                        "io_reference_line_count": None,
-                        "io_reference_amount": None,
-                        "product_count": 0,
-                        "rkb_actual_product_count": 0,
-                        "rop_product_count": 0,
-                        "po_product_count": 0,
-                        "rkb_actual_amount": 0,
-                        "rkb_kontribusi": None,
-                        "rkb_kontribusi_pct": None,
-                        "rkb_actual_trackable_amount": 0,
-                        "rkb_actual_non_trackable_amount": 0,
-                        "rkb_actual_unknown_class_amount": 0,
-                        "rop_amount": 0,
-                        "rop_trackable_amount": 0,
-                        "rop_non_trackable_amount": 0,
-                        "rop_unknown_class_amount": 0,
-                        "po_amount": 0,
-                        "po_trackable_amount": 0,
-                        "po_non_trackable_amount": 0,
-                        "po_unknown_class_amount": 0,
-                        "not_yet_rop_amount": 0,
-                        "excess_rop_amount": 0,
-                        "po_received_qty": 0,
-                        "po_invoiced_qty": 0,
-                        "mixed_uom_count": 0,
-                        "rkb_only_count": 0,
-                        "rop_only_count": 0,
-                        "po_only_count": 0,
-                        "rkb_rop_po_count": 0,
-                        "po_without_rop_count": 0,
-                        "rop_without_po_count": 0,
-                        "received_ratio": None,
-                        "invoiced_ratio": None,
-                        "rop_progress_ratio": None,
-                        "not_yet_rop_ratio": None,
-                        "comparison_basis": "Sales Order linked IO context",
-                        "summary_scope": "No linked Internal Order context",
-                    }
-                    trackability_breakdowns = []
-                    presence_breakdowns = []
-                    lines = []
+
+                direct_lines = [
+                    {key: _json_safe(value) for key, value in row._mapping.items()}
+                    for row in conn.execute(
+                        direct_lines_sql,
+                        {"sales_order_number": selected_sales_order["sales_order_number"]},
+                    ).fetchall()
+                ]
+
+                lines = linked_lines + direct_lines
+                summary = _aggregate_sales_order_lines(
+                    lines,
+                    selected_sales_order["sales_order_number"],
+                    linked_internal_orders,
+                    linked_context,
+                )
+                summary = {key: _json_safe(value) for key, value in summary.items()}
+                trackability_breakdowns, presence_breakdowns = _aggregate_sales_order_breakdowns(lines)
 
             linked_internal_order_numbers = ", ".join(linked_internal_orders)
+            direct_sales_order_chain_count = sum(1 for row in lines if row.get("material_chain_source") == "DIRECT_SALES_ORDER")
+            from_stock_chain_count = sum(1 for row in lines if row.get("material_chain_source") == "FROM_STOCK")
             empty_state_message = None
-            if not linked_internal_orders:
-                empty_state_message = "No linked Internal Order found through the approved SO-to-IO bridge."
-            elif not lines:
-                empty_state_message = "Linked Internal Order found, but no RKB / ROP / PO material rows were found."
+            if not lines:
+                empty_state_message = "Sales Order found, but no linked IO or direct RKB / ROP / PO material chain was found."
 
             metadata = {
                 "generated_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
@@ -1238,7 +1410,11 @@ async def internal_order_rekap_dashboard_data(
                 "selected_sales_order_number": selected_sales_order["sales_order_number"],
                 "linked_internal_order_count": len(linked_internal_orders),
                 "linked_internal_order_numbers": linked_internal_order_numbers,
+                "direct_sales_order_chain_count": direct_sales_order_chain_count,
+                "from_stock_chain_count": from_stock_chain_count,
+                "has_linked_internal_order": bool(linked_internal_orders),
                 "has_internal_order_link": bool(linked_internal_orders),
+                "has_direct_sales_order_chain": direct_sales_order_chain_count > 0,
                 "context_note": context_note,
                 "empty_state_message": empty_state_message,
                 "warnings": [empty_state_message] if empty_state_message else [],
@@ -1357,6 +1533,7 @@ async def internal_order_rekap_dashboard_data(
 
     lines_sql = text("""
         SELECT
+            'INTERNAL_ORDER'::text AS material_chain_source,
             lines.internal_order_number,
             lines.company_name,
             lines.linked_sales_order_count,
