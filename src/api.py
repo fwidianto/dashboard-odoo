@@ -5,13 +5,19 @@ Designed for production deployment with uvicorn.
 """
 
 from datetime import date, datetime
+import base64
+import hashlib
+import hmac
+import json
 from decimal import Decimal
+from html import escape
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlencode
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Query
+from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -26,6 +32,19 @@ from src.utils.settings import get_settings
 # Initialize logging
 setup_logging()
 logger = get_logger("api")
+
+APP_SETTINGS = get_settings()
+DASHBOARD_USERNAME = APP_SETTINGS.dashboard_username
+DASHBOARD_PASSWORD = APP_SETTINGS.dashboard_password
+SESSION_SECRET = APP_SETTINGS.session_secret or "dashboard-dev-session-secret"
+if not APP_SETTINGS.session_secret:
+    logger.warning("SESSION_SECRET missing; using local development fallback secret for demo auth.")
+
+DEFAULT_DASHBOARD_PATH = "/dashboard/internal-order-rekap"
+PROTECTED_PAGE_PATHS = {"/", "/dashboard/internal-orders", "/dashboard/sales-orders", "/dashboard/internal-order-rekap"}
+PROTECTED_API_PREFIX = "/api/dashboard/"
+DASHBOARD_SESSION_COOKIE = "dashboard_session"
+DASHBOARD_SESSION_TTL_SECONDS = 60 * 60 * 24 * 7
 
 # Create FastAPI app
 app = FastAPI(
@@ -42,9 +61,282 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+def sign_dashboard_session(payload: dict) -> str:
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    encoded = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    signature = hmac.new(SESSION_SECRET.encode("utf-8"), encoded.encode("ascii"), hashlib.sha256).hexdigest()
+    return f"{encoded}.{signature}"
+
+
+def read_dashboard_session(raw_value: Optional[str]) -> Optional[dict]:
+    if not raw_value or "." not in raw_value:
+        return None
+    encoded, signature = raw_value.rsplit(".", 1)
+    expected = hmac.new(SESSION_SECRET.encode("utf-8"), encoded.encode("ascii"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        return None
+    padded = encoded + "=" * (-len(encoded) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        payload = json.loads(decoded)
+    except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if isinstance(payload, dict) and payload.get("dashboard_authenticated"):
+        return payload
+    return None
+
+
+def is_authenticated(request: Request) -> bool:
+    return read_dashboard_session(request.cookies.get(DASHBOARD_SESSION_COOKIE)) is not None
+
+
+def safe_next_path(value: Optional[str]) -> str:
+    candidate = (value or "").strip()
+    if candidate in PROTECTED_PAGE_PATHS and candidate != "/":
+        return candidate
+    return DEFAULT_DASHBOARD_PATH
+
+
+def render_login_page(
+    error: Optional[str] = None,
+    next_path: str = DEFAULT_DASHBOARD_PATH,
+    username: str = "",
+) -> str:
+    error_html = f'<div class="login-error">{escape(error)}</div>' if error else ""
+    next_value = escape(next_path)
+    username_value = escape(username)
+    template = """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard Login</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f7f8;
+      --surface: #ffffff;
+      --border: #d9e1e5;
+      --text: #17212b;
+      --muted: #66737f;
+      --accent: #147a78;
+      --accent-strong: #0f6160;
+      --danger: #a93c32;
+      --shadow: 0 12px 32px rgba(23, 33, 43, 0.10);
+      --radius: 12px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+    .login-shell {
+      width: min(100%, 440px);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 28px;
+    }
+    .login-eyebrow {
+      font-size: 11px;
+      font-weight: 760;
+      letter-spacing: 0;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 0 0 8px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 26px;
+      line-height: 1.15;
+    }
+    p {
+      margin: 0 0 18px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    form {
+      display: grid;
+      gap: 14px;
+    }
+    label {
+      display: grid;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 650;
+      color: var(--muted);
+    }
+    input {
+      height: 40px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0 12px;
+      font: inherit;
+      color: var(--text);
+      background: #fff;
+    }
+    input:focus {
+      outline: 2px solid rgba(20, 122, 120, 0.18);
+      outline-offset: 1px;
+      border-color: rgba(20, 122, 120, 0.35);
+    }
+    .login-error {
+      border: 1px solid rgba(169, 60, 50, 0.25);
+      background: #fff4f2;
+      color: var(--danger);
+      border-radius: 10px;
+      padding: 12px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 14px;
+    }
+    .login-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 2px;
+    }
+    .primary-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 40px;
+      border: 1px solid var(--accent);
+      border-radius: 10px;
+      padding: 0 16px;
+      background: var(--accent);
+      color: #fff;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 700;
+    }
+    .primary-button:hover { background: var(--accent-strong); }
+    .hint {
+      margin-top: 16px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+  </style>
+</head>
+<body>
+  <main class="login-shell">
+    <div class="login-eyebrow">Local Demo Access</div>
+    <h1>Dashboard Login</h1>
+    <p>Use the local demo credentials to open the dashboards.</p>
+    __ERROR_HTML__
+    <form method="post" action="/login">
+      <input type="hidden" name="next" value="__NEXT_VALUE__">
+      <label>
+        <span>Username</span>
+        <input name="username" type="text" value="__USERNAME_VALUE__" autocomplete="username" required autofocus>
+      </label>
+      <label>
+        <span>Password</span>
+        <input name="password" type="password" autocomplete="current-password" required>
+      </label>
+      <div class="login-actions">
+        <button class="primary-button" type="submit">Sign in</button>
+      </div>
+    </form>
+    <div class="hint">Default destination after login is the Internal Order Rekap dashboard.</div>
+  </main>
+</body>
+</html>"""
+    return (
+        template.replace("__ERROR_HTML__", error_html)
+        .replace("__NEXT_VALUE__", next_value)
+        .replace("__USERNAME_VALUE__", username_value)
+    )
+
+
+def redirect_to_login(next_path: str = DEFAULT_DASHBOARD_PATH) -> RedirectResponse:
+    return RedirectResponse(
+        url=f"/login?{urlencode({'next': next_path})}",
+        status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+    )
+
+
+@app.middleware("http")
+async def dashboard_auth_middleware(request: Request, call_next):
+    path = request.url.path
+
+    if path.startswith("/static") or path in {"/login", "/logout"} or path.startswith("/docs") or path.startswith("/redoc") or path.startswith("/openapi.json"):
+        return await call_next(request)
+
+    if path == "/":
+        if is_authenticated(request):
+            return RedirectResponse(url=DEFAULT_DASHBOARD_PATH, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+        return redirect_to_login(DEFAULT_DASHBOARD_PATH)
+
+    if path in PROTECTED_PAGE_PATHS:
+        if not is_authenticated(request):
+            return redirect_to_login(path)
+
+    if path.startswith(PROTECTED_API_PREFIX):
+        if not is_authenticated(request):
+            return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"detail": "Authentication required."})
+
+    return await call_next(request)
+
+
+@app.get("/login", include_in_schema=False)
+async def login_page(request: Request, next: Optional[str] = None):
+    """Render the local dashboard login page."""
+    if is_authenticated(request):
+        return RedirectResponse(url=DEFAULT_DASHBOARD_PATH, status_code=status.HTTP_303_SEE_OTHER)
+    return HTMLResponse(render_login_page(next_path=safe_next_path(next)))
+
+
+@app.post("/login", include_in_schema=False)
+async def login_submit(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    next: Optional[str] = Form(default=None),
+):
+    """Authenticate the local demo user and create a signed session."""
+    next_path = safe_next_path(next)
+    if username == DASHBOARD_USERNAME and password == DASHBOARD_PASSWORD:
+        response = RedirectResponse(url=next_path, status_code=status.HTTP_303_SEE_OTHER)
+        response.set_cookie(
+            key=DASHBOARD_SESSION_COOKIE,
+            value=sign_dashboard_session({"dashboard_authenticated": True, "dashboard_username": username}),
+            max_age=DASHBOARD_SESSION_TTL_SECONDS,
+            httponly=True,
+            secure=False,
+            samesite="lax",
+            path="/",
+        )
+        return response
+
+    return HTMLResponse(
+        render_login_page(
+            error="Invalid username or password.",
+            next_path=next_path,
+            username=username,
+        ),
+        status_code=status.HTTP_401_UNAUTHORIZED,
+    )
+
+
+@app.get("/logout", include_in_schema=False)
+async def logout(request: Request):
+    """Clear the dashboard session and return to login."""
+    response = RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    response.delete_cookie(DASHBOARD_SESSION_COOKIE, path="/")
+    return response
+
 
 # Global instances
 _scheduler: Optional[SyncScheduler] = None

@@ -144,6 +144,7 @@ class Settings(BaseSettings):
     - SYNC_BATCH_SIZE, SYNC_MODE, SCHEDULE_INTERVAL_MINUTES
     - READ_ONLY_MODE
     - LOG_LEVEL, LOG_FILE
+    - DASHBOARD_USERNAME, DASHBOARD_PASSWORD, SESSION_SECRET
     """
 
     model_config = SettingsConfigDict(
@@ -185,6 +186,11 @@ class Settings(BaseSettings):
     # Flat Logging settings
     log_level: str = Field(default="INFO", description="Log level")
     log_file: str = Field(default="sync.log", description="Log file path")
+
+    # Local demo dashboard authentication
+    dashboard_username: str = Field(default="vp_demo", description="Local dashboard login username")
+    dashboard_password: str = Field(default="change_this_password", description="Local dashboard login password")
+    session_secret: Optional[str] = Field(default=None, description="Signed session secret for dashboard login")
 
     @property
     def odoo(self) -> OdooSettings:

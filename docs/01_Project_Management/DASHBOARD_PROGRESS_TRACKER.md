@@ -3,7 +3,7 @@
 **Date:** 2026-07-01  
 **Current project phase:** Phase 2A.3 - Order Material Tracking / Interactive Table Controls  
 **Current stable base:** Sales Order dashboard and Internal Order dashboard  
-**Next focus:** Table readability polish, then decide whether to add Sales Order Perspective before Material Search
+**Next focus:** Basic local login/protected dashboard routes, then decide whether to add Sales Order Perspective before Material Search
 
 ---
 
@@ -102,11 +102,12 @@ Universal search by product, SO, IO, RKB, ROP, PO, supplier, or customer.
 
 ## 3. Next Work Plan
 
-### Step 1 - Table readability and VP demo polish
+### Step 1 - Basic local login and route protection
 
-- [ ] Refine column density and visual hierarchy for the current Internal Order Rekap table
-- [ ] Keep the page readable on first load without changing the data model
-- [ ] Decide whether the next visible step is a Sales Order Perspective toggle
+- [x] Define the local/demo login flow for dashboard access
+- [x] Protect dashboard routes for unauthenticated users
+- [x] Protect dashboard API routes for unauthenticated users
+- [ ] Validate redirects for unauthenticated dashboard and API access
 
 ### Step 2 - Perspective planning
 
@@ -122,8 +123,6 @@ Universal search by product, SO, IO, RKB, ROP, PO, supplier, or customer.
 
 ### Step 4 - VP readiness
 
-- [ ] Add simple login page
-- [ ] Protect dashboard routes
 - [ ] Run locally from PC
 - [ ] Test access from same Wi-Fi / hotspot
 - [ ] Prepare temporary tunnel only if needed

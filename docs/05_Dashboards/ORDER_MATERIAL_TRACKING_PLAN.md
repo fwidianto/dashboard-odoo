@@ -1,7 +1,8 @@
 # Order Material Tracking Plan
 
 **Date:** 2026-07-01  
-**Status:** Phase 2A.3 implemented on the current page  
+**Status:** Phase 2A.3 implemented on the current page
+**Current next step:** Basic local login/protected dashboard routes for demo use
 **Primary base:** Internal Order Rekap  
 **Goal:** Track material/procurement chain from either Internal Order or Sales Order perspective.
 
@@ -332,7 +333,9 @@ Avoid overly technical statuses on the main screen.
 Suggested next prompt:
 
 ```text
-Review the current Internal Order Rekap table for readability and VP demo polish.
+Table readability and unified theme polish are postponed for now.
 Keep Material Search as a future separate page.
 Decide whether Sales Order Perspective should come next.
+
+Current next step: add basic local login and protect dashboard/API routes for demo use.
 ```
