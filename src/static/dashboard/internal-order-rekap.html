@@ -5,21 +5,21 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Internal Order Rekap</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="/static/dashboard/internal-order-rekap.css">
+  <link rel="stylesheet" href="/static/dashboard/internal-order-rekap.css?v=20260701-so-perspective">
 </head>
 <body>
   <main class="page-shell io-rekap-dashboard">
     <header class="page-header">
       <div>
         <div class="page-title-row">
-          <h1>Internal Order Rekap</h1>
+          <h1 id="pageTitle">Internal Order Rekap</h1>
           <div class="title-badges">
             <span class="status-badge status-progress">Internal Order-first</span>
             <span class="status-badge status-followup">Operational reconciliation</span>
             <span class="status-badge status-muted">Not profitability</span>
           </div>
         </div>
-        <p>RKB Actual vs ROP vs PO reconciliation</p>
+        <p id="pageSubtitle">RKB Actual vs ROP vs PO reconciliation</p>
       </div>
       <div class="header-actions">
         <a class="secondary-button" href="/dashboard/internal-orders">Internal Orders</a>
@@ -30,13 +30,22 @@
       </div>
     </header>
 
-    <section class="search-panel panel" aria-label="Internal Order search">
+    <section class="search-panel panel" aria-label="Order Material Tracking search">
+      <div class="perspective-switch" role="radiogroup" aria-label="Perspective">
+        <span>Perspective</span>
+        <label><input type="radio" name="rekapPerspective" value="internal_order" checked> Internal Order</label>
+        <label><input type="radio" name="rekapPerspective" value="sales_order"> Sales Order</label>
+      </div>
       <label class="search-field">
-        <span>Internal Order Number</span>
+        <span id="searchInputLabel">Internal Order Number</span>
         <input id="internalOrderInput" type="search" value="426IO026" placeholder="Enter Internal Order number">
       </label>
       <button class="secondary-button primary-action" id="loadButton" type="button">Load Internal Order</button>
       <div class="search-status" id="loadStatus">Ready</div>
+    </section>
+
+    <section class="panel perspective-context-note" id="perspectiveContextNote" hidden>
+      Sales Order Perspective shows material/procurement chain from linked Internal Orders. This is IO-level context, not product-level allocation or accounting margin.
     </section>
 
     <section class="error-banner" id="errorBanner" hidden aria-live="polite"></section>
@@ -47,14 +56,14 @@
     </section>
 
     <section class="kpi-grid kpi-grid-io" aria-label="Internal Order KPI cards">
-      <article class="kpi-card"><span class="kpi-label">Internal Order Number</span><strong id="kpiInternalOrderNumber">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label" id="kpiPrimaryLabel">Internal Order Number</span><strong id="kpiInternalOrderNumber">-</strong></article>
       <article class="kpi-card"><span class="kpi-label">Company</span><strong id="kpiCompany">-</strong></article>
-      <article class="kpi-card"><span class="kpi-label">Sales Order Link Status</span><strong id="kpiSalesOrderLink">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label" id="kpiLinkStatusLabel">Sales Order Link Status</span><strong id="kpiSalesOrderLink">-</strong></article>
       <article class="kpi-card kpi-card-filterable" data-filter="all" role="button" tabindex="0" aria-pressed="false"><span class="kpi-label">Product Count</span><strong id="kpiProductCount">-</strong></article>
-      <article class="kpi-card"><span class="kpi-label">IO Reference Amount</span><strong id="kpiIoReferenceAmount">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label" id="kpiIoReferenceLabel">IO Reference Amount</span><strong id="kpiIoReferenceAmount">-</strong></article>
       <article class="kpi-card"><span class="kpi-label">RKB Actual Amount</span><strong id="kpiFullRkb">-</strong></article>
-      <article class="kpi-card"><span class="kpi-label">RKB Kontribusi</span><strong id="kpiRkbKontribusi">-</strong></article>
-      <article class="kpi-card"><span class="kpi-label">RKB Kontribusi %</span><strong id="kpiRkbKontribusiPct">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label" id="kpiRkbKontribusiLabel">RKB Kontribusi</span><strong id="kpiRkbKontribusi">-</strong></article>
+      <article class="kpi-card"><span class="kpi-label" id="kpiRkbKontribusiPctLabel">RKB Kontribusi %</span><strong id="kpiRkbKontribusiPct">-</strong></article>
       <article class="kpi-card kpi-card-filterable" data-filter="trackable" role="button" tabindex="0" aria-pressed="false"><span class="kpi-label">Product Item RKB</span><strong id="kpiTrackableRkb">-</strong></article>
       <article class="kpi-card kpi-card-filterable" data-filter="non_trackable" role="button" tabindex="0" aria-pressed="false"><span class="kpi-label">Non-Product / Service Item RKB</span><strong id="kpiNonTrackableRkb">-</strong></article>
       <article class="kpi-card kpi-card-filterable" data-filter="rop_amount" role="button" tabindex="0" aria-pressed="false"><span class="kpi-label">ROP Amount</span><strong id="kpiRopAmount">-</strong></article>
@@ -231,6 +240,6 @@
     </section>
   </main>
 
-  <script src="/static/dashboard/internal-order-rekap.js"></script>
+  <script src="/static/dashboard/internal-order-rekap.js?v=20260701-so-perspective"></script>
 </body>
 </html>

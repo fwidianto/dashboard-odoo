@@ -17,10 +17,10 @@ from urllib.parse import urlencode
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 
 from src.engine.sync_engine import SyncEngine
 from src.engine.scheduler import SyncScheduler
@@ -288,6 +288,11 @@ async def dashboard_auth_middleware(request: Request, call_next):
             return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"detail": "Authentication required."})
 
     return await call_next(request)
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.get("/login", include_in_schema=False)
@@ -860,7 +865,9 @@ async def sales_order_dashboard_detail(sales_order_id: int):
 
 @app.get("/api/dashboard/internal-order-rekap", tags=["Dashboard"])
 async def internal_order_rekap_dashboard_data(
-    internal_order_number: Optional[str] = Query(default=None)
+    internal_order_number: Optional[str] = Query(default=None),
+    perspective: str = Query(default="internal_order"),
+    sales_order_number: Optional[str] = Query(default=None),
 ):
     """
     Return Internal Order Rekap operational reconciliation data.
@@ -869,6 +876,395 @@ async def internal_order_rekap_dashboard_data(
     vw_internal_order_rekap_summary
     vw_internal_order_rekap_lines
     """
+    normalized_perspective = (perspective or "internal_order").strip().lower().replace("-", "_")
+    if normalized_perspective == "internal_order" and sales_order_number and not internal_order_number:
+        normalized_perspective = "sales_order"
+    if normalized_perspective not in {"internal_order", "sales_order"}:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "perspective must be internal_order or sales_order."},
+        )
+
+    if normalized_perspective == "sales_order":
+        if sales_order_number is None or not sales_order_number.strip():
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "sales_order_number query parameter is required for sales_order perspective."},
+            )
+
+        normalized_sales_order_number = sales_order_number.strip()
+        context_note = "Sales Order Perspective shows IO-level linked material chain context, not product-level allocation or accounting margin."
+
+        selected_sales_order_sql = text("""
+            SELECT
+                so.id AS sales_order_id,
+                so.name::text AS sales_order_number,
+                so.state::text AS sales_order_state
+            FROM sale_order so
+            WHERE BTRIM(so.name::text) = :sales_order_number
+              AND COALESCE(so.state::text, '') NOT ILIKE '%cancel%'
+            ORDER BY so.id DESC
+            LIMIT 1
+        """)
+
+        linked_internal_orders_sql = text("""
+            WITH internal_order_rows AS (
+                SELECT DISTINCT
+                    NULLIF(BTRIM(COALESCE(io.internal_order_number::text, '')), '') AS internal_order_number,
+                    io.approval_request_numeric_id::bigint AS internal_order_id
+                FROM vw_approval_product_line_context io
+                WHERE io.approval_business_type = 'INTERNAL_ORDER'
+                  AND UPPER(BTRIM(COALESCE(io.approval_category_raw::text, ''))) = 'MANUFACTURE'
+                  AND io.is_valid_for_metrics
+                  AND NULLIF(BTRIM(COALESCE(io.internal_order_number::text, '')), '') IS NOT NULL
+                  AND io.approval_request_numeric_id IS NOT NULL
+                  AND NOT (
+                        COALESCE(io.approval_status::text, '') ILIKE '%cancel%'
+                     OR COALESCE(io.normalized_status::text, '') ILIKE '%cancel%'
+                     OR COALESCE(io.approval_status::text, '') ILIKE '%reject%'
+                     OR COALESCE(io.normalized_status::text, '') ILIKE '%reject%'
+                  )
+            )
+            SELECT DISTINCT internal_order_rows.internal_order_number
+            FROM vw_sale_order_internal_order_bridge bridge
+            JOIN internal_order_rows
+                ON internal_order_rows.internal_order_id = bridge.internal_order_id
+            WHERE bridge.so_id = :sales_order_id
+            ORDER BY internal_order_rows.internal_order_number
+        """)
+
+        sales_order_summary_sql = text("""
+            WITH summary_rows AS (
+                SELECT *
+                FROM vw_internal_order_rekap_summary
+                WHERE internal_order_number IN :internal_order_numbers
+            ), line_rows AS (
+                SELECT *
+                FROM vw_internal_order_rekap_lines
+                WHERE internal_order_number IN :internal_order_numbers
+            ), summary_agg AS (
+                SELECT
+                    STRING_AGG(DISTINCT internal_order_number, ', ' ORDER BY internal_order_number) AS internal_order_number,
+                    STRING_AGG(DISTINCT company_name, ', ' ORDER BY company_name) FILTER (WHERE NULLIF(BTRIM(COALESCE(company_name::text, '')), '') IS NOT NULL) AS company_name,
+                    SUM(io_reference_line_count) AS io_reference_line_count,
+                    SUM(io_reference_amount) AS io_reference_amount,
+                    SUM(rkb_kontribusi) AS rkb_kontribusi,
+                    CASE
+                        WHEN SUM(io_reference_amount) IS NULL OR SUM(io_reference_amount) = 0 THEN NULL
+                        ELSE SUM(rkb_kontribusi) / NULLIF(SUM(io_reference_amount), 0)
+                    END AS rkb_kontribusi_pct
+                FROM summary_rows
+            ), line_agg AS (
+                SELECT
+                    COUNT(*) AS product_count,
+                    COUNT(*) FILTER (WHERE COALESCE(rkb_actual_qty, 0) <> 0 OR COALESCE(rkb_actual_subtotal, 0) <> 0) AS rkb_actual_product_count,
+                    COUNT(*) FILTER (WHERE COALESCE(rop_qty, 0) <> 0 OR COALESCE(rop_subtotal, 0) <> 0) AS rop_product_count,
+                    COUNT(*) FILTER (WHERE COALESCE(po_qty, 0) <> 0 OR COALESCE(po_subtotal, 0) <> 0) AS po_product_count,
+                    SUM(rkb_actual_subtotal) AS rkb_actual_amount,
+                    SUM(rkb_actual_subtotal) FILTER (WHERE product_trackability_class = 'TRACKABLE_PRODUCT') AS rkb_actual_trackable_amount,
+                    SUM(rkb_actual_subtotal) FILTER (WHERE product_trackability_class <> 'TRACKABLE_PRODUCT') AS rkb_actual_non_trackable_amount,
+                    SUM(rkb_actual_subtotal) FILTER (WHERE product_trackability_class = 'UNKNOWN_PRODUCT_CLASS') AS rkb_actual_unknown_class_amount,
+                    SUM(rop_subtotal) AS rop_amount,
+                    SUM(rop_subtotal) FILTER (WHERE product_trackability_class = 'TRACKABLE_PRODUCT') AS rop_trackable_amount,
+                    SUM(rop_subtotal) FILTER (WHERE product_trackability_class <> 'TRACKABLE_PRODUCT') AS rop_non_trackable_amount,
+                    SUM(rop_subtotal) FILTER (WHERE product_trackability_class = 'UNKNOWN_PRODUCT_CLASS') AS rop_unknown_class_amount,
+                    SUM(po_subtotal) AS po_amount,
+                    SUM(po_subtotal) FILTER (WHERE product_trackability_class = 'TRACKABLE_PRODUCT') AS po_trackable_amount,
+                    SUM(po_subtotal) FILTER (WHERE product_trackability_class <> 'TRACKABLE_PRODUCT') AS po_non_trackable_amount,
+                    SUM(po_subtotal) FILTER (WHERE product_trackability_class = 'UNKNOWN_PRODUCT_CLASS') AS po_unknown_class_amount,
+                    SUM(not_yet_rop_amount) AS not_yet_rop_amount,
+                    SUM(excess_rop_amount) AS excess_rop_amount,
+                    SUM(po_received_qty) AS po_received_qty,
+                    SUM(po_invoiced_qty) AS po_invoiced_qty,
+                    COUNT(*) FILTER (WHERE mixed_uom_flag) AS mixed_uom_count,
+                    COUNT(*) FILTER (WHERE product_presence_status = 'RKB_ONLY') AS rkb_only_count,
+                    COUNT(*) FILTER (WHERE product_presence_status = 'ROP_ONLY') AS rop_only_count,
+                    COUNT(*) FILTER (WHERE product_presence_status = 'PO_ONLY') AS po_only_count,
+                    COUNT(*) FILTER (WHERE product_presence_status = 'RKB_ROP_PO') AS rkb_rop_po_count,
+                    COUNT(*) FILTER (WHERE po_without_rop_flag) AS po_without_rop_count,
+                    COUNT(*) FILTER (WHERE rop_without_po_flag) AS rop_without_po_count,
+                    CASE WHEN SUM(po_qty) = 0 THEN NULL ELSE SUM(po_received_qty) / NULLIF(SUM(po_qty), 0) END AS received_ratio,
+                    CASE WHEN SUM(po_qty) = 0 THEN NULL ELSE SUM(po_invoiced_qty) / NULLIF(SUM(po_qty), 0) END AS invoiced_ratio,
+                    CASE WHEN SUM(rkb_actual_subtotal) = 0 THEN NULL ELSE SUM(rop_subtotal) / NULLIF(SUM(rkb_actual_subtotal), 0) END AS rop_progress_ratio,
+                    CASE WHEN SUM(rkb_actual_subtotal) = 0 THEN NULL ELSE SUM(not_yet_rop_amount) / NULLIF(SUM(rkb_actual_subtotal), 0) END AS not_yet_rop_ratio
+                FROM line_rows
+            )
+            SELECT
+                summary_agg.internal_order_number,
+                summary_agg.company_name,
+                1 AS linked_sales_order_count,
+                CAST(:sales_order_number AS text) AS linked_sales_order_numbers,
+                TRUE AS has_sales_order_link,
+                summary_agg.io_reference_line_count,
+                summary_agg.io_reference_amount,
+                line_agg.product_count,
+                line_agg.rkb_actual_product_count,
+                line_agg.rop_product_count,
+                line_agg.po_product_count,
+                line_agg.rkb_actual_amount,
+                summary_agg.rkb_kontribusi,
+                summary_agg.rkb_kontribusi_pct,
+                line_agg.rkb_actual_trackable_amount,
+                line_agg.rkb_actual_non_trackable_amount,
+                line_agg.rkb_actual_unknown_class_amount,
+                line_agg.rop_amount,
+                line_agg.rop_trackable_amount,
+                line_agg.rop_non_trackable_amount,
+                line_agg.rop_unknown_class_amount,
+                line_agg.po_amount,
+                line_agg.po_trackable_amount,
+                line_agg.po_non_trackable_amount,
+                line_agg.po_unknown_class_amount,
+                line_agg.not_yet_rop_amount,
+                line_agg.excess_rop_amount,
+                line_agg.po_received_qty,
+                line_agg.po_invoiced_qty,
+                line_agg.mixed_uom_count,
+                line_agg.rkb_only_count,
+                line_agg.rop_only_count,
+                line_agg.po_only_count,
+                line_agg.rkb_rop_po_count,
+                line_agg.po_without_rop_count,
+                line_agg.rop_without_po_count,
+                line_agg.received_ratio,
+                line_agg.invoiced_ratio,
+                line_agg.rop_progress_ratio,
+                line_agg.not_yet_rop_ratio,
+                'Sales Order linked IO context'::text AS comparison_basis,
+                'IO-level material chain context'::text AS summary_scope
+            FROM summary_agg
+            CROSS JOIN line_agg
+        """).bindparams(bindparam("internal_order_numbers", expanding=True))
+
+        sales_order_breakdown_trackability_sql = text("""
+            SELECT
+                product_trackability_class,
+                product_classification_reason,
+                is_trackable_product,
+                COUNT(*) AS product_count,
+                SUM(rkb_actual_subtotal) AS rkb_actual_amount,
+                SUM(rop_subtotal) AS rop_amount,
+                SUM(po_subtotal) AS po_amount
+            FROM vw_internal_order_rekap_lines
+            WHERE internal_order_number IN :internal_order_numbers
+            GROUP BY
+                product_trackability_class,
+                product_classification_reason,
+                is_trackable_product
+            ORDER BY
+                product_trackability_class,
+                product_classification_reason,
+                is_trackable_product
+        """).bindparams(bindparam("internal_order_numbers", expanding=True))
+
+        sales_order_breakdown_presence_sql = text("""
+            SELECT
+                product_presence_status,
+                COUNT(*) AS product_count,
+                SUM(rkb_actual_subtotal) AS rkb_actual_amount,
+                SUM(rop_subtotal) AS rop_amount,
+                SUM(po_subtotal) AS po_amount
+            FROM vw_internal_order_rekap_lines
+            WHERE internal_order_number IN :internal_order_numbers
+            GROUP BY product_presence_status
+            ORDER BY product_presence_status
+        """).bindparams(bindparam("internal_order_numbers", expanding=True))
+
+        sales_order_lines_sql = text("""
+            SELECT
+                lines.internal_order_number,
+                lines.company_name,
+                lines.linked_sales_order_count,
+                lines.linked_sales_order_numbers,
+                lines.has_sales_order_link,
+                lines.product_key,
+                lines.product_name,
+                lines.product_trackability_class,
+                lines.product_classification_reason,
+                lines.is_trackable_product,
+                lines.product_presence_status,
+                lines.uom_summary,
+                lines.rkb_actual_uom_summary,
+                lines.rop_uom_summary,
+                lines.po_uom_summary,
+                lines.mixed_uom_flag,
+                lines.rkb_actual_qty,
+                lines.rkb_actual_unit_price,
+                lines.rkb_actual_subtotal,
+                lines.rkb_actual_request_summary,
+                lines.rkb_actual_request_numeric_summary,
+                lines.rop_qty,
+                lines.rop_unit_price,
+                lines.rop_subtotal,
+                lines.rop_request_summary,
+                lines.rop_request_numeric_summary,
+                lines.po_qty,
+                lines.po_unit_price,
+                lines.po_subtotal,
+                lines.po_received_qty,
+                lines.po_invoiced_qty,
+                po_refs.po_order_reference_summary,
+                lines.not_yet_rop_qty,
+                lines.not_yet_rop_amount,
+                lines.excess_rop_qty,
+                lines.excess_rop_amount,
+                lines.po_without_rop_flag,
+                lines.rop_without_po_flag,
+                lines.comparison_scope
+            FROM vw_internal_order_rekap_lines lines
+            LEFT JOIN vw_internal_order_po_agg po_refs
+                ON po_refs.internal_order_number = lines.internal_order_number
+               AND po_refs.product_key = lines.product_key
+            WHERE lines.internal_order_number IN :internal_order_numbers
+            ORDER BY
+                lines.internal_order_number,
+                lines.product_trackability_class,
+                lines.product_presence_status,
+                COALESCE(lines.rkb_actual_subtotal, 0) DESC,
+                lines.product_key
+        """).bindparams(bindparam("internal_order_numbers", expanding=True))
+
+        pg = PostgresClient()
+        try:
+            with pg.engine.connect() as conn:
+                selected_sales_order = conn.execute(
+                    selected_sales_order_sql,
+                    {"sales_order_number": normalized_sales_order_number},
+                ).mappings().first()
+
+                if selected_sales_order is None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail={
+                            "error": "Sales Order not found or not active.",
+                            "sales_order_number": normalized_sales_order_number,
+                        },
+                    )
+
+                linked_internal_orders = [
+                    row["internal_order_number"]
+                    for row in conn.execute(
+                        linked_internal_orders_sql,
+                        {"sales_order_id": selected_sales_order["sales_order_id"]},
+                    ).mappings().fetchall()
+                    if row["internal_order_number"]
+                ]
+
+                if linked_internal_orders:
+                    params = {
+                        "internal_order_numbers": linked_internal_orders,
+                        "sales_order_number": selected_sales_order["sales_order_number"],
+                    }
+                    summary_row = conn.execute(sales_order_summary_sql, params).fetchone()
+                    summary = {
+                        key: _json_safe(value)
+                        for key, value in summary_row._mapping.items()
+                    } if summary_row is not None else {}
+                    trackability_breakdowns = [
+                        {key: _json_safe(value) for key, value in row._mapping.items()}
+                        for row in conn.execute(sales_order_breakdown_trackability_sql, params).fetchall()
+                    ]
+                    presence_breakdowns = [
+                        {key: _json_safe(value) for key, value in row._mapping.items()}
+                        for row in conn.execute(sales_order_breakdown_presence_sql, params).fetchall()
+                    ]
+                    lines = [
+                        {key: _json_safe(value) for key, value in row._mapping.items()}
+                        for row in conn.execute(sales_order_lines_sql, params).fetchall()
+                    ]
+                else:
+                    summary = {
+                        "internal_order_number": None,
+                        "company_name": None,
+                        "linked_sales_order_count": 1,
+                        "linked_sales_order_numbers": selected_sales_order["sales_order_number"],
+                        "has_sales_order_link": False,
+                        "io_reference_line_count": None,
+                        "io_reference_amount": None,
+                        "product_count": 0,
+                        "rkb_actual_product_count": 0,
+                        "rop_product_count": 0,
+                        "po_product_count": 0,
+                        "rkb_actual_amount": 0,
+                        "rkb_kontribusi": None,
+                        "rkb_kontribusi_pct": None,
+                        "rkb_actual_trackable_amount": 0,
+                        "rkb_actual_non_trackable_amount": 0,
+                        "rkb_actual_unknown_class_amount": 0,
+                        "rop_amount": 0,
+                        "rop_trackable_amount": 0,
+                        "rop_non_trackable_amount": 0,
+                        "rop_unknown_class_amount": 0,
+                        "po_amount": 0,
+                        "po_trackable_amount": 0,
+                        "po_non_trackable_amount": 0,
+                        "po_unknown_class_amount": 0,
+                        "not_yet_rop_amount": 0,
+                        "excess_rop_amount": 0,
+                        "po_received_qty": 0,
+                        "po_invoiced_qty": 0,
+                        "mixed_uom_count": 0,
+                        "rkb_only_count": 0,
+                        "rop_only_count": 0,
+                        "po_only_count": 0,
+                        "rkb_rop_po_count": 0,
+                        "po_without_rop_count": 0,
+                        "rop_without_po_count": 0,
+                        "received_ratio": None,
+                        "invoiced_ratio": None,
+                        "rop_progress_ratio": None,
+                        "not_yet_rop_ratio": None,
+                        "comparison_basis": "Sales Order linked IO context",
+                        "summary_scope": "No linked Internal Order context",
+                    }
+                    trackability_breakdowns = []
+                    presence_breakdowns = []
+                    lines = []
+
+            linked_internal_order_numbers = ", ".join(linked_internal_orders)
+            empty_state_message = None
+            if not linked_internal_orders:
+                empty_state_message = "No linked Internal Order found through the approved SO-to-IO bridge."
+            elif not lines:
+                empty_state_message = "Linked Internal Order found, but no RKB / ROP / PO material rows were found."
+
+            metadata = {
+                "generated_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+                "perspective": "sales_order",
+                "comparison_basis": summary.get("comparison_basis"),
+                "summary_scope": summary.get("summary_scope"),
+                "line_count": len(lines),
+                "selected_sales_order_id": _json_safe(selected_sales_order["sales_order_id"]),
+                "selected_sales_order_number": selected_sales_order["sales_order_number"],
+                "linked_internal_order_count": len(linked_internal_orders),
+                "linked_internal_order_numbers": linked_internal_order_numbers,
+                "has_internal_order_link": bool(linked_internal_orders),
+                "context_note": context_note,
+                "empty_state_message": empty_state_message,
+                "warnings": [empty_state_message] if empty_state_message else [],
+            }
+
+            return {
+                "status": "success",
+                "perspective": "sales_order",
+                "sales_order_number": selected_sales_order["sales_order_number"],
+                "internal_order_number": summary.get("internal_order_number"),
+                "summary": summary,
+                "breakdowns": {
+                    "by_trackability_class": trackability_breakdowns,
+                    "by_product_presence_status": presence_breakdowns,
+                },
+                "lines": lines,
+                "metadata": metadata,
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Sales Order Perspective material tracking query failed", sales_order_number=normalized_sales_order_number, error=str(e))
+            raise HTTPException(status_code=500, detail=str(e))
+        finally:
+            pg.close()
+
     if internal_order_number is None or not internal_order_number.strip():
         raise HTTPException(
             status_code=400,
@@ -1089,7 +1485,7 @@ async def internal_order_rekap_dashboard_data(
 async def health_check():
     """
     Check health status of all services.
-    
+
     Returns connection status for Odoo and PostgreSQL,
     and whether the scheduler is running.
     """
@@ -1122,7 +1518,7 @@ async def health_check():
 async def get_sync_status():
     """
     Get current synchronization status for all models.
-    
+
     Returns sync state for each configured model including:
     - Last sync date and ID
     - Record count
@@ -1151,7 +1547,7 @@ async def get_sync_history(
 ):
     """
     Get sync history records.
-    
+
     Returns history of sync operations including:
     - Start and end times
     - Duration
@@ -1180,7 +1576,7 @@ async def get_sync_audit(
 ):
     """
     Get sync audit records comparing Odoo and PostgreSQL counts.
-    
+
     Returns audit records showing:
     - Odoo record count
     - PostgreSQL record count
@@ -1211,7 +1607,7 @@ async def trigger_sync(
 ):
     """
     Trigger a synchronization operation.
-    
+
     Can run synchronously (blocking) or be queued as a background task.
     Use full_sync=true for complete data synchronization.
     """
@@ -1219,7 +1615,7 @@ async def trigger_sync(
         logger.info("Sync triggered via API", full_sync=request.full_sync)
 
         engine = get_sync_engine()
-        
+
         # Run sync
         results = engine.sync_all(
             full_sync=request.full_sync,
@@ -1259,14 +1655,14 @@ async def trigger_sync(
 async def sync_model(model_name: str, full_sync: bool = False):
     """
     Synchronize a specific model.
-    
+
     Args:
         model_name: Odoo model technical name (e.g., 'res.partner').
         full_sync: Whether to perform full sync.
     """
     try:
         engine = get_sync_engine()
-        
+
         # Find model config
         model_config = None
         for config in engine.config.models:
@@ -1309,7 +1705,7 @@ async def sync_model(model_name: str, full_sync: bool = False):
 async def reset_sync_state(request: ResetRequest):
     """
     Reset synchronization state for specified models.
-    
+
     After reset, incremental sync will re-sync all records.
     """
     try:
@@ -1336,13 +1732,13 @@ async def reset_sync_state(request: ResetRequest):
 async def list_models():
     """
     List all configured models.
-    
+
     Returns model configurations including Odoo model name,
     PostgreSQL table name, field mappings, and deletion strategy.
     """
     try:
         engine = get_sync_engine()
-        
+
         models = []
         for config in engine.config.models:
             models.append({
@@ -1382,7 +1778,7 @@ async def list_models():
 async def start_scheduler(interval_minutes: int = 15):
     """
     Start the synchronization scheduler.
-    
+
     Args:
         interval_minutes: Incremental sync interval in minutes.
     """
@@ -1434,7 +1830,7 @@ async def scheduler_status():
 async def validate_configuration():
     """
     Validate the current configuration.
-    
+
     Checks that all configured models and fields exist in Odoo.
     """
     try:
@@ -1453,7 +1849,7 @@ async def validate_configuration():
 
 if __name__ == "__main__":
     import uvicorn
-    
+
     uvicorn.run(
         "src.api:app",
         host="0.0.0.0",

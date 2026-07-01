@@ -1,9 +1,9 @@
 # Order Material Tracking Plan
 
-**Date:** 2026-07-01  
-**Status:** Phase 2A.3 implemented on the current page
-**Current next step:** LAN/hotspot demo validation and VP prep
-**Primary base:** Internal Order Rekap  
+**Date:** 2026-07-01
+**Status:** Phase 2A.4 Sales Order Perspective implemented on the current page
+**Current next step:** LAN/hotspot demo validation, VP prep, then Material Search planning
+**Primary base:** Internal Order Rekap
 **Goal:** Track material/procurement chain from either Internal Order or Sales Order perspective.
 
 ---
@@ -69,7 +69,7 @@ For this IO:
 Flow:
 
 ```text
-SO -> Related RKB / Request -> ROP -> PO -> Receipt -> MO / Delivery
+SO -> approved SO-to-IO bridge -> linked IO material chain -> RKB -> ROP -> PO -> Receipt
 ```
 
 This perspective is useful when:
@@ -84,11 +84,19 @@ Core questions:
 
 ```text
 For this SO:
-- Which IO/material chain supports it?
-- What materials are needed?
-- Which ROP or PO is related?
-- Which PO has not been received?
-- Which items are blocking delivery?
+- Which linked Internal Order(s) support it?
+- What RKB / ROP / PO material chain is related through those Internal Orders?
+- Which materials are still RKB only?
+- Which materials already have ROP or PO?
+- Which materials are partially or fully received?
+- What needs review?
+```
+
+Important limitation:
+
+```text
+Sales Order Perspective is IO-level linked material chain context only.
+It is not product-level allocation, COGS, accounting gross profit, margin, AR/payment, or final profitability.
 ```
 
 ---
@@ -319,7 +327,16 @@ Note: linked Sales Order display is IO-level bridge context only, not product al
 - [x] Add clear sort
 - [x] Keep document references inline and comma-separated
 
-### Phase 6 - VP readiness
+### Phase 6 - Sales Order Perspective
+
+- [x] Add Internal Order / Sales Order perspective toggle
+- [x] Search by Sales Order number
+- [x] Resolve linked Internal Orders through the approved SO-to-IO bridge
+- [x] Return linked IO material/procurement chain rows from existing Internal Order Rekap lines
+- [x] Show no-linked-IO empty state without inferring from MO
+- [x] Keep labels as context, not allocation or profitability
+
+### Phase 7 - VP readiness
 
 - [x] Compact numbers on cards
 - [x] Clear labels
@@ -336,8 +353,8 @@ Suggested next prompt:
 
 ```text
 Table readability and unified theme polish are postponed for now.
+Sales Order Perspective is implemented as approved bridge context.
 Keep Material Search as a future separate page.
-Decide whether Sales Order Perspective should come next.
 
-Current next step: finish LAN/hotspot demo validation and VP prep.
+Current next step: finish LAN/hotspot demo validation and VP prep, then plan Material Search separately.
 ```

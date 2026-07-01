@@ -1,4 +1,5 @@
 const DEFAULT_INTERNAL_ORDER = "426IO026";
+const DEFAULT_PERSPECTIVE = "internal_order";
 
 const TAB_DEFS = [
   { key: "all", label: "All Lines", predicate: () => true },
@@ -99,6 +100,7 @@ function mappedLabel(labels, value) {
 const state = {
   payload: null,
   lines: [],
+  perspective: DEFAULT_PERSPECTIVE,
   filters: {
     tab: "all",
     card: "all",
@@ -121,20 +123,30 @@ const state = {
 };
 
 const els = {
+  pageTitle: document.getElementById("pageTitle"),
+  pageSubtitle: document.getElementById("pageSubtitle"),
   refreshButton: document.getElementById("refreshButton"),
   loadButton: document.getElementById("loadButton"),
   internalOrderInput: document.getElementById("internalOrderInput"),
+  searchInputLabel: document.getElementById("searchInputLabel"),
+  perspectiveInputs: Array.from(document.querySelectorAll('input[name="rekapPerspective"]')),
+  perspectiveContextNote: document.getElementById("perspectiveContextNote"),
   loadStatus: document.getElementById("loadStatus"),
   errorBanner: document.getElementById("errorBanner"),
   warningPanel: document.getElementById("warningPanel"),
   warningList: document.getElementById("warningList"),
+  kpiPrimaryLabel: document.getElementById("kpiPrimaryLabel"),
   kpiInternalOrderNumber: document.getElementById("kpiInternalOrderNumber"),
   kpiCompany: document.getElementById("kpiCompany"),
+  kpiLinkStatusLabel: document.getElementById("kpiLinkStatusLabel"),
   kpiSalesOrderLink: document.getElementById("kpiSalesOrderLink"),
   kpiProductCount: document.getElementById("kpiProductCount"),
+  kpiIoReferenceLabel: document.getElementById("kpiIoReferenceLabel"),
   kpiIoReferenceAmount: document.getElementById("kpiIoReferenceAmount"),
   kpiFullRkb: document.getElementById("kpiFullRkb"),
+  kpiRkbKontribusiLabel: document.getElementById("kpiRkbKontribusiLabel"),
   kpiRkbKontribusi: document.getElementById("kpiRkbKontribusi"),
+  kpiRkbKontribusiPctLabel: document.getElementById("kpiRkbKontribusiPctLabel"),
   kpiRkbKontribusiPct: document.getElementById("kpiRkbKontribusiPct"),
   kpiTrackableRkb: document.getElementById("kpiTrackableRkb"),
   kpiNonTrackableRkb: document.getElementById("kpiNonTrackableRkb"),
@@ -258,6 +270,33 @@ function boolBadge(value) {
   return value ? badge("Linked to Sales Order", "status-complete") : badge("Pre-SO Internal Order", "status-muted");
 }
 
+function currentPerspective() {
+  return state.perspective === "sales_order" ? "sales_order" : "internal_order";
+}
+
+function perspectiveLabel() {
+  return currentPerspective() === "sales_order" ? "Sales Order" : "Internal Order";
+}
+
+function updatePerspectiveUI() {
+  const isSalesOrder = currentPerspective() === "sales_order";
+  if (els.pageTitle) els.pageTitle.textContent = isSalesOrder ? "Order Material Tracking - Sales Order Perspective" : "Internal Order Rekap";
+  if (els.pageSubtitle) {
+    els.pageSubtitle.textContent = isSalesOrder
+      ? "Related material/procurement chain from linked Internal Orders"
+      : "RKB Actual vs ROP vs PO reconciliation";
+  }
+  if (els.searchInputLabel) els.searchInputLabel.textContent = isSalesOrder ? "Sales Order Number" : "Internal Order Number";
+  if (els.internalOrderInput) {
+    els.internalOrderInput.placeholder = isSalesOrder ? "Enter Sales Order number" : "Enter Internal Order number";
+  }
+  if (els.loadButton && !state.loading) els.loadButton.textContent = isSalesOrder ? "Load Sales Order" : "Load Internal Order";
+  if (els.perspectiveContextNote) els.perspectiveContextNote.hidden = !isSalesOrder;
+  els.perspectiveInputs.forEach((input) => {
+    input.checked = input.value === currentPerspective();
+  });
+}
+
 function classForFlag(flag) {
   if (flag === "danger") return "flag-danger";
   if (flag === "warning") return "flag-warning";
@@ -273,7 +312,7 @@ function setLoading(isLoading) {
   state.loading = isLoading;
   els.loadButton.disabled = isLoading;
   els.refreshButton.disabled = isLoading;
-  els.loadButton.textContent = isLoading ? "Loading..." : "Load Internal Order";
+  els.loadButton.textContent = isLoading ? "Loading..." : `Load ${perspectiveLabel()}`;
   els.loadStatus.textContent = isLoading ? "Loading data..." : "Ready";
 }
 
@@ -312,8 +351,8 @@ function clearEmptyState() {
   els.presenceSummary.textContent = "-";
   els.trackabilityBreakdownBody.innerHTML = '<tr><td colspan="7" class="empty-cell">Loading breakdown...</td></tr>';
   els.presenceBreakdownBody.innerHTML = '<tr><td colspan="5" class="empty-cell">Loading breakdown...</td></tr>';
-  els.lineTableBody.innerHTML = '<tr><td colspan="18" class="empty-cell">Loading Internal Order data...</td></tr>';
-  els.tableSubtitle.textContent = "Loading Internal Order...";
+  els.lineTableBody.innerHTML = '<tr><td colspan="19" class="empty-cell">Loading data...</td></tr>';
+  els.tableSubtitle.textContent = `Loading ${perspectiveLabel()}...`;
   els.tableMeta.textContent = "-";
   els.lineCount.textContent = "- lines";
   els.warningPanel.hidden = true;
@@ -353,9 +392,25 @@ function renderWarnings(summary, metadata) {
 }
 
 function renderSummary(summary, metadata) {
-  els.kpiInternalOrderNumber.textContent = safeText(summary.internal_order_number);
+  const isSalesOrder = currentPerspective() === "sales_order";
+  if (els.kpiPrimaryLabel) els.kpiPrimaryLabel.textContent = isSalesOrder ? "Sales Order Number" : "Internal Order Number";
+  if (els.kpiLinkStatusLabel) els.kpiLinkStatusLabel.textContent = isSalesOrder ? "Linked Internal Orders" : "Sales Order Link Status";
+  if (els.kpiIoReferenceLabel) els.kpiIoReferenceLabel.textContent = isSalesOrder ? "Linked IO Reference Amount" : "IO Reference Amount";
+  if (els.kpiRkbKontribusiLabel) els.kpiRkbKontribusiLabel.textContent = isSalesOrder ? "Linked IO RKB Kontribusi" : "RKB Kontribusi";
+  if (els.kpiRkbKontribusiPctLabel) els.kpiRkbKontribusiPctLabel.textContent = isSalesOrder ? "Linked IO RKB Kontribusi %" : "RKB Kontribusi %";
+
+  els.kpiInternalOrderNumber.textContent = isSalesOrder
+    ? safeText(metadata?.selected_sales_order_number || state.payload?.sales_order_number)
+    : safeText(summary.internal_order_number);
   els.kpiCompany.textContent = safeText(summary.company_name);
-  els.kpiSalesOrderLink.innerHTML = boolBadge(summary.has_sales_order_link);
+  if (isSalesOrder) {
+    const linkedCount = numberValue(metadata?.linked_internal_order_count);
+    els.kpiSalesOrderLink.innerHTML = linkedCount > 0
+      ? badge(`${formatCount(linkedCount)} Linked IO`, "status-progress")
+      : badge("No Linked IO", "status-muted");
+  } else {
+    els.kpiSalesOrderLink.innerHTML = boolBadge(summary.has_sales_order_link);
+  }
   els.kpiProductCount.textContent = formatCompactNumber(summary.product_count);
   els.kpiIoReferenceAmount.textContent = formatCompactAmountOrNA(summary.io_reference_amount);
   els.kpiFullRkb.textContent = formatCompactAmount(summary.rkb_actual_amount);
@@ -369,7 +424,10 @@ function renderSummary(summary, metadata) {
   els.kpiReceivedRatio.textContent = formatRatio(summary.received_ratio);
   els.kpiInvoicedRatio.textContent = formatRatio(summary.invoiced_ratio);
 
-  const infoBits = [summary.comparison_basis, summary.summary_scope, metadata?.generated_at, activeFilterSummary()].filter(Boolean);
+  const linkedIoText = isSalesOrder && metadata?.linked_internal_order_numbers
+    ? `Linked IO: ${metadata.linked_internal_order_numbers}`
+    : null;
+  const infoBits = [linkedIoText, summary.comparison_basis, summary.summary_scope, metadata?.generated_at, activeFilterSummary()].filter(Boolean);
   els.tableSubtitle.textContent = infoBits.join(" | ");
   els.tableMeta.textContent = metadata?.line_count !== undefined ? `${formatCount(metadata.line_count)} lines` : "-";
 }
@@ -718,7 +776,10 @@ function renderLines() {
   els.lineCount.textContent = `${formatCount(rows.length)} / ${formatCount(total)} lines`;
 
   if (!rows.length) {
-    els.lineTableBody.innerHTML = '<tr><td colspan="19" class="empty-cell">No Internal Order lines match the selected filters.</td></tr>';
+    const emptyMessage = total === 0
+      ? (state.payload?.metadata?.empty_state_message || `No ${perspectiveLabel()} material rows found.`)
+      : "No Internal Order lines match the selected filters.";
+    els.lineTableBody.innerHTML = `<tr><td colspan="19" class="empty-cell">${safeText(emptyMessage)}</td></tr>`;
     return;
   }
 
@@ -774,10 +835,11 @@ function renderDashboard() {
   renderSortState();
 }
 
-async function loadDashboard(internalOrderNumber) {
-  const normalized = (internalOrderNumber || "").trim();
+async function loadDashboard(searchValue) {
+  const normalized = (searchValue || "").trim();
+  const perspective = currentPerspective();
   if (!normalized) {
-    showError("internal_order_number is required.");
+    showError(`${perspectiveLabel()} number is required.`);
     return;
   }
 
@@ -785,7 +847,12 @@ async function loadDashboard(internalOrderNumber) {
   clearError();
 
   try {
-    const params = new URLSearchParams({ internal_order_number: normalized });
+    const params = new URLSearchParams({ perspective });
+    if (perspective === "sales_order") {
+      params.set("sales_order_number", normalized);
+    } else {
+      params.set("internal_order_number", normalized);
+    }
     const response = await fetch(`/api/dashboard/internal-order-rekap?${params.toString()}`, {
       headers: { Accept: "application/json" },
     });
@@ -797,10 +864,12 @@ async function loadDashboard(internalOrderNumber) {
     }
 
     state.payload = payload;
+    state.perspective = payload?.metadata?.perspective || payload?.perspective || perspective;
     state.lines = Array.isArray(payload.lines) ? payload.lines : [];
     resetInteractiveState();
+    updatePerspectiveUI();
     renderDashboard();
-    history.replaceState({}, "", `${location.pathname}?internal_order_number=${encodeURIComponent(normalized)}`);
+    history.replaceState({}, "", `${location.pathname}?${params.toString()}`);
     els.loadStatus.textContent = `Loaded ${normalized}`;
   } catch (error) {
     state.payload = null;
@@ -811,7 +880,7 @@ async function loadDashboard(internalOrderNumber) {
     renderLines();
     renderFilterState();
     renderSortState();
-    showError(error.message || "Failed to load Internal Order Rekap data.");
+    showError(error.message || `Failed to load ${perspectiveLabel()} data.`);
     els.loadStatus.textContent = "Failed to load";
   } finally {
     setLoading(false);
@@ -893,6 +962,14 @@ els.clearSortButton?.addEventListener("click", clearSort);
 document.addEventListener("click", handleSortInteraction);
 document.addEventListener("keydown", handleSortKeydown);
 document.addEventListener("change", handleControlChange);
+els.perspectiveInputs.forEach((input) => {
+  input.addEventListener("change", () => {
+    if (!input.checked) return;
+    state.perspective = input.value === "sales_order" ? "sales_order" : "internal_order";
+    clearError();
+    updatePerspectiveUI();
+  });
+});
 
 els.loadButton.addEventListener("click", () => loadDashboard(els.internalOrderInput.value));
 els.refreshButton.addEventListener("click", () => loadDashboard(els.internalOrderInput.value));
@@ -903,7 +980,15 @@ els.internalOrderInput.addEventListener("keydown", (event) => {
   }
 });
 
-const initialInternalOrder = new URLSearchParams(location.search).get("internal_order_number") || DEFAULT_INTERNAL_ORDER;
-els.internalOrderInput.value = initialInternalOrder;
+const initialParams = new URLSearchParams(location.search);
+const initialPerspective = initialParams.get("perspective") === "sales_order" || initialParams.has("sales_order_number") ? "sales_order" : "internal_order";
+state.perspective = initialPerspective;
+const initialSearchValue = initialPerspective === "sales_order"
+  ? (initialParams.get("sales_order_number") || "")
+  : (initialParams.get("internal_order_number") || DEFAULT_INTERNAL_ORDER);
+els.internalOrderInput.value = initialSearchValue;
+updatePerspectiveUI();
 renderDashboard();
-loadDashboard(initialInternalOrder);
+if (initialSearchValue) {
+  loadDashboard(initialSearchValue);
+}

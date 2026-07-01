@@ -1,9 +1,9 @@
 # Dashboard Progress Tracker
 
-**Date:** 2026-07-01  
-**Current project phase:** Phase 2A.3 - Order Material Tracking / Interactive Table Controls  
-**Current stable base:** Sales Order dashboard and Internal Order dashboard  
-**Next focus:** LAN/hotspot demo validation, then decide whether to add Sales Order Perspective before Material Search
+**Date:** 2026-07-01
+**Current project phase:** Phase 2A.4 - Sales Order Perspective for Order Material Tracking
+**Current stable base:** Sales Order dashboard and Internal Order dashboard
+**Next focus:** LAN/hotspot demo validation, VP review prep, then Material Search planning
 
 ---
 
@@ -54,6 +54,8 @@
 - [x] Combined filters added
 - [x] Clear All Filters and Clear Sort added
 - [x] Document reference rendering updated to inline comma-separated values
+- [x] Sales Order Perspective added using the approved SO-to-IO bridge
+- [x] Sales Order Perspective shows linked IO material/procurement chain context only
 
 ---
 
@@ -112,9 +114,9 @@ Universal search by product, SO, IO, RKB, ROP, PO, supplier, or customer.
 
 ### Step 2 - Perspective planning
 
-- [ ] Define Internal Order Perspective more clearly
-- [ ] Decide whether to add Sales Order Perspective next
-- [ ] Keep the first screen from becoming crowded
+- [x] Define Internal Order Perspective more clearly
+- [x] Add Sales Order Perspective using approved bridge context
+- [x] Keep the first screen from becoming crowded with a perspective toggle
 
 ### Step 3 - Material Search later
 
@@ -177,7 +179,16 @@ Universal search by product, SO, IO, RKB, ROP, PO, supplier, or customer.
 - [x] Add clear sort
 - [x] Keep document references inline and comma-separated
 
-### Phase 6 - VP readiness
+### Phase 6 - Sales Order Perspective
+
+- [x] Add Internal Order / Sales Order perspective toggle
+- [x] Search by Sales Order number
+- [x] Resolve linked Internal Orders through `vw_sale_order_internal_order_bridge`
+- [x] Reuse existing Internal Order Rekap line view for linked IO material chain rows
+- [x] Show clear no-linked-IO empty state
+- [x] Keep wording as IO-level context, not product allocation or profitability
+
+### Phase 7 - VP readiness
 
 - [x] Compact numbers on cards
 - [x] Clear labels
@@ -212,6 +223,7 @@ Procurement Shortage
 
 - Document chain columns now work in the Internal Order Rekap table.
 - Linked Sales Order shows approved IO-level bridge context only, not product-level allocation.
+- Sales Order Perspective is implemented as linked IO material chain context using the approved SO-to-IO bridge.
 - IO Reference Amount source is verified for `426IO026`.
 - For `426IO026`, the verified source totals are approximately:
   - `INTERNAL_ORDER / MANUFACTURE`: 13 rows = `13,401,200,001`

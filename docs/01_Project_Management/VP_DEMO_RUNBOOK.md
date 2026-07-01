@@ -73,7 +73,7 @@ http://<demo-ip>:8000/login
 - Not COGS
 - Not AR/payment
 - Material Search is not implemented yet
-- Sales Order Perspective for Order Material Tracking is not implemented yet
+- Sales Order Perspective for Order Material Tracking is implemented as IO-level bridge context, not product allocation
 
 **Troubleshooting**
 
