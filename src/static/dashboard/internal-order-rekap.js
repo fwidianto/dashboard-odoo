@@ -376,7 +376,7 @@ function renderDocumentReferences(value) {
   if (!values.length) {
     return "-";
   }
-  return `<div class="doc-ref-list">${values.map((entry) => `<span class="doc-ref">${safeText(entry)}</span>`).join("")}</div>`;
+  return `<span class="doc-ref-inline">${values.map((entry) => safeText(entry)).join(", ")}</span>`;
 }
 
 function renderSalesOrderLinkCell(row) {
