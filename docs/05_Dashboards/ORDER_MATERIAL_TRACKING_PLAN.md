@@ -300,7 +300,7 @@ Avoid overly technical statuses on the main screen.
 ### Phase 4 - Table relationship fields
 
 - [x] Show Internal Order Number
-- [ ] Show actual linked Sales Order Number
+- [x] Show actual linked Sales Order Number
 - [x] Show Sales Order Status as Linked / Pre-SO
 - [x] Show RKB Number
 - [x] Show ROP Number / Approval Number
@@ -308,6 +308,8 @@ Avoid overly technical statuses on the main screen.
 - [x] Show Product Name
 - [x] Show RKB / ROP / PO / Receipt quantities
 - [x] Show current material status
+
+Note: linked Sales Order display is IO-level bridge context only, not product allocation.
 
 ### Phase 5 - Interactive table controls
 

@@ -881,6 +881,8 @@ async def internal_order_rekap_dashboard_data(
         SELECT
             internal_order_number,
             company_name,
+            linked_sales_order_count,
+            linked_sales_order_numbers,
             has_sales_order_link,
             io_reference_line_count,
             io_reference_amount,
@@ -961,6 +963,8 @@ async def internal_order_rekap_dashboard_data(
         SELECT
             lines.internal_order_number,
             lines.company_name,
+            lines.linked_sales_order_count,
+            lines.linked_sales_order_numbers,
             lines.has_sales_order_link,
             lines.product_key,
             lines.product_name,

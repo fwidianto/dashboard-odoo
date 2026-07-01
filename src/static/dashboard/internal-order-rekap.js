@@ -649,6 +649,8 @@ function getSortValue(row, key) {
       return row.internal_order_number || "";
     case "sales_order_status":
       return row.has_sales_order_link ? 1 : 0;
+    case "linked_sales_order":
+      return row.linked_sales_order_numbers || "";
     case "rkb_request":
       return row.rkb_actual_request_summary || row.rkb_actual_request_numeric_summary || "";
     case "rop_request":
@@ -716,7 +718,7 @@ function renderLines() {
   els.lineCount.textContent = `${formatCount(rows.length)} / ${formatCount(total)} lines`;
 
   if (!rows.length) {
-    els.lineTableBody.innerHTML = '<tr><td colspan="18" class="empty-cell">No Internal Order lines match the selected filters.</td></tr>';
+    els.lineTableBody.innerHTML = '<tr><td colspan="19" class="empty-cell">No Internal Order lines match the selected filters.</td></tr>';
     return;
   }
 
@@ -726,6 +728,7 @@ function renderLines() {
     <tr>
       <td>${safeText(row.internal_order_number)}</td>
       <td>${renderSalesOrderLinkCell(row)}</td>
+      <td>${renderDocumentReferences(row.linked_sales_order_numbers)}</td>
       <td>${renderDocumentReferences(row.rkb_actual_request_summary || row.rkb_actual_request_numeric_summary)}</td>
       <td>${renderDocumentReferences(row.rop_request_summary || row.rop_request_numeric_summary)}</td>
       <td>${renderDocumentReferences(row.po_order_reference_summary)}</td>

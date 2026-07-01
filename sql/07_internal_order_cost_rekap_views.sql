@@ -6,7 +6,49 @@ DROP VIEW IF EXISTS vw_internal_order_po_agg CASCADE;
 DROP VIEW IF EXISTS vw_internal_order_rop_agg CASCADE; 
 DROP VIEW IF EXISTS vw_internal_order_rkb_actual_agg CASCADE; 
 DROP VIEW IF EXISTS vw_internal_order_rekap_scope CASCADE;
+DROP VIEW IF EXISTS vw_internal_order_sales_order_link_agg CASCADE;
 DROP VIEW IF EXISTS vw_internal_order_reference_amount CASCADE;
+
+CREATE VIEW vw_internal_order_sales_order_link_agg AS
+WITH internal_order_rows AS (
+SELECT
+        NULLIF(BTRIM(COALESCE(io.internal_order_number::text, '')), '') AS internal_order_number,
+        io.approval_request_numeric_id::bigint AS internal_order_id
+    FROM vw_approval_product_line_context io
+    WHERE io.approval_business_type = 'INTERNAL_ORDER'
+      AND UPPER(BTRIM(COALESCE(io.approval_category_raw::text, ''))) = 'MANUFACTURE'
+      AND io.is_valid_for_metrics
+      AND NULLIF(BTRIM(COALESCE(io.internal_order_number::text, '')), '') IS NOT NULL
+      AND io.approval_request_numeric_id IS NOT NULL
+      AND NOT (
+            COALESCE(io.approval_status::text, '') ILIKE '%cancel%'
+         OR COALESCE(io.normalized_status::text, '') ILIKE '%cancel%'
+         OR COALESCE(io.approval_status::text, '') ILIKE '%reject%'
+         OR COALESCE(io.normalized_status::text, '') ILIKE '%reject%'
+      )
+), bridge_rows AS (
+SELECT DISTINCT
+        internal_order_rows.internal_order_number,
+        bridge.so_id,
+        bridge.so_number
+    FROM internal_order_rows
+    JOIN vw_sale_order_internal_order_bridge bridge
+        ON bridge.internal_order_id = internal_order_rows.internal_order_id
+    JOIN sale_order so
+        ON so.id = bridge.so_id
+    WHERE NULLIF(BTRIM(COALESCE(bridge.so_number::text, '')), '') IS NOT NULL
+      AND COALESCE(so.state::text, '') NOT ILIKE '%cancel%'
+)
+SELECT
+    bridge_rows.internal_order_number,
+    COUNT(DISTINCT bridge_rows.so_id) AS linked_sales_order_count,
+    STRING_AGG(DISTINCT bridge_rows.so_number, ', '
+ORDER BY bridge_rows.so_number) AS linked_sales_order_numbers
+FROM bridge_rows
+GROUP BY bridge_rows.internal_order_number;
+
+COMMENT ON VIEW vw_internal_order_sales_order_link_agg IS
+    'Approved Internal Order to Sales Order bridge summary. Uses sale_order.x_studio_io_1 parsed numeric IDs to approval_request_numeric_id and returns distinct SO numbers at Internal Order grain only.';
 
 CREATE VIEW vw_internal_order_rekap_scope AS 
 WITH source_rows AS (     
@@ -19,9 +61,7 @@ SELECT         NULLIF(BTRIM(COALESCE(rop.internal_order_number::text, '')), '') 
 
     UNION ALL      
 SELECT         NULLIF(BTRIM(COALESCE(po.internal_order_number::text, '')), '') AS internal_order_number,         po.company_name::text AS company_name,         po.procurement_line_id::text AS source_row_id,         'PO'::text AS source_type     
-    FROM vw_procurement_lines po     WHERE po.is_valid_for_metrics       AND NULLIF(BTRIM(COALESCE(po.internal_order_number::text, '')), '') IS NOT NULL       AND NOT (             COALESCE(po.purchase_line_state::text, '') ILIKE '%cancel%'          OR COALESCE(po.normalized_status::text, '') ILIKE '%cancel%'          OR COALESCE(po.purchase_line_state::text, '') ILIKE '%reject%'          OR COALESCE(po.normalized_status::text, '') ILIKE '%reject%'       ) ), bridge_flags AS (     
-SELECT DISTINCT         NULLIF(BTRIM(COALESCE(bridge.raw_x_studio_io_1::text, bridge.internal_order_id::text, '')), '') AS internal_order_number,         TRUE AS has_sales_order_link     
-    FROM vw_sale_order_internal_order_bridge bridge     WHERE NULLIF(BTRIM(COALESCE(bridge.raw_x_studio_io_1::text, bridge.internal_order_id::text, '')), '') IS NOT NULL )
+    FROM vw_procurement_lines po     WHERE po.is_valid_for_metrics       AND NULLIF(BTRIM(COALESCE(po.internal_order_number::text, '')), '') IS NOT NULL       AND NOT (             COALESCE(po.purchase_line_state::text, '') ILIKE '%cancel%'          OR COALESCE(po.normalized_status::text, '') ILIKE '%cancel%'          OR COALESCE(po.purchase_line_state::text, '') ILIKE '%reject%'          OR COALESCE(po.normalized_status::text, '') ILIKE '%reject%'       ) )
 
 SELECT     src.internal_order_number,     STRING_AGG(DISTINCT src.company_name, ', ' 
 ORDER BY src.company_name)         
@@ -46,14 +86,17 @@ ORDER BY src.company_name)
         WHEN COUNT(*) 
         FILTER (WHERE src.source_type = 'PO') > 0  THEN TRUE 
         ELSE FALSE 
-    END AS has_po,     COALESCE(BOOL_OR(bridge_flags.has_sales_order_link), FALSE) AS has_sales_order_link 
+    END AS has_po,     COALESCE(MAX(so_links.linked_sales_order_count), 0) AS linked_sales_order_count,
+    MAX(so_links.linked_sales_order_numbers) AS linked_sales_order_numbers,
+    (COALESCE(MAX(so_links.linked_sales_order_count), 0) > 0) AS has_sales_order_link
 
 FROM source_rows src 
-LEFT JOIN bridge_flags     ON bridge_flags.internal_order_number = src.internal_order_number 
+LEFT JOIN vw_internal_order_sales_order_link_agg so_links
+    ON so_links.internal_order_number = src.internal_order_number
 
 GROUP BY src.internal_order_number;
 
-COMMENT ON VIEW vw_internal_order_rekap_scope IS     'Phase 1 Internal Order scope. One row per internal_order_number with RKB / ROP / PO source presence and Sales Order bridge flag.';
+COMMENT ON VIEW vw_internal_order_rekap_scope IS     'Phase 1 Internal Order scope. One row per internal_order_number with RKB / ROP / PO source presence and approved Sales Order bridge context.';
 
 CREATE VIEW vw_internal_order_reference_amount AS 
 WITH source_rows AS (     
@@ -296,6 +339,8 @@ CREATE VIEW vw_internal_order_rekap_lines AS
 SELECT
     universe.internal_order_number,
     scope.company_name,
+    scope.linked_sales_order_count,
+    scope.linked_sales_order_numbers,
     scope.has_sales_order_link,
     universe.product_key,
     universe.product_name,
@@ -385,6 +430,8 @@ CREATE VIEW vw_internal_order_rekap_summary AS
 SELECT
     lines.internal_order_number,
     MAX(lines.company_name) AS company_name,
+    MAX(lines.linked_sales_order_count) AS linked_sales_order_count,
+    MAX(lines.linked_sales_order_numbers) AS linked_sales_order_numbers,
     COALESCE(BOOL_OR(lines.has_sales_order_link), FALSE) AS has_sales_order_link,
     MAX(io_ref.io_reference_line_count) AS io_reference_line_count,
     MAX(io_ref.io_reference_amount)::numeric AS io_reference_amount,

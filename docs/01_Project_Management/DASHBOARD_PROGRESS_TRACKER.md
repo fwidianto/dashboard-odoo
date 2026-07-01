@@ -160,7 +160,7 @@ Universal search by product, SO, IO, RKB, ROP, PO, supplier, or customer.
 ### Phase 4 - Table relationship fields
 
 - [x] Show Internal Order Number
-- [ ] Show actual linked Sales Order Number
+- [x] Show actual linked Sales Order Number
 - [x] Show Sales Order Status as Linked / Pre-SO
 - [x] Show RKB Number
 - [x] Show ROP Number / Approval Number
@@ -211,6 +211,7 @@ Procurement Shortage
 ### Latest implementation notes
 
 - Document chain columns now work in the Internal Order Rekap table.
+- Linked Sales Order shows approved IO-level bridge context only, not product-level allocation.
 - IO Reference Amount source is verified for `426IO026`.
 - For `426IO026`, the verified source totals are approximately:
   - `INTERNAL_ORDER / MANUFACTURE`: 13 rows = `13,401,200,001`
