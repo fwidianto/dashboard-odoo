@@ -307,3 +307,34 @@
     margin-top: 0;
   }
 }
+
+.table-panel table {
+  min-width: 1880px;
+}
+
+.doc-ref-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 138px;
+}
+
+.doc-ref {
+  display: inline-flex;
+  align-self: flex-start;
+  min-height: 22px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 8px;
+  background: #f7f9fb;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.subtle-cell {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}

@@ -242,7 +242,7 @@ function clearEmptyState() {
   els.presenceSummary.textContent = "-";
   els.trackabilityBreakdownBody.innerHTML = '<tr><td colspan="7" class="empty-cell">Loading breakdown...</td></tr>';
   els.presenceBreakdownBody.innerHTML = '<tr><td colspan="5" class="empty-cell">Loading breakdown...</td></tr>';
-  els.lineTableBody.innerHTML = '<tr><td colspan="15" class="empty-cell">Loading Internal Order data...</td></tr>';
+  els.lineTableBody.innerHTML = '<tr><td colspan="18" class="empty-cell">Loading Internal Order data...</td></tr>';
   els.tableSubtitle.textContent = "Loading Internal Order...";
   els.tableMeta.textContent = "-";
   els.lineCount.textContent = "- lines";
@@ -363,10 +363,65 @@ function renderFilterState() {
   });
 }
 
+function splitSummaryValues(value) {
+  if (!value) return [];
+  return String(value)
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function renderDocumentReferences(value) {
+  const values = splitSummaryValues(value);
+  if (!values.length) {
+    return "-";
+  }
+  return `<div class="doc-ref-list">${values.map((entry) => `<span class="doc-ref">${safeText(entry)}</span>`).join("")}</div>`;
+}
+
+function renderSalesOrderLinkCell(row) {
+  if (!row.has_sales_order_link) {
+    return "-";
+  }
+  return badge("Linked", "status-progress");
+}
+
+function materialStatusMeta(row) {
+  const poQty = numberValue(row.po_qty);
+  const receivedQty = numberValue(row.po_received_qty);
+  const ropQty = numberValue(row.rop_qty);
+  const rkbQty = numberValue(row.rkb_actual_qty);
+  const poAmount = Math.abs(numberValue(row.po_subtotal));
+  const ropAmount = Math.abs(numberValue(row.rop_subtotal));
+  const rkbAmount = Math.abs(numberValue(row.rkb_actual_subtotal));
+
+  if (receivedQty > 0) {
+    if (poQty > 0 && receivedQty >= poQty) {
+      return { label: "Fully Received", tone: "status-complete" };
+    }
+    return { label: "Partially Received", tone: "status-progress" };
+  }
+
+  if (poQty > 0 || poAmount > 0) {
+    return { label: "PO Created", tone: "status-progress" };
+  }
+
+  if (ropQty > 0 || ropAmount > 0) {
+    return { label: "ROP Created", tone: "status-progress" };
+  }
+
+  if (row.product_presence_status === "RKB_ONLY" || rkbQty > 0 || rkbAmount > 0) {
+    return { label: "RKB Only", tone: "status-muted" };
+  }
+
+  return { label: "Needs Review", tone: "status-followup" };
+}
+
 function renderLineFlags(row) {
   const flags = [];
   if (row.po_without_rop_flag) flags.push(flag("PO Without ROP", "danger"));
   if (row.rop_without_po_flag) flags.push(flag("ROP Without PO", "danger"));
+  if (row.mixed_uom_flag) flags.push(flag("Mixed UoM", "warning"));
   if (row.product_trackability_class !== "TRACKABLE_PRODUCT") flags.push(flag("Non-Product / Service", "muted"));
   return flags.length ? `<div class="line-flags">${flags.join("")}</div>` : "-";
 }
@@ -377,16 +432,25 @@ function renderLines() {
   els.lineCount.textContent = `${formatCount(rows.length)} / ${formatCount(total)} lines`;
 
   if (!rows.length) {
-    els.lineTableBody.innerHTML = '<tr><td colspan="15" class="empty-cell">No Internal Order lines match the selected tab.</td></tr>';
+    els.lineTableBody.innerHTML = '<tr><td colspan="18" class="empty-cell">No Internal Order lines match the selected tab.</td></tr>';
     return;
   }
 
-  els.lineTableBody.innerHTML = rows.map((row) => `
+  els.lineTableBody.innerHTML = rows.map((row) => {
+    const status = materialStatusMeta(row);
+    return `
     <tr>
-      <td>${safeText(row.product_key)}</td>
-      <td>${safeText(row.product_name)}</td>
+      <td>${safeText(row.internal_order_number)}</td>
+      <td>${renderSalesOrderLinkCell(row)}</td>
+      <td>${renderDocumentReferences(row.rkb_actual_request_summary || row.rkb_actual_request_numeric_summary)}</td>
+      <td>${renderDocumentReferences(row.rop_request_summary || row.rop_request_numeric_summary)}</td>
+      <td>${renderDocumentReferences(row.po_order_reference_summary)}</td>
+      <td>
+        <div>${safeText(row.product_name)}</div>
+        <div class="subtle-cell">${safeText(row.product_key)}</div>
+      </td>
       <td>${badge(mappedLabel(TRACKABILITY_LABELS, row.product_trackability_class), row.is_trackable_product ? "status-complete" : "status-muted")}</td>
-      <td>${badge(mappedLabel(PRESENCE_LABELS, row.product_presence_status), row.product_presence_status === "RKB_ROP_PO" ? "status-complete" : "status-progress")}</td>
+      <td>${badge(status.label, status.tone)}</td>
       <td>${safeText(row.uom_summary)}</td>
       <td class="num">${formatQty(row.rkb_actual_qty)}</td>
       <td class="num">${formatAmount(row.rkb_actual_subtotal)}</td>
@@ -396,10 +460,10 @@ function renderLines() {
       <td class="num">${formatAmount(row.po_subtotal)}</td>
       <td class="num">${formatQty(row.po_received_qty)}</td>
       <td class="num">${formatQty(row.po_invoiced_qty)}</td>
-      <td class="num">${formatAmount(row.excess_rop_amount)}</td>
       <td>${renderLineFlags(row)}</td>
     </tr>
-  `).join("");
+  `;
+  }).join("");
 }
 
 function renderDashboard() {

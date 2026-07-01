@@ -663,45 +663,53 @@ async def internal_order_rekap_dashboard_data(
 
     lines_sql = text("""
         SELECT
-            internal_order_number,
-            company_name,
-            has_sales_order_link,
-            product_key,
-            product_name,
-            product_trackability_class,
-            product_classification_reason,
-            is_trackable_product,
-            product_presence_status,
-            uom_summary,
-            rkb_actual_uom_summary,
-            rop_uom_summary,
-            po_uom_summary,
-            mixed_uom_flag,
-            rkb_actual_qty,
-            rkb_actual_unit_price,
-            rkb_actual_subtotal,
-            rop_qty,
-            rop_unit_price,
-            rop_subtotal,
-            po_qty,
-            po_unit_price,
-            po_subtotal,
-            po_received_qty,
-            po_invoiced_qty,
-            not_yet_rop_qty,
-            not_yet_rop_amount,
-            excess_rop_qty,
-            excess_rop_amount,
-            po_without_rop_flag,
-            rop_without_po_flag,
-            comparison_scope
-        FROM vw_internal_order_rekap_lines
-        WHERE internal_order_number = :internal_order_number
+            lines.internal_order_number,
+            lines.company_name,
+            lines.has_sales_order_link,
+            lines.product_key,
+            lines.product_name,
+            lines.product_trackability_class,
+            lines.product_classification_reason,
+            lines.is_trackable_product,
+            lines.product_presence_status,
+            lines.uom_summary,
+            lines.rkb_actual_uom_summary,
+            lines.rop_uom_summary,
+            lines.po_uom_summary,
+            lines.mixed_uom_flag,
+            lines.rkb_actual_qty,
+            lines.rkb_actual_unit_price,
+            lines.rkb_actual_subtotal,
+            lines.rkb_actual_request_summary,
+            lines.rkb_actual_request_numeric_summary,
+            lines.rop_qty,
+            lines.rop_unit_price,
+            lines.rop_subtotal,
+            lines.rop_request_summary,
+            lines.rop_request_numeric_summary,
+            lines.po_qty,
+            lines.po_unit_price,
+            lines.po_subtotal,
+            lines.po_received_qty,
+            lines.po_invoiced_qty,
+            po_refs.po_order_reference_summary,
+            lines.not_yet_rop_qty,
+            lines.not_yet_rop_amount,
+            lines.excess_rop_qty,
+            lines.excess_rop_amount,
+            lines.po_without_rop_flag,
+            lines.rop_without_po_flag,
+            lines.comparison_scope
+        FROM vw_internal_order_rekap_lines lines
+        LEFT JOIN vw_internal_order_po_agg po_refs
+            ON po_refs.internal_order_number = lines.internal_order_number
+           AND po_refs.product_key = lines.product_key
+        WHERE lines.internal_order_number = :internal_order_number
         ORDER BY
-            product_trackability_class,
-            product_presence_status,
-            COALESCE(rkb_actual_subtotal, 0) DESC,
-            product_key
+            lines.product_trackability_class,
+            lines.product_presence_status,
+            COALESCE(lines.rkb_actual_subtotal, 0) DESC,
+            lines.product_key
     """)
 
     pg = PostgresClient()
