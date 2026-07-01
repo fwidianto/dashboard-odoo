@@ -1,0 +1,322 @@
+# Order Material Tracking Plan
+
+**Date:** 2026-07-01  
+**Status:** Planning agreed  
+**Primary base:** Internal Order Rekap  
+**Goal:** Track material/procurement chain from either Internal Order or Sales Order perspective.
+
+---
+
+## 1. Agreed Page Direction
+
+The current `Internal Order Rekap` should evolve into:
+
+```text
+Order Material Tracking
+```
+
+The page should not be limited to Internal Order only. It should support two order perspectives:
+
+```text
+1. Internal Order Perspective
+2. Sales Order Perspective
+```
+
+The intention is to answer:
+
+```text
+For this order, where are the related materials now?
+Are they still at RKB, ROP, PO, receipt, production, stock, or delivery?
+```
+
+---
+
+## 2. Perspective A — Internal Order
+
+Flow:
+
+```text
+IO → RKB IO → ROP → PO → Receipt → MO / Finished Goods → Linked SO
+```
+
+This perspective is useful when:
+
+```text
+- IO exists before Sales Order
+- IO is used to produce stock first
+- We want to know what has been planned, purchased, received, produced, and later sold
+```
+
+Core questions:
+
+```text
+For this IO:
+- What items were planned in RKB?
+- Which items already have ROP?
+- Which items already have PO?
+- Which PO items have been received?
+- Which items are already produced?
+- Which Sales Orders are linked later?
+```
+
+---
+
+## 3. Perspective B — Sales Order
+
+Flow:
+
+```text
+SO → Related RKB / Request → ROP → PO → Receipt → MO / Delivery
+```
+
+This perspective is useful when:
+
+```text
+- Sales Order is the starting question
+- VP or operations asks why an SO is delayed
+- We need to identify whether the bottleneck is RKB, ROP, PO, receipt, production, or delivery
+```
+
+Core questions:
+
+```text
+For this SO:
+- Which IO/material chain supports it?
+- What materials are needed?
+- Which ROP or PO is related?
+- Which PO has not been received?
+- Which items are blocking delivery?
+```
+
+---
+
+## 4. Current Page Scope
+
+This page is order-based.
+
+Included:
+
+```text
+- Internal Order
+- Sales Order
+- RKB
+- ROP / Procurement Request
+- Purchase Order
+- Receipt status
+- Production / finished-good context where available
+```
+
+Not included for now:
+
+```text
+- Full universal material search
+- Supplier-wide procurement search
+- Inventory valuation
+- Accounting COGS
+- AR/payment
+- Final gross profit
+```
+
+---
+
+## 5. UI Improvements Agreed
+
+### 5.1 Use compact numbers
+
+Cards should use compact number display.
+
+Examples:
+
+```text
+1,250,000,000 → 1.25B
+845,000,000 → 845M
+12,500,000 → 12.5M
+```
+
+Tables may still show full numbers or formatted IDR where useful.
+
+---
+
+### 5.2 Rename confusing labels
+
+Use business-friendly labels.
+
+| Current Label | New Label |
+|---|---|
+| Trackable RKB Actual | Product Item RKB |
+| Non-Trackable RKB | Non-Product / Service Item RKB |
+| Trackable Product | Product Item |
+| Mixed UOM Count | Hide from main UI |
+| Not Yet ROP Amount | Hide from main UI |
+| RKB_ONLY | RKB Only |
+| ROP_ONLY | ROP Only |
+| PO_ONLY | PO Only |
+| RKB_ROP_PO | RKB, ROP, and PO |
+
+---
+
+### 5.3 Hide confusing diagnostics from main cards
+
+Hide these from visible dashboard cards:
+
+```text
+- Mixed UOM Count
+- Not Yet ROP Amount
+```
+
+Reason:
+
+```text
+The intention is valid, but both are easy to misunderstand.
+Mixed UOM is only a diagnostic flag.
+Not Yet ROP Amount can be misleading because not every RKB item must become ROP.
+```
+
+If needed later, these can move to an Audit / Diagnostic mode.
+
+---
+
+### 5.4 Remove underscores from displayed values
+
+Do not show raw enum labels in UI.
+
+Bad:
+
+```text
+RKB_ROP_PO
+NON_TRACKABLE_OTHERS
+UNKNOWN_PRODUCT_CLASS
+```
+
+Good:
+
+```text
+RKB, ROP, and PO
+Non-Product / Service Item
+Unclassified Item
+```
+
+---
+
+### 5.5 Cards should act as filters
+
+All summary cards should be clickable filters, similar to Sales Order dashboard.
+
+Examples:
+
+```text
+Click Product Item RKB → filter table to Product Item rows
+Click Non-Product / Service Item RKB → filter table to service/non-product rows
+Click RKB Only → filter table to RKB-only rows
+Click ROP Only → filter table to ROP-only rows
+Click PO Only → filter table to PO-only rows
+```
+
+---
+
+## 6. Table Fields Agreed
+
+The table should show document relationships clearly.
+
+Important fields:
+
+```text
+- Internal Order Number
+- Sales Order Number
+- Product Name
+- Product Item / Non-Product Service Item
+- RKB Number
+- RKB Qty
+- RKB Amount
+- ROP Number / Approval Number
+- ROP Qty
+- ROP Amount
+- Related PO Number
+- PO Qty
+- PO Amount
+- Received Qty
+- Receipt Status
+- Current Material Status
+```
+
+Purpose:
+
+```text
+Users should be able to see the chain per item without opening many systems.
+```
+
+---
+
+## 7. Suggested Status Logic
+
+Simple operational statuses:
+
+```text
+RKB Only
+ROP Created
+PO Created
+Partially Received
+Fully Received
+Ready for Production
+Production In Progress
+Finished Good Available
+Linked to SO
+Delivered
+Needs Review
+```
+
+Avoid overly technical statuses on the main screen.
+
+---
+
+## 8. Progress Checklist
+
+### Phase 1 — Stabilize current page
+
+- [ ] Confirm `vw_internal_order_rekap_summary` loads
+- [ ] Confirm `vw_internal_order_rekap_lines` loads
+- [ ] Confirm current Internal Order Rekap API loads
+- [ ] Confirm selected IO example works, such as `426IO026`
+
+### Phase 2 — UI label cleanup
+
+- [ ] Rename Trackable RKB Actual to Product Item RKB
+- [ ] Rename Non-Trackable RKB to Non-Product / Service Item RKB
+- [ ] Rename Trackable Product to Product Item
+- [ ] Remove underscores from visible labels
+- [ ] Hide Mixed UOM Count from main cards
+- [ ] Hide Not Yet ROP Amount from main cards
+
+### Phase 3 — Card filtering
+
+- [ ] Make summary cards clickable
+- [ ] Add active filter indicator
+- [ ] Add clear filter button
+- [ ] Ensure behavior matches Sales Order dashboard card filters
+
+### Phase 4 — Table relationship fields
+
+- [ ] Show Internal Order Number
+- [ ] Show Sales Order Number
+- [ ] Show RKB Number
+- [ ] Show ROP Number / Approval Number
+- [ ] Show Related PO Number
+- [ ] Show Product Name
+- [ ] Show RKB / ROP / PO / Receipt quantities
+- [ ] Show current material status
+
+### Phase 5 — Perspective toggle
+
+- [ ] Add Internal Order Perspective
+- [ ] Add Sales Order Perspective
+- [ ] Confirm both perspectives use familiar business terms
+- [ ] Avoid overcrowding the first screen
+
+### Phase 6 — VP readiness
+
+- [ ] Compact numbers on cards
+- [ ] Clear labels
+- [ ] No confusing diagnostics on main screen
+- [ ] No accounting profit claims
+- [ ] No raw technical enum labels
+- [ ] Ready for VP review demo
