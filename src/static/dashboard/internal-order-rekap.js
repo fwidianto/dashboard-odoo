@@ -267,7 +267,7 @@ function renderTrackabilityBreakdown(rows) {
   els.trackabilityBreakdownBody.innerHTML = rows.map((row) => `
     <tr>
       <td>${safeText(mappedLabel(TRACKABILITY_LABELS, row.product_trackability_class))}</td>
-      <td>${safeText(row.product_classification_reason)}</td>
+      <td>${safeText(mappedLabel(CLASSIFICATION_REASON_LABELS, row.product_classification_reason))}</td>
       <td>${row.is_trackable_product ? badge("Yes", "status-complete") : badge("No", "status-muted")}</td>
       <td class="num">${formatCount(row.product_count)}</td>
       <td class="num">${formatAmount(row.rkb_actual_amount)}</td>
