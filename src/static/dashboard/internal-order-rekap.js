@@ -380,10 +380,9 @@ function renderDocumentReferences(value) {
 }
 
 function renderSalesOrderLinkCell(row) {
-  if (!row.has_sales_order_link) {
-    return "-";
-  }
-  return badge("Linked", "status-progress");
+  return row.has_sales_order_link
+    ? badge("Linked", "status-progress")
+    : badge("Pre-SO", "status-muted");
 }
 
 function materialStatusMeta(row) {
