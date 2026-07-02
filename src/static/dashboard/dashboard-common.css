@@ -336,6 +336,30 @@ a {
   position: relative;
 }
 
+.pagination-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pagination-status {
+  margin-left: 0 !important;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.pagination-controls select {
+  height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 8px;
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+
 .filter-state {
   max-width: min(72ch, 100%);
   text-transform: none;

@@ -19,6 +19,10 @@ const state = {
   rows: [],
   filteredRows: [],
   expanded: new Set(),
+  pagination: {
+    page: 1,
+    pageSize: 100,
+  },
 };
 
 const els = {
@@ -266,13 +270,95 @@ function visibleColumnCount() {
   return columnController ? columnController.visibleColumnCount() : TABLE_COLUMNS.length;
 }
 
+function ensurePaginationControls(prefix) {
+  if (els.paginationStatus) return;
+
+  const host = document.querySelector(".table-toolbar-actions") || document.querySelector(".table-toolbar");
+  if (!host) return;
+
+  host.insertAdjacentHTML("beforeend", `
+    <div class="pagination-controls" id="${prefix}PaginationControls">
+      <button class="secondary-button" id="${prefix}PrevPageButton" type="button">Prev</button>
+      <span class="pagination-status" id="${prefix}PaginationStatus">Page 1 of 1</span>
+      <button class="secondary-button" id="${prefix}NextPageButton" type="button">Next</button>
+      <select id="${prefix}PageSizeSelect" aria-label="Rows per page">
+        <option value="50">50 rows</option>
+        <option value="100" selected>100 rows</option>
+        <option value="250">250 rows</option>
+        <option value="500">500 rows</option>
+      </select>
+    </div>
+  `);
+
+  els.paginationStatus = document.getElementById(`${prefix}PaginationStatus`);
+  els.prevPageButton = document.getElementById(`${prefix}PrevPageButton`);
+  els.nextPageButton = document.getElementById(`${prefix}NextPageButton`);
+  els.pageSizeSelect = document.getElementById(`${prefix}PageSizeSelect`);
+
+  els.pageSizeSelect.value = String(state.pagination.pageSize);
+
+  els.prevPageButton.addEventListener("click", () => {
+    state.pagination.page = Math.max(1, state.pagination.page - 1);
+    renderTable(state.filteredRows);
+  });
+
+  els.nextPageButton.addEventListener("click", () => {
+    state.pagination.page += 1;
+    renderTable(state.filteredRows);
+  });
+
+  els.pageSizeSelect.addEventListener("change", () => {
+    state.pagination.pageSize = Number(els.pageSizeSelect.value) || 100;
+    state.pagination.page = 1;
+    renderTable(state.filteredRows);
+  });
+}
+
+function getPaginatedRows(rows) {
+  const pageSize = state.pagination.pageSize;
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+
+  state.pagination.page = Math.min(Math.max(1, state.pagination.page), totalPages);
+
+  const start = (state.pagination.page - 1) * pageSize;
+  const end = Math.min(start + pageSize, rows.length);
+
+  return {
+    rows: rows.slice(start, end),
+    start,
+    end,
+    totalPages,
+  };
+}
+
+function updatePaginationControls(totalRows, start, end, totalPages) {
+  if (!els.paginationStatus) return;
+
+  if (!totalRows) {
+    els.paginationStatus.textContent = "No rows";
+  } else {
+    els.paginationStatus.textContent =
+      `Showing ${formatNumber(start + 1)}-${formatNumber(end)} of ${formatNumber(totalRows)} | Page ${formatNumber(state.pagination.page)} of ${formatNumber(totalPages)}`;
+  }
+
+  els.prevPageButton.disabled = state.pagination.page <= 1;
+  els.nextPageButton.disabled = state.pagination.page >= totalPages;
+}
+
 function renderTable(rows) {
+  ensurePaginationControls("internalOrders");
+
   els.rowCount.textContent = `${formatNumber(rows.length)} rows`;
+
   if (!rows.length) {
     els.dashboardRows.innerHTML = `<tr><td colspan="${Math.max(1, visibleColumnCount())}" class="empty-cell">No Internal Orders match the current filters.</td></tr>`;
+    updatePaginationControls(0, 0, 0, 1);
     return;
   }
-  els.dashboardRows.innerHTML = rows.map(tableRow).join("");
+
+  const page = getPaginatedRows(rows);
+  els.dashboardRows.innerHTML = page.rows.map(tableRow).join("");
+  updatePaginationControls(rows.length, page.start, page.end, page.totalPages);
   columnController?.apply();
 }
 
@@ -328,6 +414,7 @@ function applyFilters() {
   els.activeFilterSummary.textContent = activeFilterSummary();
   renderKpis(state.filteredRows);
   renderStatusStrip(state.filteredRows);
+  state.pagination.page = 1;
   renderTable(state.filteredRows);
 }
 
@@ -411,7 +498,6 @@ columnController = DashboardTableTools.createColumnController({
   showAllButton: els.columnsShowAllButton,
   resetButton: els.columnsResetButton,
   root: els.internalOrdersTable,
-  onApply: () => renderTable(state.filteredRows),
 });
 
 loadDashboard();
