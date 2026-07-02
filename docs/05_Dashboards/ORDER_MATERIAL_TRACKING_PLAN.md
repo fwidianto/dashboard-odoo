@@ -135,7 +135,7 @@ Not included for now:
 
 ### 5.1 Use compact numbers
 
-Cards should use compact number display.
+Cards should use compact number display with Indonesian-friendly labels: Ribu, Juta, Miliar, Triliun.
 
 Examples:
 

@@ -214,7 +214,7 @@ function formatCount(value) {
   return new Intl.NumberFormat("id-ID", { maximumFractionDigits: 0 }).format(numberValue(value));
 }
 
-function formatCompactNumber(value) {
+function formatIndonesianCompactNumber(value) {
   if (value === null || value === undefined || value === "") {
     return "-";
   }
@@ -222,10 +222,10 @@ function formatCompactNumber(value) {
   const numeric = numberValue(value);
   const absolute = Math.abs(numeric);
   const units = [
-    { value: 1000000000000, suffix: "T" },
-    { value: 1000000000, suffix: "B" },
-    { value: 1000000, suffix: "M" },
-    { value: 1000, suffix: "K" },
+    { value: 1000000000000, suffix: " Triliun" },
+    { value: 1000000000, suffix: " Miliar" },
+    { value: 1000000, suffix: " Juta" },
+    { value: 1000, suffix: " Ribu" },
   ];
   const unit = units.find((entry) => absolute >= entry.value);
   if (!unit) {
@@ -241,7 +241,7 @@ function formatCompactAmount(value) {
   if (value === null || value === undefined || value === "") {
     return "-";
   }
-  return `Rp ${formatCompactNumber(value)}`;
+  return `Rp ${formatIndonesianCompactNumber(value)}`;
 }
 
 function formatCompactAmountOrNA(value) {
@@ -432,7 +432,7 @@ function renderSummary(summary, metadata) {
   } else {
     els.kpiSalesOrderLink.innerHTML = boolBadge(summary.has_sales_order_link);
   }
-  els.kpiProductCount.textContent = formatCompactNumber(summary.product_count);
+  els.kpiProductCount.textContent = formatCount(summary.product_count);
   [els.kpiIoReferenceAmount, els.kpiRkbKontribusi, els.kpiRkbKontribusiPct].forEach((element) => {
     if (element?.closest) element.closest(".kpi-card").hidden = false;
   });

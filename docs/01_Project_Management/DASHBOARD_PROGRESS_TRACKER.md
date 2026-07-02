@@ -35,7 +35,7 @@
 - [x] `vw_internal_order_rekap_summary` confirmed as required by API
 - [x] `vw_internal_order_rekap_lines` confirmed as required by API
 - [x] Internal Order Rekap UI cleanup completed
-- [x] Compact number formatting added to KPI cards
+- [x] Compact number formatting added to KPI cards with Indonesian labels: Ribu, Juta, Miliar, Triliun
 - [x] Trackable RKB Actual relabeled as Product Item RKB in UI
 - [x] Non-Trackable RKB relabeled as Non-Product / Service Item RKB in UI
 - [x] Trackable Product relabeled as Product Item in UI
