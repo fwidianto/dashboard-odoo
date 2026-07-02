@@ -34,7 +34,8 @@ const CARD_FILTER_DEFS = [
   { key: "non_trackable", label: "Non-Product / Service Items", predicate: (row) => row.product_trackability_class !== "TRACKABLE_PRODUCT" },
   { key: "rop_amount", label: "ROP Amount", predicate: (row) => numberValue(row.rop_qty) > 0 || Math.abs(numberValue(row.rop_subtotal)) > 0 },
   { key: "po_amount", label: "PO Amount", predicate: (row) => numberValue(row.po_qty) > 0 || Math.abs(numberValue(row.po_subtotal)) > 0 },
-  { key: "excess_rop_amount", label: "Excess ROP Amount", predicate: (row) => Math.abs(numberValue(row.excess_rop_amount)) > 0 },
+  { key: "excess_rop_amount", label: "ROP Excess Amount", predicate: (row) => Math.abs(numberValue(row.excess_rop_amount)) > 0 },
+  { key: "po_excess_amount", label: "PO Excess Amount", predicate: (row) => Math.abs(numberValue(row.po_excess_amount)) > 0 },
   { key: "po_received_ratio", label: "PO Received Ratio", predicate: (row) => numberValue(row.po_qty) > 0 || numberValue(row.po_received_qty) > 0 },
   { key: "po_invoiced_ratio", label: "PO Invoiced Ratio", predicate: (row) => numberValue(row.po_qty) > 0 || numberValue(row.po_invoiced_qty) > 0 },
 ];
@@ -163,6 +164,7 @@ const els = {
   kpiRopAmount: document.getElementById("kpiRopAmount"),
   kpiPoAmount: document.getElementById("kpiPoAmount"),
   kpiExcessRopAmount: document.getElementById("kpiExcessRopAmount"),
+  kpiPoExcessAmount: document.getElementById("kpiPoExcessAmount"),
   kpiReceivedRatio: document.getElementById("kpiReceivedRatio"),
   kpiInvoicedRatio: document.getElementById("kpiInvoicedRatio"),
   kpiGrid: document.querySelector(".kpi-grid-io"),
@@ -267,7 +269,7 @@ function formatAmount(value) {
 
 function formatRatio(value) {
   if (value === null || value === undefined || value === "") {
-    return "N/A";
+    return "-";
   }
   return `${(numberValue(value) * 100).toFixed(2)}%`;
 }
@@ -351,6 +353,7 @@ function clearEmptyState() {
     els.kpiRopAmount,
     els.kpiPoAmount,
     els.kpiExcessRopAmount,
+    els.kpiPoExcessAmount,
     els.kpiReceivedRatio,
     els.kpiInvoicedRatio,
   ].forEach((element) => {
@@ -405,9 +408,9 @@ function renderSummary(summary, metadata) {
   const isSalesOrder = currentPerspective() === "sales_order";
   if (els.kpiPrimaryLabel) els.kpiPrimaryLabel.textContent = isSalesOrder ? "Sales Order Number" : "Internal Order Number";
   if (els.kpiLinkStatusLabel) els.kpiLinkStatusLabel.textContent = isSalesOrder ? "Linked Internal Orders" : "Sales Order Link Status";
-  if (els.kpiIoReferenceLabel) els.kpiIoReferenceLabel.textContent = isSalesOrder ? "Linked IO Reference Amount" : "IO Reference Amount";
-  if (els.kpiRkbKontribusiLabel) els.kpiRkbKontribusiLabel.textContent = isSalesOrder ? "Linked IO RKB Kontribusi" : "RKB Kontribusi";
-  if (els.kpiRkbKontribusiPctLabel) els.kpiRkbKontribusiPctLabel.textContent = isSalesOrder ? "Linked IO RKB Kontribusi %" : "RKB Kontribusi %";
+  if (els.kpiIoReferenceLabel) els.kpiIoReferenceLabel.textContent = isSalesOrder ? "Sales Order Amount" : "IO Reference Amount";
+  if (els.kpiRkbKontribusiLabel) els.kpiRkbKontribusiLabel.textContent = isSalesOrder ? "SO RKB Kontribusi" : "RKB Kontribusi";
+  if (els.kpiRkbKontribusiPctLabel) els.kpiRkbKontribusiPctLabel.textContent = isSalesOrder ? "SO RKB Kontribusi %" : "RKB Kontribusi %";
   if (els.kpiProductCountLabel) els.kpiProductCountLabel.textContent = isSalesOrder ? "Material Chain Rows" : "Product Count";
 
   els.kpiInternalOrderNumber.textContent = isSalesOrder
@@ -430,19 +433,22 @@ function renderSummary(summary, metadata) {
     els.kpiSalesOrderLink.innerHTML = boolBadge(summary.has_sales_order_link);
   }
   els.kpiProductCount.textContent = formatCompactNumber(summary.product_count);
-  const showLinkedIoAmountCards = !isSalesOrder || numberValue(metadata?.linked_internal_order_count) > 0;
   [els.kpiIoReferenceAmount, els.kpiRkbKontribusi, els.kpiRkbKontribusiPct].forEach((element) => {
-    if (element?.closest) element.closest(".kpi-card").hidden = !showLinkedIoAmountCards;
+    if (element?.closest) element.closest(".kpi-card").hidden = false;
   });
-  els.kpiIoReferenceAmount.textContent = formatCompactAmountOrNA(summary.io_reference_amount);
+  const primaryAmount = isSalesOrder ? summary.sales_order_amount : summary.io_reference_amount;
+  const kontribusiAmount = isSalesOrder ? summary.so_rkb_kontribusi : summary.rkb_kontribusi;
+  const kontribusiPct = isSalesOrder ? summary.so_rkb_kontribusi_pct : summary.rkb_kontribusi_pct;
+  els.kpiIoReferenceAmount.textContent = formatCompactAmountOrNA(primaryAmount);
   els.kpiFullRkb.textContent = formatCompactAmount(summary.rkb_actual_amount);
-  els.kpiRkbKontribusi.textContent = formatCompactAmountOrNA(summary.rkb_kontribusi);
-  els.kpiRkbKontribusiPct.textContent = formatRatio(summary.rkb_kontribusi_pct);
+  els.kpiRkbKontribusi.textContent = formatCompactAmountOrNA(kontribusiAmount);
+  els.kpiRkbKontribusiPct.textContent = formatRatio(kontribusiPct);
   els.kpiTrackableRkb.textContent = formatCompactAmount(summary.rkb_actual_trackable_amount);
   els.kpiNonTrackableRkb.textContent = formatCompactAmount(summary.rkb_actual_non_trackable_amount);
   els.kpiRopAmount.textContent = formatCompactAmount(summary.rop_amount);
   els.kpiPoAmount.textContent = formatCompactAmount(summary.po_amount);
   els.kpiExcessRopAmount.textContent = formatCompactAmount(summary.excess_rop_amount);
+  els.kpiPoExcessAmount.textContent = formatCompactAmount(summary.po_excess_amount);
   els.kpiReceivedRatio.textContent = formatRatio(summary.received_ratio);
   els.kpiInvoicedRatio.textContent = formatRatio(summary.invoiced_ratio);
 
@@ -637,6 +643,22 @@ function splitSummaryValues(value) {
     .filter(Boolean);
 }
 
+function normalizeUomSummary(value) {
+  if (!value) return "";
+  const seen = new Set();
+  const values = String(value)
+    .split(/[;,]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .filter((entry) => {
+      const key = entry.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  return values.join(" ; ");
+}
+
 function renderDocumentReferences(value) {
   const values = splitSummaryValues(value);
   if (!values.length) {
@@ -762,7 +784,7 @@ function getSortValue(row, key) {
     case "material_status":
       return materialStatusMeta(row).label;
     case "uom":
-      return row.uom_summary || "";
+      return normalizeUomSummary(row.uom_summary || "");
     case "rkb_qty":
       return numberValue(row.rkb_actual_qty);
     case "rkb_amount":
@@ -840,7 +862,7 @@ function renderLines() {
       </td>
       <td>${badge(mappedLabel(TRACKABILITY_LABELS, row.product_trackability_class), row.is_trackable_product ? "status-complete" : "status-muted")}</td>
       <td>${badge(status.label, status.tone)}</td>
-      <td>${safeText(row.uom_summary)}</td>
+      <td>${safeText(normalizeUomSummary(row.uom_summary))}</td>
       <td class="num">${formatQty(row.rkb_actual_qty)}</td>
       <td class="num">${formatAmount(row.rkb_actual_subtotal)}</td>
       <td class="num">${formatQty(row.rop_qty)}</td>

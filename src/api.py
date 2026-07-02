@@ -885,6 +885,16 @@ async def internal_order_rekap_dashboard_data(
             detail={"error": "perspective must be internal_order or sales_order."},
         )
 
+    def _decimal_value(value) -> Decimal:
+        if value is None or value == "":
+            return Decimal("0")
+        return Decimal(str(value))
+
+    def _ratio_value(numerator: Decimal, denominator: Decimal):
+        if denominator == 0:
+            return None
+        return numerator / denominator
+
     if normalized_perspective == "sales_order":
         if sales_order_number is None or not sales_order_number.strip():
             raise HTTPException(
@@ -899,7 +909,8 @@ async def internal_order_rekap_dashboard_data(
             SELECT
                 so.id AS sales_order_id,
                 so.name::text AS sales_order_number,
-                so.state::text AS sales_order_state
+                so.state::text AS sales_order_state,
+                (COALESCE(so.amount_untaxed, 0) * COALESCE(NULLIF(so.currency_rate, 0), 1))::numeric AS sales_order_amount
             FROM sale_order so
             WHERE BTRIM(so.name::text) = :sales_order_number
               AND COALESCE(so.state::text, '') NOT ILIKE '%cancel%'
@@ -973,7 +984,8 @@ async def internal_order_rekap_dashboard_data(
                     SUM(po_subtotal) FILTER (WHERE product_trackability_class <> 'TRACKABLE_PRODUCT') AS po_non_trackable_amount,
                     SUM(po_subtotal) FILTER (WHERE product_trackability_class = 'UNKNOWN_PRODUCT_CLASS') AS po_unknown_class_amount,
                     SUM(not_yet_rop_amount) AS not_yet_rop_amount,
-                    SUM(excess_rop_amount) AS excess_rop_amount,
+                    SUM(CASE WHEN COALESCE(rop_subtotal, 0) > 0 THEN GREATEST(COALESCE(rop_subtotal, 0) - COALESCE(rkb_actual_subtotal, 0), 0) ELSE 0 END) AS excess_rop_amount,
+                    SUM(CASE WHEN COALESCE(po_subtotal, 0) > 0 THEN GREATEST(COALESCE(po_subtotal, 0) - COALESCE(rop_subtotal, 0), 0) ELSE 0 END) AS po_excess_amount,
                     SUM(po_received_qty) AS po_received_qty,
                     SUM(po_invoiced_qty) AS po_invoiced_qty,
                     COUNT(*) FILTER (WHERE mixed_uom_flag) AS mixed_uom_count,
@@ -1017,6 +1029,7 @@ async def internal_order_rekap_dashboard_data(
                 line_agg.po_unknown_class_amount,
                 line_agg.not_yet_rop_amount,
                 line_agg.excess_rop_amount,
+                line_agg.po_excess_amount,
                 line_agg.po_received_qty,
                 line_agg.po_invoiced_qty,
                 line_agg.mixed_uom_count,
@@ -1236,6 +1249,7 @@ async def internal_order_rekap_dashboard_data(
                 0::numeric AS not_yet_rop_amount,
                 GREATEST(rop_qty-rkb_qty,0)::numeric AS excess_rop_qty,
                 GREATEST(rop_subtotal-rkb_subtotal,0)::numeric AS excess_rop_amount,
+                GREATEST(po_subtotal-rop_subtotal,0)::numeric AS po_excess_amount,
                 (po_qty<>0 AND rop_qty=0) AS po_without_rop_flag,
                 (rop_qty<>0 AND po_qty=0) AS rop_without_po_flag,
                 'DIRECT_SO_JO_CONTEXT'::text AS comparison_scope
@@ -1244,17 +1258,13 @@ async def internal_order_rekap_dashboard_data(
         """)
 
 
-        def _decimal_value(value) -> Decimal:
-            if value is None or value == "":
-                return Decimal("0")
-            return Decimal(str(value))
-
-        def _ratio_value(numerator: Decimal, denominator: Decimal):
-            if denominator == 0:
-                return None
-            return numerator / denominator
-
-        def _aggregate_sales_order_lines(lines: list[dict], selected_so_number: str, linked_internal_orders: list[str], linked_context: dict | None = None) -> dict:
+        def _aggregate_sales_order_lines(
+            lines: list[dict],
+            selected_so_number: str,
+            linked_internal_orders: list[str],
+            sales_order_amount: Decimal,
+            linked_context: dict | None = None,
+        ) -> dict:
             linked_context = linked_context or {}
             rkb_amount = sum((_decimal_value(row.get("rkb_actual_subtotal")) for row in lines), Decimal("0"))
             rop_amount = sum((_decimal_value(row.get("rop_subtotal")) for row in lines), Decimal("0"))
@@ -1262,6 +1272,18 @@ async def internal_order_rekap_dashboard_data(
             po_qty = sum((_decimal_value(row.get("po_qty")) for row in lines), Decimal("0"))
             po_received_qty = sum((_decimal_value(row.get("po_received_qty")) for row in lines), Decimal("0"))
             po_invoiced_qty = sum((_decimal_value(row.get("po_invoiced_qty")) for row in lines), Decimal("0"))
+            rop_excess_amount = sum((
+                max(_decimal_value(row.get("rop_subtotal")) - _decimal_value(row.get("rkb_actual_subtotal")), Decimal("0"))
+                if _decimal_value(row.get("rop_subtotal")) > 0 else Decimal("0")
+                for row in lines
+            ), Decimal("0"))
+            po_excess_amount = sum((
+                max(_decimal_value(row.get("po_subtotal")) - _decimal_value(row.get("rop_subtotal")), Decimal("0"))
+                if _decimal_value(row.get("po_subtotal")) > 0 else Decimal("0")
+                for row in lines
+            ), Decimal("0"))
+            so_rkb_kontribusi = sales_order_amount - rkb_amount if sales_order_amount != 0 else None
+            so_rkb_kontribusi_pct = _ratio_value(so_rkb_kontribusi, sales_order_amount) if so_rkb_kontribusi is not None else None
 
             def amount_for(class_name: str, field_name: str) -> Decimal:
                 return sum((_decimal_value(row.get(field_name)) for row in lines if row.get("product_trackability_class") == class_name), Decimal("0"))
@@ -1272,6 +1294,9 @@ async def internal_order_rekap_dashboard_data(
                 "linked_sales_order_count": 1,
                 "linked_sales_order_numbers": selected_so_number,
                 "has_sales_order_link": True,
+                "sales_order_amount": sales_order_amount,
+                "so_rkb_kontribusi": so_rkb_kontribusi,
+                "so_rkb_kontribusi_pct": so_rkb_kontribusi_pct,
                 "io_reference_line_count": linked_context.get("io_reference_line_count"),
                 "io_reference_amount": linked_context.get("io_reference_amount"),
                 "product_count": len(lines),
@@ -1293,7 +1318,8 @@ async def internal_order_rekap_dashboard_data(
                 "po_non_trackable_amount": sum((_decimal_value(row.get("po_subtotal")) for row in lines if row.get("product_trackability_class") != "TRACKABLE_PRODUCT"), Decimal("0")),
                 "po_unknown_class_amount": amount_for("UNKNOWN_PRODUCT_CLASS", "po_subtotal"),
                 "not_yet_rop_amount": sum((_decimal_value(row.get("not_yet_rop_amount")) for row in lines), Decimal("0")),
-                "excess_rop_amount": sum((_decimal_value(row.get("excess_rop_amount")) for row in lines), Decimal("0")),
+                "excess_rop_amount": rop_excess_amount,
+                "po_excess_amount": po_excess_amount,
                 "po_received_qty": po_received_qty,
                 "po_invoiced_qty": po_invoiced_qty,
                 "mixed_uom_count": sum(1 for row in lines if row.get("mixed_uom_flag")),
@@ -1388,6 +1414,7 @@ async def internal_order_rekap_dashboard_data(
                     lines,
                     selected_sales_order["sales_order_number"],
                     linked_internal_orders,
+                    _decimal_value(selected_sales_order.get("sales_order_amount")),
                     linked_context,
                 )
                 summary = {key: _json_safe(value) for key, value in summary.items()}
@@ -1629,6 +1656,17 @@ async def internal_order_rekap_dashboard_data(
                     {"internal_order_number": normalized_internal_order_number},
                 ).fetchall()
             ]
+
+            summary["excess_rop_amount"] = _json_safe(sum((
+                max(_decimal_value(row.get("rop_subtotal")) - _decimal_value(row.get("rkb_actual_subtotal")), Decimal("0"))
+                if _decimal_value(row.get("rop_subtotal")) > 0 else Decimal("0")
+                for row in lines
+            ), Decimal("0")))
+            summary["po_excess_amount"] = _json_safe(sum((
+                max(_decimal_value(row.get("po_subtotal")) - _decimal_value(row.get("rop_subtotal")), Decimal("0"))
+                if _decimal_value(row.get("po_subtotal")) > 0 else Decimal("0")
+                for row in lines
+            ), Decimal("0")))
 
         metadata = {
             "generated_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",

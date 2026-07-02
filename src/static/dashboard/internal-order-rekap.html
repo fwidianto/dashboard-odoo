@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Internal Order Rekap</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="/static/dashboard/internal-order-rekap.css?v=20260701-so-direct">
+  <link rel="stylesheet" href="/static/dashboard/internal-order-rekap.css?v=20260702-metric-fix">
 </head>
 <body>
   <main class="page-shell io-rekap-dashboard">
@@ -24,6 +24,7 @@
       <div class="header-actions">
         <a class="secondary-button" href="/dashboard/internal-orders">Internal Orders</a>
         <a class="secondary-button" href="/dashboard/sales-orders">Sales Orders</a>
+        <a class="secondary-button" href="/logout">Logout</a>
         <button class="icon-button" id="refreshButton" type="button" title="Reload current Internal Order" aria-label="Reload current Internal Order">
           <span aria-hidden="true">R</span>
         </button>
@@ -68,7 +69,8 @@
       <article class="kpi-card kpi-card-filterable" data-filter="non_trackable" role="button" tabindex="0" aria-pressed="false"><span class="kpi-label">Non-Product / Service Item RKB</span><strong id="kpiNonTrackableRkb">-</strong></article>
       <article class="kpi-card kpi-card-filterable" data-filter="rop_amount" role="button" tabindex="0" aria-pressed="false"><span class="kpi-label">ROP Amount</span><strong id="kpiRopAmount">-</strong></article>
       <article class="kpi-card kpi-card-filterable" data-filter="po_amount" role="button" tabindex="0" aria-pressed="false"><span class="kpi-label">PO Amount</span><strong id="kpiPoAmount">-</strong></article>
-      <article class="kpi-card kpi-card-filterable" data-filter="excess_rop_amount" role="button" tabindex="0" aria-pressed="false"><span class="kpi-label">Excess ROP Amount</span><strong id="kpiExcessRopAmount">-</strong></article>
+      <article class="kpi-card kpi-card-filterable" data-filter="excess_rop_amount" role="button" tabindex="0" aria-pressed="false"><span class="kpi-label">ROP Excess Amount</span><strong id="kpiExcessRopAmount">-</strong></article>
+      <article class="kpi-card kpi-card-filterable" data-filter="po_excess_amount" role="button" tabindex="0" aria-pressed="false"><span class="kpi-label">PO Excess Amount</span><strong id="kpiPoExcessAmount">-</strong></article>
       <article class="kpi-card kpi-card-filterable" data-filter="po_received_ratio" role="button" tabindex="0" aria-pressed="false"><span class="kpi-label">PO Received Ratio</span><strong id="kpiReceivedRatio">-</strong></article>
       <article class="kpi-card kpi-card-filterable" data-filter="po_invoiced_ratio" role="button" tabindex="0" aria-pressed="false"><span class="kpi-label">PO Invoiced Ratio</span><strong id="kpiInvoicedRatio">-</strong></article>
     </section>
@@ -76,10 +78,13 @@
     <section class="panel explanation-panel" aria-label="Dashboard explanation">
       <strong>How to read this view</strong>
       <ul>
-        <li>IO Reference Amount is the Marketing-submitted Internal Order value for future SO reference.</li>
+        <li>The primary amount card shows IO Reference Amount for Internal Order Perspective and Sales Order Amount for Sales Order Perspective.</li>
         <li>RKB Actual Amount includes all Odoo RKB rows.</li>
         <li>Product Item RKB is the normal product/material subset.</li>
         <li>Non-Product / Service Item RKB includes valid budget, service, and adjustment rows.</li>
+        <li>ROP Excess Amount compares ROP Amount to RKB Actual Amount by value only for rows that have ROP; it is a review indicator, not automatically an error.</li>
+        <li>PO Excess Amount compares PO Amount to ROP Amount by value only for rows that have PO; it is a review indicator, not automatically an error.</li>
+        <li>Sales Order Perspective uses Sales Order Amount and SO RKB Kontribusi as operational estimates only, not gross profit, COGS, or accounting margin.</li>
         <li>Non-product/service rows are valid operational data, not an error.</li>
       </ul>
     </section>
@@ -242,6 +247,6 @@
     </section>
   </main>
 
-  <script src="/static/dashboard/internal-order-rekap.js?v=20260701-so-direct"></script>
+  <script src="/static/dashboard/internal-order-rekap.js?v=20260702-metric-fix"></script>
 </body>
 </html>

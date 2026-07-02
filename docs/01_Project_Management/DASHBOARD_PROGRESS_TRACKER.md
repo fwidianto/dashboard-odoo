@@ -1,6 +1,6 @@
 # Dashboard Progress Tracker
 
-**Date:** 2026-07-01
+**Date:** 2026-07-02
 **Current project phase:** Phase 2A.4 - Sales Order Perspective for Order Material Tracking
 **Current stable base:** Sales Order dashboard and Internal Order dashboard
 **Next focus:** Validate Sales Order Perspective with linked-IO and standalone/direct SO examples, then VP review prep
@@ -57,6 +57,11 @@
 - [x] Sales Order Perspective added using the approved SO-to-IO bridge
 - [x] Sales Order Perspective supports standalone/direct SO/JO material chain rows when no linked IO exists
 - [x] Sales Order Perspective labels source path as Linked IO, Direct SO / JO, or From Stock without implying allocation
+- [x] ROP Excess Amount corrected to amount-based review logic: max(ROP Amount - RKB Amount, 0) for rows with ROP
+- [x] PO Excess Amount added with amount-based review logic: max(PO Amount - ROP Amount, 0) for rows with PO
+- [x] Sales Order Amount, SO RKB Kontribusi, and SO RKB Kontribusi % added for Sales Order Perspective as operational estimates only
+- [x] Repeated UoM display deduplicated in the frontend without changing mixed-UoM flag logic
+- [x] Visible Logout buttons added to the three dashboard pages
 
 ---
 
@@ -79,6 +84,7 @@ Hide from main UI:
 ```text
 - Mixed UOM Count
 - Not Yet ROP Amount
+- RKB Not Yet ROP / Procurement Shortage style warnings
 ```
 
 Reason:
@@ -205,6 +211,13 @@ Universal search by product, SO, IO, RKB, ROP, PO, supplier, or customer.
 ## 5. Risks / Notes
 
 ### RKB vs ROP matching
+
+Current dashboard excess review cards now use amount-only comparisons at row grain for the main KPI totals.
+
+```text
+ROP Excess Amount = max(ROP Amount - RKB Amount, 0) for rows with ROP
+PO Excess Amount = max(PO Amount - ROP Amount, 0) for rows with PO
+```
 
 Current RKB/ROP comparison is based on Odoo RKB/ROP correlation by IO and product key.
 

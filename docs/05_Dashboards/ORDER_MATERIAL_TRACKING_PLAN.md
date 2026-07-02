@@ -1,6 +1,6 @@
 # Order Material Tracking Plan
 
-**Date:** 2026-07-01
+**Date:** 2026-07-02
 **Status:** Phase 2A.4 Sales Order Perspective supports linked IO and standalone/direct SO material chain context
 **Current next step:** Validate linked-IO and standalone/direct SO examples, then VP prep
 **Primary base:** Internal Order Rekap
@@ -210,7 +210,20 @@ Unclassified Item
 
 ---
 
-### 5.5 Cards should act as filters
+### 5.5 KPI semantics for VP-facing cards
+
+Main KPI semantics should stay conservative:
+
+```text
+- ROP Excess Amount = max(ROP Amount - RKB Amount, 0) for rows with ROP
+- PO Excess Amount = max(PO Amount - ROP Amount, 0) for rows with PO
+- Do not treat RKB without ROP as a procurement shortage by default
+- Sales Order Amount and SO RKB Kontribusi are operational estimates only, not gross profit, COGS, or final profitability
+```
+
+---
+
+### 5.6 Cards should act as filters
 
 Summary cards should remain clickable filters, similar to Sales Order dashboard.
 

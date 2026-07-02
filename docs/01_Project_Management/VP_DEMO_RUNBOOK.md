@@ -53,7 +53,7 @@ http://<demo-ip>:8000/login
 1. Open `/login`.
 2. Sign in with the local demo username and password.
 3. You are redirected to `/dashboard/internal-order-rekap`.
-4. Use `/logout` to clear the session.
+4. Use the visible `Logout` button or `/logout` to clear the session.
 5. After logout, dashboard routes should send you back to `/login`.
 
 **Recommended Demo Route Order**
@@ -78,6 +78,8 @@ http://<demo-ip>:8000/login
 - Not AR/payment
 - Material Search is not implemented yet
 - Sales Order Perspective for Order Material Tracking supports linked IO and standalone/direct SO/JO material chain context, not product allocation
+- ROP Excess Amount and PO Excess Amount are amount-based review indicators, not automatic errors
+- SO RKB Kontribusi is an operational estimate only, not accounting profit
 
 **Troubleshooting**
 

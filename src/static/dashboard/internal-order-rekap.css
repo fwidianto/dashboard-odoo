@@ -441,7 +441,7 @@
 }
 
 .table-panel table {
-  min-width: 1880px;
+  min-width: 2720px;
 }
 
 .table-panel thead th {
@@ -511,7 +511,7 @@
 }
 
 .table-panel table {
-  min-width: 1880px;
+  min-width: 2720px;
 }
 
 .table-panel th {
@@ -523,12 +523,62 @@
 }
 
 .doc-ref-inline {
-  white-space: normal;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 .subtle-cell {
   margin-top: 4px;
   color: var(--muted);
   font-size: 11px;
+}
+
+.table-panel th:nth-child(1),
+.table-panel td:nth-child(1) { min-width: 120px; }
+.table-panel th:nth-child(2),
+.table-panel td:nth-child(2) { min-width: 140px; }
+.table-panel th:nth-child(3),
+.table-panel td:nth-child(3) { min-width: 120px; }
+.table-panel th:nth-child(4),
+.table-panel td:nth-child(4) { min-width: 320px; }
+.table-panel th:nth-child(5),
+.table-panel td:nth-child(5) { min-width: 170px; }
+.table-panel th:nth-child(6),
+.table-panel td:nth-child(6) { min-width: 190px; }
+.table-panel th:nth-child(7),
+.table-panel td:nth-child(7) { min-width: 190px; }
+.table-panel th:nth-child(8),
+.table-panel td:nth-child(8) { min-width: 340px; }
+.table-panel th:nth-child(9),
+.table-panel td:nth-child(9) { min-width: 180px; }
+.table-panel th:nth-child(10),
+.table-panel td:nth-child(10) { min-width: 160px; }
+.table-panel th:nth-child(11),
+.table-panel td:nth-child(11) { min-width: 120px; }
+.table-panel th:nth-child(12),
+.table-panel td:nth-child(12),
+.table-panel th:nth-child(14),
+.table-panel td:nth-child(14),
+.table-panel th:nth-child(16),
+.table-panel td:nth-child(16),
+.table-panel th:nth-child(18),
+.table-panel td:nth-child(18),
+.table-panel th:nth-child(19),
+.table-panel td:nth-child(19) { min-width: 110px; }
+.table-panel th:nth-child(13),
+.table-panel td:nth-child(13),
+.table-panel th:nth-child(15),
+.table-panel td:nth-child(15),
+.table-panel th:nth-child(17),
+.table-panel td:nth-child(17) { min-width: 170px; }
+.table-panel th:nth-child(20),
+.table-panel td:nth-child(20) { min-width: 180px; }
+
+.table-panel td:nth-child(4),
+.table-panel td:nth-child(5),
+.table-panel td:nth-child(6),
+.table-panel td:nth-child(7),
+.table-panel td:nth-child(11) {
+  white-space: nowrap;
 }
