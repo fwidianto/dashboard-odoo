@@ -1,10 +1,11 @@
-"""FastAPI integration for Odoo-PostgreSQL sync service.
+﻿"""FastAPI integration for Odoo-PostgreSQL sync service.
 
 This module provides a REST API for managing synchronization tasks.
 Designed for production deployment with uvicorn.
 """
 
 from datetime import date, datetime
+from io import BytesIO
 import base64
 import hashlib
 import hmac
@@ -17,8 +18,11 @@ from urllib.parse import urlencode
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 from pydantic import BaseModel, Field
 from sqlalchemy import bindparam, text
 
@@ -588,6 +592,117 @@ async def internal_order_rekap_dashboard_page():
     """Serve the Internal Order Rekap Dashboard page."""
     return FileResponse(STATIC_DIR / "dashboard" / "internal-order-rekap.html")
 
+
+class DashboardExportColumn(BaseModel):
+    key: str
+    label: str
+    type: str = Field(default="string")
+
+
+class DashboardExportRequest(BaseModel):
+    file_name: str
+    sheet_name: str = Field(default="Sheet1")
+    columns: list[DashboardExportColumn]
+    rows: list[dict]
+
+
+def _safe_excel_sheet_name(value: str) -> str:
+    cleaned = "".join("_" if character in '[]:*?/\\' else character for character in (value or "Sheet1"))
+    cleaned = cleaned.strip() or "Sheet1"
+    return cleaned[:31]
+
+
+def _safe_excel_file_name(value: str) -> str:
+    cleaned = "".join(character if character.isalnum() or character in "._-" else "_" for character in (value or "dashboard.xlsx"))
+    if not cleaned.lower().endswith(".xlsx"):
+        cleaned = f"{cleaned}.xlsx"
+    return cleaned or "dashboard.xlsx"
+
+
+def _excel_cell_value(value, cell_type: str):
+    if value is None or value == "":
+        return None
+    if cell_type in {"number", "currency", "percent"}:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+    if cell_type == "date":
+        if isinstance(value, (datetime, date)):
+            return value
+        text_value = str(value).strip()
+        if not text_value:
+            return None
+        try:
+            if len(text_value) == 10:
+                return date.fromisoformat(text_value)
+            return datetime.fromisoformat(text_value.replace("Z", "+00:00"))
+        except ValueError:
+            return text_value
+    return str(value)
+
+
+def _build_dashboard_export_workbook(payload: DashboardExportRequest) -> Workbook:
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = _safe_excel_sheet_name(payload.sheet_name)
+    worksheet.freeze_panes = "A2"
+
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(fill_type="solid", fgColor="147A78")
+    header_border = Border(bottom=Side(style="thin", color="D9E0E6"))
+    header_alignment = Alignment(horizontal="center", vertical="center")
+    body_alignment = Alignment(vertical="top")
+    numeric_alignment = Alignment(horizontal="right", vertical="top")
+
+    for column_index, column in enumerate(payload.columns, start=1):
+        cell = worksheet.cell(row=1, column=column_index, value=column.label)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.border = header_border
+        cell.alignment = header_alignment
+
+    for row_index, row in enumerate(payload.rows, start=2):
+        for column_index, column in enumerate(payload.columns, start=1):
+            cell = worksheet.cell(row=row_index, column=column_index, value=_excel_cell_value(row.get(column.key), column.type))
+            if column.type == "currency":
+                cell.number_format = '#,##0.00'
+                cell.alignment = numeric_alignment
+            elif column.type == "percent":
+                cell.number_format = '0.0%'
+                cell.alignment = numeric_alignment
+            elif column.type == "number":
+                cell.number_format = '#,##0.00'
+                cell.alignment = numeric_alignment
+            elif column.type == "date" and isinstance(cell.value, (datetime, date)):
+                cell.number_format = 'yyyy-mm-dd'
+                cell.alignment = body_alignment
+            else:
+                cell.alignment = body_alignment
+
+    worksheet.auto_filter.ref = worksheet.dimensions
+    for column_index, column in enumerate(payload.columns, start=1):
+        values = [column.label, *["" if row.get(column.key) is None else str(row.get(column.key)) for row in payload.rows[:200]]]
+        width = max(len(value) for value in values) + 2
+        worksheet.column_dimensions[get_column_letter(column_index)].width = min(max(width, 12), 42)
+
+    return workbook
+
+@app.post("/api/dashboard/export/xlsx", tags=["Dashboard"])
+async def dashboard_export_xlsx(payload: DashboardExportRequest):
+    if not payload.columns:
+        raise HTTPException(status_code=400, detail="At least one export column is required.")
+
+    workbook = _build_dashboard_export_workbook(payload)
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=\"{_safe_excel_file_name(payload.file_name)}\""},
+    )
 
 @app.get("/api/dashboard/internal-orders", tags=["Dashboard"])
 async def internal_order_dashboard_data():
@@ -2071,3 +2186,6 @@ if __name__ == "__main__":
         port=8000,
         reload=True,
     )
+
+
+

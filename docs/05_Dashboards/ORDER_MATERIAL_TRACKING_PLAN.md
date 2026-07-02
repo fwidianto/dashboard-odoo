@@ -376,3 +376,9 @@ Keep Material Search as a future separate page.
 
 Current next step: validate linked-IO and standalone/direct SO examples, then continue VP prep.
 ```
+
+## Shared Dashboard UI Update
+- Internal Orders, Sales Orders, and Order Material Tracking now use a consistent toolbar/navigation pattern.
+- Column visibility choices are stored locally in the browser per dashboard page.
+- Export uses Excel-ready .xlsx output instead of CSV, while keeping dashboard calculations unchanged.
+

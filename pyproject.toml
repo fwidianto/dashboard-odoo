@@ -1,4 +1,4 @@
-[build-system]
+﻿[build-system]
 requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
@@ -30,7 +30,7 @@ dependencies = [
     "pydantic>=2.5.3",
     "pydantic-settings>=2.1.0",
     "APScheduler>=3.10.4",
-    "structlog>=24.1.0",
+    "structlog>=24.1.0",`r`n    "openpyxl>=3.1.5",
 ]
 
 [project.optional-dependencies]

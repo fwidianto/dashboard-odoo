@@ -1,20 +1,22 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Internal Order Traceability Dashboard</title>
-  <link rel="stylesheet" href="/static/dashboard/internal-orders.css">
+  <link rel="stylesheet" href="/static/dashboard/internal-orders.css?v=20260702-shared-ui">
 </head>
 <body>
-  <main class="page-shell">
+  <main class="page-shell internal-orders-dashboard">
     <header class="page-header">
       <div>
         <h1>Internal Order Traceability</h1>
         <p>Internal Order -> MO -> SO -> delivery, invoice, procurement, accounting</p>
       </div>
       <div class="header-actions">
-        <a class="secondary-button" href="/dashboard/internal-order-rekap">Internal Order Rekap</a>
+        <a class="secondary-button is-current" href="/dashboard/internal-orders" aria-current="page">Internal Orders</a>
+        <a class="secondary-button" href="/dashboard/sales-orders">Sales Orders</a>
+        <a class="secondary-button" href="/dashboard/internal-order-rekap">Order Material Tracking</a>
         <a class="secondary-button" href="/logout">Logout</a>
         <button class="icon-button" id="refreshButton" type="button" title="Refresh data" aria-label="Refresh data">
           <span aria-hidden="true">R</span>
@@ -103,26 +105,42 @@
 
     <section class="table-panel" aria-label="Internal Order traceability table">
       <div class="table-toolbar">
-        <div>
+        <div class="table-toolbar-primary">
           <strong id="rowCount">- rows</strong>
           <span id="lastLoaded">Loading...</span>
         </div>
+        <div class="table-toolbar-actions">
+          <span class="filter-state" id="activeFilterSummary">Filters: All Internal Orders</span>
+          <button class="secondary-button" id="clearToolbarFiltersButton" type="button">Clear Filters</button>
+          <button class="secondary-button" id="columnsButton" type="button" aria-expanded="false">Columns</button>
+          <button class="secondary-button" id="exportExcelButton" type="button">Export Excel</button>
+          <div class="columns-panel" id="columnsPanel" hidden>
+            <div class="columns-panel-head">
+              <strong>Columns</strong>
+              <div class="columns-panel-actions">
+                <button class="tiny-button" id="columnsShowAllButton" type="button">Show All</button>
+                <button class="tiny-button" id="columnsResetButton" type="button">Reset Default</button>
+              </div>
+            </div>
+            <div class="columns-list" id="columnsList"></div>
+          </div>
+        </div>
       </div>
       <div class="table-scroll">
-        <table>
+        <table id="internalOrdersTable">
           <thead>
             <tr>
-              <th></th>
-              <th>IO Number</th>
-              <th>Status</th>
-              <th class="num">Products</th>
-              <th class="num">MO</th>
-              <th class="num">SO</th>
-              <th>Delivery %</th>
-              <th>Invoice %</th>
-              <th>Receipt %</th>
-              <th>Billing %</th>
-              <th>Traceability</th>
+              <th data-column-key="expand"></th>
+              <th data-column-key="io_number">IO Number</th>
+              <th data-column-key="status">Status</th>
+              <th class="num" data-column-key="products">Products</th>
+              <th class="num" data-column-key="mo">MO</th>
+              <th class="num" data-column-key="so">SO</th>
+              <th data-column-key="delivery_percent">Delivery %</th>
+              <th data-column-key="invoice_percent">Invoice %</th>
+              <th data-column-key="receipt_percent">Receipt %</th>
+              <th data-column-key="billing_percent">Billing %</th>
+              <th data-column-key="traceability">Traceability</th>
             </tr>
           </thead>
           <tbody id="dashboardRows">
@@ -135,6 +153,8 @@
     </section>
   </main>
 
-  <script src="/static/dashboard/internal-orders.js"></script>
+  <script src="/static/dashboard/dashboard-table-tools.js"></script>
+  <script src="/static/dashboard/dashboard-export.js"></script>
+  <script src="/static/dashboard/internal-orders.js?v=20260702-shared-ui"></script>
 </body>
 </html>

@@ -1,11 +1,11 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Internal Order Rekap</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="/static/dashboard/internal-order-rekap.css?v=20260702-metric-fix">
+  <link rel="stylesheet" href="/static/dashboard/internal-order-rekap.css?v=20260702-shared-ui">
 </head>
 <body>
   <main class="page-shell io-rekap-dashboard">
@@ -24,6 +24,7 @@
       <div class="header-actions">
         <a class="secondary-button" href="/dashboard/internal-orders">Internal Orders</a>
         <a class="secondary-button" href="/dashboard/sales-orders">Sales Orders</a>
+        <a class="secondary-button is-current" href="/dashboard/internal-order-rekap" aria-current="page">Order Material Tracking</a>
         <a class="secondary-button" href="/logout">Logout</a>
         <button class="icon-button" id="refreshButton" type="button" title="Reload current Internal Order" aria-label="Reload current Internal Order">
           <span aria-hidden="true">R</span>
@@ -145,7 +146,7 @@
 
     <section class="table-panel" aria-label="Internal Order Rekap table">
       <div class="table-toolbar">
-        <div>
+        <div class="table-toolbar-primary">
           <strong id="lineCount">- lines</strong>
           <span id="tableSubtitle">Loading Internal Order...</span>
         </div>
@@ -154,6 +155,7 @@
           <button class="secondary-button clear-filter-button" id="clearFilterButton" type="button">Clear All Filters</button>
           <button class="secondary-button clear-filter-button" id="clearSortButton" type="button">Clear Sort</button>
           <button class="secondary-button clear-filter-button" id="columnsButton" type="button" aria-expanded="false">Columns</button>
+          <button class="secondary-button clear-filter-button" id="exportExcelButton" type="button">Export Excel</button>
           <div class="columns-panel" id="columnsPanel" hidden>
             <div class="columns-panel-head">
               <strong>Columns</strong>
@@ -223,7 +225,7 @@
         </div>
       </div>
       <div class="table-scroll">
-        <table>
+        <table id="orderMaterialTrackingTable">
           <thead>
             <tr>
               <th data-column-key="internal_order_number"><button class="sort-button" type="button" data-sort-key="internal_order_number">Internal Order<span class="sort-indicator" aria-hidden="true"></span></button></th>
@@ -258,6 +260,8 @@
     </section>
   </main>
 
-  <script src="/static/dashboard/internal-order-rekap.js?v=20260702-metric-fix"></script>
+  <script src="/static/dashboard/dashboard-table-tools.js"></script>
+  <script src="/static/dashboard/dashboard-export.js"></script>
+  <script src="/static/dashboard/internal-order-rekap.js?v=20260702-shared-ui"></script>
 </body>
 </html>

@@ -88,3 +88,7 @@ http://<demo-ip>:8000/login
 - Confirm the environment variables are set correctly.
 - Confirm the device is on the same Wi-Fi or hotspot network.
 - If the login page fails, verify the app is running on port 8000.
+
+- Dashboard exports now download as Excel-ready .xlsx files with frozen headers.
+- Column visibility preferences persist locally per page, so demo layouts can be prepared in advance.
+

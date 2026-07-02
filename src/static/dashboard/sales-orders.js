@@ -1,5 +1,35 @@
-const ACTIVE_STATUS_FILTER = "__ACTIVE__";
+﻿const ACTIVE_STATUS_FILTER = "__ACTIVE__";
 const DEFAULT_YEAR_FILTER = "2026";
+const COLUMN_STORAGE_KEY = "dashboard.visibleColumns.salesOrders.v1";
+const TABLE_COLUMNS = [
+  { key: "expand", label: "Detail", defaultVisible: true, fixed: true, exportable: false },
+  { key: "sales_order_number", label: "SO Number", defaultVisible: true, exportType: "string", exportValue: (row) => row.sales_order_number || "" },
+  { key: "customer_name", label: "Customer", defaultVisible: true, exportType: "string", exportValue: (row) => row.customer_name || "" },
+  { key: "product_type_label", label: "Product Type", defaultVisible: true, exportType: "string", exportValue: (row) => row.product_type_label || "" },
+  { key: "delivery_date", label: "Delivery Date", defaultVisible: true, exportType: "date", exportValue: (row) => dateOnly(row.commitment_date) || "" },
+  { key: "source_type", label: "Source Type", defaultVisible: true, exportType: "string", exportValue: (row) => sourceLabel(row) || "" },
+  { key: "sales_order_state", label: "SO Status", defaultVisible: true, exportType: "string", exportValue: (row) => row.sales_order_state || "" },
+  { key: "follow_up_status", label: "Follow-Up", defaultVisible: true, exportType: "string", exportValue: (row) => followUpLabel(row.follow_up_status) || "" },
+  { key: "related_mo_qty", label: "Related MO Qty", defaultVisible: false, exportType: "number", exportValue: (row) => numberValue(row.total_related_mo_qty) },
+  { key: "produced_mo_qty", label: "Produced MO Qty", defaultVisible: false, exportType: "number", exportValue: (row) => numberValue(row.total_done_mo_qty) },
+  { key: "manufacturing_in_progress_qty", label: "Manufacturing In Progress Qty", defaultVisible: false, exportType: "number", exportValue: (row) => numberValue(row.total_in_progress_mo_qty) },
+  { key: "shared_io", label: "Shared IO", defaultVisible: false, exportType: "string", exportValue: (row) => row.shared_io_numbers || "" },
+  { key: "ordered_qty", label: "Ordered Qty", defaultVisible: true, exportType: "number", exportValue: (row) => numberValue(row.ordered_qty) },
+  { key: "delivered_qty", label: "Delivered Qty", defaultVisible: true, exportType: "number", exportValue: (row) => numberValue(row.delivered_qty) },
+  { key: "invoiced_qty", label: "Invoiced Qty", defaultVisible: true, exportType: "number", exportValue: (row) => numberValue(row.invoiced_qty) },
+  { key: "qty_delivery_percent", label: "Qty Delivery %", defaultVisible: true, exportType: "percent", exportValue: (row) => row.qty_delivery_progress_ratio },
+  { key: "qty_invoice_percent", label: "Qty Invoice %", defaultVisible: true, exportType: "percent", exportValue: (row) => row.qty_invoice_progress_ratio },
+  { key: "sales_amount_idr", label: "Sales Amount IDR", defaultVisible: true, exportType: "currency", exportValue: (row) => numberValue(row.ordered_amount_idr) },
+  { key: "rkb_planned_cost", label: "RKB Planned Cost", defaultVisible: true, exportType: "currency", exportValue: (row) => numberValue(row.rkb_planned_cost) },
+  { key: "rkb_kontribusi_percent", label: "RKB Kontribusi %", defaultVisible: true, exportType: "percent", exportValue: (row) => row.rkb_kontribusi_percent },
+  { key: "actual_cost", label: "Actual Cost", defaultVisible: false, exportType: "currency", exportValue: (row) => numberValue(row.actual_cost) },
+  { key: "kontribusi_aktual_percent", label: "Kontribusi Aktual %", defaultVisible: false, exportType: "percent", exportValue: (row) => row.kontribusi_aktual_percent },
+  { key: "delivered_amount_idr", label: "Delivered Amount IDR", defaultVisible: false, exportType: "currency", exportValue: (row) => numberValue(row.delivered_amount_idr) },
+  { key: "invoiced_amount_idr", label: "Invoiced Amount IDR", defaultVisible: false, exportType: "currency", exportValue: (row) => numberValue(row.invoiced_amount_idr) },
+  { key: "amount_delivery_percent", label: "Amount Delivery %", defaultVisible: false, exportType: "percent", exportValue: (row) => row.amount_delivery_progress_ratio },
+  { key: "amount_invoice_percent", label: "Amount Invoice %", defaultVisible: false, exportType: "percent", exportValue: (row) => row.amount_invoice_progress_ratio },
+];
+const DEFAULT_VISIBLE_COLUMNS = TABLE_COLUMNS.filter((column) => column.defaultVisible).map((column) => column.key);
 
 const state = {
   rows: [],
@@ -8,7 +38,7 @@ const state = {
   detailCache: new Map(),
   detailLoading: new Set(),
   sortKey: "commitment_date",
-sortDirection: "asc",
+  sortDirection: "asc",
   filterOptions: {
     year: [],
     customer: [],
@@ -32,8 +62,16 @@ sortDirection: "asc",
 const els = {
   refreshButton: document.getElementById("refreshButton"),
   clearFiltersButton: document.getElementById("clearFiltersButton"),
+  clearToolbarFiltersButton: document.getElementById("clearToolbarFiltersButton"),
+  clearSortButton: document.getElementById("clearSortButton"),
   exportExcelButton: document.getElementById("exportExcelButton"),
-soFilter: document.getElementById("soFilter"),
+  columnsButton: document.getElementById("columnsButton"),
+  columnsPanel: document.getElementById("columnsPanel"),
+  columnsList: document.getElementById("columnsList"),
+  columnsShowAllButton: document.getElementById("columnsShowAllButton"),
+  columnsResetButton: document.getElementById("columnsResetButton"),
+  activeFilterSummary: document.getElementById("activeFilterSummary"),
+  soFilter: document.getElementById("soFilter"),
   yearFilter: document.getElementById("yearFilter"),
   customerFilter: document.getElementById("customerFilter"),
   productTypeFilter: document.getElementById("productTypeFilter"),
@@ -61,7 +99,7 @@ soFilter: document.getElementById("soFilter"),
   kpiAmountInvoice: document.getElementById("kpiAmountInvoice"),
   kpiFromIo: document.getElementById("kpiFromIo"),
   kpiMakeToOrder: document.getElementById("kpiMakeToOrder"),
-kpiFromStock: document.getElementById("kpiFromStock"),
+  kpiFromStock: document.getElementById("kpiFromStock"),
   kpiMixedSource: document.getElementById("kpiMixedSource"),
   kpiUnknownSource: document.getElementById("kpiUnknownSource"),
   unknownSourceCard: document.getElementById("unknownSourceCard"),
@@ -70,7 +108,6 @@ kpiFromStock: document.getElementById("kpiFromStock"),
   barAmountDelivery: document.getElementById("barAmountDelivery"),
   barAmountInvoice: document.getElementById("barAmountInvoice"),
 };
-
 const sourceLabels = {
   FROM_INTERNAL_ORDER: "From IO",
   FROM_STOCK: "From Stock",
@@ -92,6 +129,10 @@ const followUpLabels = {
 
 const sourceOrder = ["FROM_INTERNAL_ORDER", "FROM_STOCK", "MAKE_TO_ORDER", "MIXED_SOURCE", "UNKNOWN_SOURCE", "CANCELLED_RECORD"];
 const followUpOrder = ["CANCELLED_RECORD", "UNKNOWN_SOURCE", "DELAYED_DELIVERY", "WAITING_PRODUCTION", "WAITING_DELIVERY", "WAITING_INVOICE", "COMPLETED"];
+
+let columnController = null;
+
+let columnController = null;
 
 function isCancelStatusValue(value) {
   return ["cancel", "cancelled"].includes(String(value || "").toLowerCase());
@@ -570,7 +611,7 @@ function detailContent(row, options = {}) {
 function detailRow(row, options = {}) {
   return `
     <tr class="detail-row" data-detail-so-id="${row.sales_order_id}">
-      <td colspan="26">
+      <td colspan="${Math.max(1, visibleColumnCount())}">
         ${detailContent(row, options)}
       </td>
     </tr>
@@ -617,37 +658,36 @@ function tableRow(row) {
   const expanded = state.expanded.has(String(row.sales_order_id));
   return `
     <tr data-row-so-id="${row.sales_order_id}">
-      <td><button class="row-action" type="button" data-so="${row.sales_order_id}" title="Toggle details" aria-label="Toggle details">${expanded ? "-" : "+"}</button></td>
-      <td class="sales-order-number">${safeText(row.sales_order_number)}</td>
-      <td>${safeText(row.customer_name)}</td>
-      <td>${safeText(row.product_type_label)}</td>
-      <td>${formatDate(row.commitment_date)}</td>
-      <td>${sourceBadge(row)}</td>
-      <td>${badge(row.sales_order_state, isCancelled(row) ? "status-muted" : "status-progress")}</td>
-      <td>${followUpBadge(row.follow_up_status)}</td>
-      <td class="num">${formatQty(row.total_related_mo_qty)}</td>
-      <td class="num">${formatQty(row.total_done_mo_qty)}</td>
-      <td class="num">${formatQty(row.total_in_progress_mo_qty)}</td>
-      <td>${safeText(row.shared_io_numbers)}</td>
-      <td class="num">${formatQty(row.ordered_qty)}</td>
-      <td class="num">${formatQty(row.delivered_qty)}</td>
-      <td class="num">${formatQty(row.invoiced_qty)}</td>
-      <td class="progress-cell">${miniProgress(row.qty_delivery_progress_ratio)}</td>
-      <td class="progress-cell">${miniProgress(row.qty_invoice_progress_ratio)}</td>
-      <td class="num">${formatAmount(row.ordered_amount_idr)}</td>
-      <td class="num">${formatAmount(row.rkb_planned_cost)}</td>
-      <td class="num ${contributionClass(row.rkb_kontribusi_percent)}">${formatContributionPercent(row.rkb_kontribusi_percent)}</td>
-      <td class="num">${formatAmount(row.actual_cost)}</td>
-      <td class="num ${contributionClass(row.kontribusi_aktual_percent)}">${formatContributionPercent(row.kontribusi_aktual_percent)}</td>
-      <td class="num">${formatAmount(row.delivered_amount_idr)}</td>
-      <td class="num">${formatAmount(row.invoiced_amount_idr)}</td>
-      <td class="progress-cell">${miniProgress(row.amount_delivery_progress_ratio)}</td>
-      <td class="progress-cell">${miniProgress(row.amount_invoice_progress_ratio)}</td>
+      <td data-column-key="expand"><button class="row-action" type="button" data-so="${row.sales_order_id}" title="Toggle details" aria-label="Toggle details">${expanded ? "-" : "+"}</button></td>
+      <td class="sales-order-number" data-column-key="sales_order_number">${safeText(row.sales_order_number)}</td>
+      <td data-column-key="customer_name">${safeText(row.customer_name)}</td>
+      <td data-column-key="product_type_label">${safeText(row.product_type_label)}</td>
+      <td data-column-key="delivery_date">${formatDate(row.commitment_date)}</td>
+      <td data-column-key="source_type">${sourceBadge(row)}</td>
+      <td data-column-key="sales_order_state">${badge(row.sales_order_state, isCancelled(row) ? "status-muted" : "status-progress")}</td>
+      <td data-column-key="follow_up_status">${followUpBadge(row.follow_up_status)}</td>
+      <td class="num" data-column-key="related_mo_qty">${formatQty(row.total_related_mo_qty)}</td>
+      <td class="num" data-column-key="produced_mo_qty">${formatQty(row.total_done_mo_qty)}</td>
+      <td class="num" data-column-key="manufacturing_in_progress_qty">${formatQty(row.total_in_progress_mo_qty)}</td>
+      <td data-column-key="shared_io">${safeText(row.shared_io_numbers)}</td>
+      <td class="num" data-column-key="ordered_qty">${formatQty(row.ordered_qty)}</td>
+      <td class="num" data-column-key="delivered_qty">${formatQty(row.delivered_qty)}</td>
+      <td class="num" data-column-key="invoiced_qty">${formatQty(row.invoiced_qty)}</td>
+      <td class="progress-cell" data-column-key="qty_delivery_percent">${miniProgress(row.qty_delivery_progress_ratio)}</td>
+      <td class="progress-cell" data-column-key="qty_invoice_percent">${miniProgress(row.qty_invoice_progress_ratio)}</td>
+      <td class="num" data-column-key="sales_amount_idr">${formatAmount(row.ordered_amount_idr)}</td>
+      <td class="num" data-column-key="rkb_planned_cost">${formatAmount(row.rkb_planned_cost)}</td>
+      <td class="num ${contributionClass(row.rkb_kontribusi_percent)}" data-column-key="rkb_kontribusi_percent">${formatContributionPercent(row.rkb_kontribusi_percent)}</td>
+      <td class="num" data-column-key="actual_cost">${formatAmount(row.actual_cost)}</td>
+      <td class="num ${contributionClass(row.kontribusi_aktual_percent)}" data-column-key="kontribusi_aktual_percent">${formatContributionPercent(row.kontribusi_aktual_percent)}</td>
+      <td class="num" data-column-key="delivered_amount_idr">${formatAmount(row.delivered_amount_idr)}</td>
+      <td class="num" data-column-key="invoiced_amount_idr">${formatAmount(row.invoiced_amount_idr)}</td>
+      <td class="progress-cell" data-column-key="amount_delivery_percent">${miniProgress(row.amount_delivery_progress_ratio)}</td>
+      <td class="progress-cell" data-column-key="amount_invoice_percent">${miniProgress(row.amount_invoice_progress_ratio)}</td>
     </tr>
     ${expanded ? detailRow(row, { loading: !row.detail_loaded }) : ""}
   `;
 }
-
 function sortableValue(row, key) {
   const numericKeys = new Set([
     "ordered_qty",
@@ -717,16 +757,20 @@ function updateSortIndicators() {
   });
 }
 
+function visibleColumnCount() {
+  return columnController ? columnController.visibleColumnCount() : TABLE_COLUMNS.length;
+}
+
 function renderTable(rows) {
   updateSortIndicators();
   els.rowCount.textContent = `${formatNumber(rows.length)} rows`;
   if (!rows.length) {
-    els.dashboardRows.innerHTML = '<tr><td colspan="26" class="empty-cell">No Sales Orders match the current filters.</td></tr>';
+    els.dashboardRows.innerHTML = `<tr><td colspan="${Math.max(1, visibleColumnCount())}" class="empty-cell">No Sales Orders match the current filters.</td></tr>`;
     return;
   }
   els.dashboardRows.innerHTML = rows.map(tableRow).join("");
+  columnController?.apply();
 }
-
 function uniqueOptionValues(values) {
   return [...new Set((values || [])
     .filter((value) => value !== null && value !== undefined && String(value).trim())
@@ -836,6 +880,8 @@ function applyFilters() {
   const rowsForSourceStrip = state.rows.filter((row) => rowMatchesCurrentFilters(row, { skipSource: true }));
 
   state.filteredRows = sortedRows(rowsForTable);
+  els.activeFilterSummary.textContent = activeFilterSummary();
+  els.clearSortButton.disabled = state.sortKey === "commitment_date" && state.sortDirection === "asc";
 
   renderKpis(state.filteredRows, rowsForSourceStrip);
   renderStatusStrip(rowsForStatusStrip);
@@ -845,92 +891,41 @@ function applyFilters() {
   renderTable(state.filteredRows);
 }
 
-function csvCell(value) {
-  let text = safeText(value);
-  if (text === "-") text = "";
-  if (/^[=+\-@]/.test(text)) {
-    text = `'${text}`;
-  }
-  return `"${text.replace(/"/g, '""')}"`;
+function activeFilterSummary() {
+  const entries = [];
+  if (els.soFilter.value.trim()) entries.push(`SO: ${els.soFilter.value.trim()}`);
+  if (state.filters.year.size && !setsEqualToArray(state.filters.year, state.filterOptions.year)) entries.push(`Year: ${checklistSummary("year", "All years", (value) => safeText(value))}`);
+  if (state.filters.customer.size) entries.push(`Customer: ${checklistSummary("customer", "All customers", (value) => safeText(value))}`);
+  if (state.filters.productType.size) entries.push(`Product Type: ${checklistSummary("productType", "All product types", (value) => safeText(value))}`);
+  if (state.filters.source.size) entries.push(`Source: ${checklistSummary("source", "All sources", sourceLabel)}`);
+  if (state.filters.status.size && !setsEqualToArray(state.filters.status, activeStatusValues())) entries.push(`SO Status: ${checklistSummary("status", "All statuses", (value) => safeText(value))}`);
+  if (state.filters.followUp.size) entries.push(`Follow-Up: ${checklistSummary("followUp", "All follow-up", followUpLabel)}`);
+  if (els.commitmentFromFilter.value || els.commitmentToFilter.value) entries.push(`Delivery Date: ${els.commitmentFromFilter.value || "..."} to ${els.commitmentToFilter.value || "..."}`);
+  if (state.quickFilter) entries.push(`Quick Filter: ${quickFilterLabels[state.quickFilter] || state.quickFilter}`);
+  return entries.length ? `Filters: ${entries.join(", ")}` : "Filters: Active current-year Sales Orders";
 }
 
-function exportFilteredRows() {
-  if (!state.filteredRows.length) {
-    window.alert("No rows to export with the current filters.");
-    return;
-  }
-
-  const columns = [
-    ["Year", "order_year"],
-    ["SO Number", "sales_order_number"],
-    ["Customer", "customer_name"],
-    ["Product Type", "product_type_label"],
-    ["Delivery Date", (row) => dateOnly(row.commitment_date)],
-    ["Source Type", (row) => sourceLabel(row)],
-    ["SO Status", "sales_order_state"],
-    ["Follow-Up", (row) => followUpLabel(row.follow_up_status)],
-    ["Ordered Qty", "ordered_qty"],
-    ["Delivered Qty", "delivered_qty"],
-    ["Invoiced Qty", "invoiced_qty"],
-    ["Qty Delivery %", (row) => formatPercent(row.qty_delivery_progress_ratio)],
-    ["Qty Invoice %", (row) => formatPercent(row.qty_invoice_progress_ratio)],
-    ["Sales Amount IDR", "ordered_amount_idr"],
-    ["RKB Planned Cost", "rkb_planned_cost"],
-    ["Direct RKB Planned Cost", "direct_rkb_planned_cost"],
-    ["IO RKB Full Cost Pool", "io_correlated_rkb_planned_cost_full"],
-    ["IO RKB Cost / Unit", "io_rkb_planned_cost_per_unit"],
-    ["IO RKB Allocated", "io_correlated_rkb_planned_cost_allocated"],
-    ["IO RKB Unallocated", "io_rkb_unallocated_planned_cost"],
-    ["RKB Kontribusi %", (row) => formatContributionPercent(row.rkb_kontribusi_percent)],
-    ["Actual Cost (Qty-Based)", "actual_cost"],
-    ["Actual Cost Basis", "actual_cost_basis"],
-    ["Actual Cost / Unit", "actual_cost_per_unit"],
-    ["Direct Actual Cost Basis", "direct_actual_cost_basis"],
-    ["IO Actual Cost Full", "io_backed_actual_cost_full"],
-    ["IO Actual Cost Allocated", "io_backed_actual_cost_allocated"],
-    ["IO Actual Cost Basis", "io_backed_actual_cost_basis"],
-    ["Kontribusi Aktual %", (row) => formatContributionPercent(row.kontribusi_aktual_percent)],
-    ["RKB Allocation Basis", "rkb_allocation_basis"],
-    ["RKB Cost Basis", "rkb_cost_basis"],
-    ["Contribution Warning", "contribution_basis_warning"],
-    ["Delivered Amount IDR", "delivered_amount_idr"],
-    ["Invoiced Amount IDR", "invoiced_amount_idr"],
-    ["Amount Delivery %", (row) => formatPercent(row.amount_delivery_progress_ratio)],
-    ["Amount Invoice %", (row) => formatPercent(row.amount_invoice_progress_ratio)],
-    ["IO Count", "internal_order_count"],
-    ["Direct MO Count", "direct_mo_count"],
-    ["Direct MO Qty", "direct_mo_qty"],
-    ["Related IO MO Count", "io_backed_mo_count"],
-    ["Related IO MO Qty", "io_backed_mo_qty"],
-    ["Total Related MO Count", "total_related_mo_count"],
-    ["Related MO Qty", "total_related_mo_qty"],
-    ["Produced MO Qty", "total_done_mo_qty"],
-    ["Manufacturing In Progress Qty", "total_in_progress_mo_qty"],
-    ["Shared IO", "shared_io_numbers"],
-    ["Shared IO Count", "shared_io_count"],
-    ["Multi-IO SO Count", "multi_io_so_count"],
-    ["Has Multi-IO SO", (row) => row.has_multi_io_so ? "Yes" : "No"],
-    ["Linked SO Qty Basis", "linked_so_qty_basis"],
-    ["IO Qty Status", "io_qty_correlation_status"],
-    ["Accounting Lines", "accounting_line_count"],
-  ];
-
-  const header = columns.map(([label]) => csvCell(label)).join(",");
-  const rows = state.filteredRows.map((row) => columns
-    .map(([, accessor]) => csvCell(typeof accessor === "function" ? accessor(row) : row[accessor]))
-    .join(","));
-  const csv = `\uFEFF${[header, ...rows].join("\n")}`;
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `sales_orders_traceability_${new Date().toISOString().slice(0, 10)}.csv`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+function clearSort() {
+  state.sortKey = "commitment_date";
+  state.sortDirection = "asc";
+  applyFilters();
 }
 
+async function exportCurrentView() {
+  const sheet = DashboardExport.buildSheetData({
+    columns: TABLE_COLUMNS,
+    rows: state.filteredRows,
+    visibleKeys: columnController?.visibleColumnKeys(),
+  });
+  await DashboardExport.exportXlsx({
+    endpoint: "/api/dashboard/export/xlsx",
+    button: els.exportExcelButton,
+    fileName: `sales_orders_${DashboardExport.timestampSuffix()}.xlsx`,
+    sheetName: "Sales Orders",
+    columns: sheet.columns,
+    rows: sheet.rows,
+  });
+}
 async function loadDashboard() {
   els.lastLoaded.textContent = "Loading...";
   try {
@@ -948,7 +943,7 @@ async function loadDashboard() {
     els.lastLoaded.textContent = `Loaded ${new Date().toLocaleString()}`;
   } catch (error) {
     els.lastLoaded.textContent = "Failed to load";
-    els.dashboardRows.innerHTML = `<tr><td colspan="26" class="empty-cell">${error.message}</td></tr>`;
+    els.dashboardRows.innerHTML = `<tr><td colspan="${Math.max(1, visibleColumnCount())}" class="empty-cell">${error.message}</td></tr>`;
   }
 }
 
@@ -1017,7 +1012,9 @@ document.addEventListener("change", handleChecklistChange);
 
 els.refreshButton.addEventListener("click", loadDashboard);
 els.clearFiltersButton.addEventListener("click", clearFilters);
-els.exportExcelButton.addEventListener("click", exportFilteredRows);
+els.clearToolbarFiltersButton.addEventListener("click", clearFilters);
+els.clearSortButton.addEventListener("click", clearSort);
+els.exportExcelButton.addEventListener("click", exportCurrentView);
 els.salesOrderTable.addEventListener("click", (event) => {
   const button = event.target.closest("[data-sort]");
   if (!button) return;
@@ -1112,5 +1109,23 @@ els.dashboardRows.addEventListener("click", (event) => {
   loadRowDetails(soId);
 });
 
+columnController = DashboardTableTools.createColumnController({
+  storageKey: COLUMN_STORAGE_KEY,
+  columns: TABLE_COLUMNS,
+  defaultVisibleKeys: DEFAULT_VISIBLE_COLUMNS,
+  button: els.columnsButton,
+  panel: els.columnsPanel,
+  list: els.columnsList,
+  showAllButton: els.columnsShowAllButton,
+  resetButton: els.columnsResetButton,
+  root: els.salesOrderTable,
+});
+
 updateSortIndicators();
 loadDashboard();
+
+
+
+
+
+

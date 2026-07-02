@@ -1,4 +1,4 @@
-# Core Dependencies
+﻿# Core Dependencies
 
 # Database
 SQLAlchemy>=2.0.25
@@ -34,3 +34,4 @@ pytest-cov>=4.1.0
 black>=24.1.0
 isort>=5.13.2
 mypy>=1.8.0
+

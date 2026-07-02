@@ -262,3 +262,9 @@ The current phase is successful if:
 6. Table shows IO, SO status, RKB, ROP, and PO relationship fields.
 7. Page is ready for a VP-facing review without a long explanation.
 ```
+
+- Shared dashboard toolbar/theme aligned across Internal Orders, Sales Orders, and Order Material Tracking.
+- Main tables now support browser-saved column visibility controls.
+- Dashboard Excel export now returns real .xlsx files with frozen headers via the shared export endpoint.
+- UI/export refactor did not change dashboard business calculations or relationship logic.
+

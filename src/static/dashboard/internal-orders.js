@@ -1,3 +1,20 @@
+﻿const COLUMN_STORAGE_KEY = "dashboard.visibleColumns.internalOrders.v1";
+const TABLE_COLUMNS = [
+  { key: "expand", label: "Detail", defaultVisible: true, fixed: true, exportable: false },
+  { key: "io_number", label: "IO Number", defaultVisible: true, exportLabel: "IO Number", exportValue: (row) => safeText(row.internal_order_number) },
+  { key: "status", label: "Status", defaultVisible: true, exportLabel: "Status", exportValue: (row) => row.status_summary || "" },
+  { key: "products", label: "Products", defaultVisible: true, exportLabel: "Products", exportType: "number", exportValue: (row) => numberValue(row.product_count) },
+  { key: "mo", label: "MO", defaultVisible: true, exportLabel: "MO", exportType: "number", exportValue: (row) => numberValue(row.linked_mo_count) },
+  { key: "so", label: "SO", defaultVisible: true, exportLabel: "SO", exportType: "number", exportValue: (row) => numberValue(row.linked_so_count) },
+  { key: "delivery_percent", label: "Delivery %", defaultVisible: true, exportLabel: "Delivery %", exportType: "percent", exportValue: (row) => row.so_delivery_progress_ratio },
+  { key: "invoice_percent", label: "Invoice %", defaultVisible: true, exportLabel: "Invoice %", exportType: "percent", exportValue: (row) => row.so_invoice_progress_ratio },
+  { key: "receipt_percent", label: "Receipt %", defaultVisible: true, exportLabel: "Receipt %", exportType: "percent", exportValue: (row) => row.po_receipt_progress_ratio },
+  { key: "billing_percent", label: "Billing %", defaultVisible: false, exportLabel: "Billing %", exportType: "percent", exportValue: (row) => row.po_invoice_progress_ratio },
+  { key: "traceability", label: "Traceability", defaultVisible: true, exportLabel: "Traceability", exportValue: (row) => statusLabels[row.traceability_status] || row.traceability_status || "" },
+];
+
+const DEFAULT_VISIBLE_COLUMNS = TABLE_COLUMNS.filter((column) => column.defaultVisible).map((column) => column.key);
+
 const state = {
   rows: [],
   filteredRows: [],
@@ -7,6 +24,13 @@ const state = {
 const els = {
   refreshButton: document.getElementById("refreshButton"),
   clearFiltersButton: document.getElementById("clearFiltersButton"),
+  clearToolbarFiltersButton: document.getElementById("clearToolbarFiltersButton"),
+  exportExcelButton: document.getElementById("exportExcelButton"),
+  columnsButton: document.getElementById("columnsButton"),
+  columnsPanel: document.getElementById("columnsPanel"),
+  columnsList: document.getElementById("columnsList"),
+  columnsShowAllButton: document.getElementById("columnsShowAllButton"),
+  columnsResetButton: document.getElementById("columnsResetButton"),
   dateFromFilter: document.getElementById("dateFromFilter"),
   dateToFilter: document.getElementById("dateToFilter"),
   ioFilter: document.getElementById("ioFilter"),
@@ -17,6 +41,8 @@ const els = {
   dashboardRows: document.getElementById("dashboardRows"),
   rowCount: document.getElementById("rowCount"),
   lastLoaded: document.getElementById("lastLoaded"),
+  activeFilterSummary: document.getElementById("activeFilterSummary"),
+  internalOrdersTable: document.getElementById("internalOrdersTable"),
   kpiActiveIo: document.getElementById("kpiActiveIo"),
   kpiWithMo: document.getElementById("kpiWithMo"),
   kpiWithSo: document.getElementById("kpiWithSo"),
@@ -42,6 +68,8 @@ const statusLabels = {
   OLD_OR_UNLINKED_NO_MO: "Review/no MO",
   CANCELLED_RECORD: "Cancelled",
 };
+
+let columnController = null;
 
 function numberValue(value) {
   return Number(value || 0);
@@ -184,9 +212,10 @@ function miniProgress(value) {
 }
 
 function detailRow(row) {
+  const colspan = columnController ? columnController.visibleColumnCount() : TABLE_COLUMNS.length;
   return `
     <tr class="detail-row">
-      <td colspan="11">
+      <td colspan="${Math.max(1, colspan)}">
         <div class="detail-grid">
           <div class="detail-item"><span>Requester</span><strong>${safeText(row.requester)}</strong></div>
           <div class="detail-item"><span>Need Date</span><strong>${formatDateRange(row.needed_date_from, row.needed_date_to)}</strong></div>
@@ -217,29 +246,34 @@ function tableRow(row) {
   const expanded = state.expanded.has(row.internal_order_number);
   return `
     <tr>
-      <td><button class="row-action" type="button" data-io="${row.internal_order_number}" title="Toggle diagnostics" aria-label="Toggle diagnostics">${expanded ? "-" : "+"}</button></td>
-      <td class="io-number">${safeText(row.internal_order_number)}</td>
-      <td>${statusBadge(row.status_summary)}</td>
-      <td class="num">${formatNumber(row.product_count)}</td>
-      <td class="num">${formatNumber(row.linked_mo_count)}</td>
-      <td class="num">${formatNumber(row.linked_so_count)}</td>
-      <td class="progress-cell">${miniProgress(row.so_delivery_progress_ratio)}</td>
-      <td class="progress-cell">${miniProgress(row.so_invoice_progress_ratio)}</td>
-      <td class="progress-cell">${miniProgress(row.po_receipt_progress_ratio)}</td>
-      <td class="progress-cell">${miniProgress(row.po_invoice_progress_ratio)}</td>
-      <td>${statusBadge(row.traceability_status)}</td>
+      <td data-column-key="expand"><button class="row-action" type="button" data-io="${row.internal_order_number}" title="Toggle diagnostics" aria-label="Toggle diagnostics">${expanded ? "-" : "+"}</button></td>
+      <td class="io-number" data-column-key="io_number">${safeText(row.internal_order_number)}</td>
+      <td data-column-key="status">${statusBadge(row.status_summary)}</td>
+      <td class="num" data-column-key="products">${formatNumber(row.product_count)}</td>
+      <td class="num" data-column-key="mo">${formatNumber(row.linked_mo_count)}</td>
+      <td class="num" data-column-key="so">${formatNumber(row.linked_so_count)}</td>
+      <td class="progress-cell" data-column-key="delivery_percent">${miniProgress(row.so_delivery_progress_ratio)}</td>
+      <td class="progress-cell" data-column-key="invoice_percent">${miniProgress(row.so_invoice_progress_ratio)}</td>
+      <td class="progress-cell" data-column-key="receipt_percent">${miniProgress(row.po_receipt_progress_ratio)}</td>
+      <td class="progress-cell" data-column-key="billing_percent">${miniProgress(row.po_invoice_progress_ratio)}</td>
+      <td data-column-key="traceability">${statusBadge(row.traceability_status)}</td>
     </tr>
     ${expanded ? detailRow(row) : ""}
   `;
 }
 
+function visibleColumnCount() {
+  return columnController ? columnController.visibleColumnCount() : TABLE_COLUMNS.length;
+}
+
 function renderTable(rows) {
   els.rowCount.textContent = `${formatNumber(rows.length)} rows`;
   if (!rows.length) {
-    els.dashboardRows.innerHTML = '<tr><td colspan="11" class="empty-cell">No Internal Orders match the current filters.</td></tr>';
+    els.dashboardRows.innerHTML = `<tr><td colspan="${Math.max(1, visibleColumnCount())}" class="empty-cell">No Internal Orders match the current filters.</td></tr>`;
     return;
   }
   els.dashboardRows.innerHTML = rows.map(tableRow).join("");
+  columnController?.apply();
 }
 
 function populateSelect(select, values) {
@@ -263,6 +297,18 @@ function dateOverlaps(row, fromFilter, toFilter) {
   return true;
 }
 
+function activeFilterSummary() {
+  const entries = [];
+  if (els.ioFilter.value.trim()) entries.push(`IO: ${els.ioFilter.value.trim()}`);
+  if (els.requesterFilter.value) entries.push(`Requester: ${els.requesterFilter.value}`);
+  if (els.statusFilter.value) entries.push(`Status: ${els.statusFilter.value}`);
+  if (els.traceabilityFilter.value) entries.push(`Traceability: ${els.traceabilityFilter.value}`);
+  if (els.dateFromFilter.value || els.dateToFilter.value) {
+    entries.push(`Need Date: ${els.dateFromFilter.value || "..."} to ${els.dateToFilter.value || "..."}`);
+  }
+  return entries.length ? `Filters: ${entries.join(", ")}` : "Filters: All Internal Orders";
+}
+
 function applyFilters() {
   const ioTerm = els.ioFilter.value.trim().toLowerCase();
   const requester = els.requesterFilter.value;
@@ -279,9 +325,26 @@ function applyFilters() {
     return matchesIo && matchesRequester && matchesStatus && matchesTraceability && dateOverlaps(row, dateFrom, dateTo);
   });
 
+  els.activeFilterSummary.textContent = activeFilterSummary();
   renderKpis(state.filteredRows);
   renderStatusStrip(state.filteredRows);
   renderTable(state.filteredRows);
+}
+
+async function exportCurrentView() {
+  const sheet = DashboardExport.buildSheetData({
+    columns: TABLE_COLUMNS,
+    rows: state.filteredRows,
+    visibleKeys: columnController?.visibleColumnKeys(),
+  });
+  await DashboardExport.exportXlsx({
+    endpoint: "/api/dashboard/export/xlsx",
+    button: els.exportExcelButton,
+    fileName: `internal_orders_${DashboardExport.timestampSuffix()}.xlsx`,
+    sheetName: "Internal Orders",
+    columns: sheet.columns,
+    rows: sheet.rows,
+  });
 }
 
 async function loadDashboard() {
@@ -299,7 +362,7 @@ async function loadDashboard() {
     els.lastLoaded.textContent = `Loaded ${new Date().toLocaleString()}`;
   } catch (error) {
     els.lastLoaded.textContent = "Failed to load";
-    els.dashboardRows.innerHTML = `<tr><td colspan="11" class="empty-cell">${error.message}</td></tr>`;
+    els.dashboardRows.innerHTML = `<tr><td colspan="${Math.max(1, visibleColumnCount())}" class="empty-cell">${error.message}</td></tr>`;
   }
 }
 
@@ -324,6 +387,8 @@ function clearFilters() {
 
 els.refreshButton.addEventListener("click", loadDashboard);
 els.clearFiltersButton.addEventListener("click", clearFilters);
+els.clearToolbarFiltersButton.addEventListener("click", clearFilters);
+els.exportExcelButton.addEventListener("click", exportCurrentView);
 els.dashboardRows.addEventListener("click", (event) => {
   const button = event.target.closest("[data-io]");
   if (!button) return;
@@ -336,4 +401,18 @@ els.dashboardRows.addEventListener("click", (event) => {
   renderTable(state.filteredRows);
 });
 
+columnController = DashboardTableTools.createColumnController({
+  storageKey: COLUMN_STORAGE_KEY,
+  columns: TABLE_COLUMNS,
+  defaultVisibleKeys: DEFAULT_VISIBLE_COLUMNS,
+  button: els.columnsButton,
+  panel: els.columnsPanel,
+  list: els.columnsList,
+  showAllButton: els.columnsShowAllButton,
+  resetButton: els.columnsResetButton,
+  root: els.internalOrdersTable,
+  onApply: () => renderTable(state.filteredRows),
+});
+
 loadDashboard();
+

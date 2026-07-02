@@ -1,4 +1,4 @@
-@import url("/static/dashboard/internal-orders.css");
+﻿@import url("/static/dashboard/dashboard-common.css");
 
 .io-rekap-dashboard {
   width: min(100%, 1800px);
@@ -661,4 +661,5 @@
   font-size: 10px;
   line-height: 1.2;
 }
+
 

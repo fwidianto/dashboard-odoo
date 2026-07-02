@@ -1,4 +1,4 @@
-const DEFAULT_INTERNAL_ORDER = "426IO026";
+﻿const DEFAULT_INTERNAL_ORDER = "426IO026";
 const DEFAULT_PERSPECTIVE = "internal_order";
 
 const TAB_DEFS = [
@@ -94,7 +94,7 @@ const CLASSIFICATION_REASON_LABELS = {
   UNKNOWN_FALLBACK: "Unclassified",
 };
 
-const COLUMN_VISIBILITY_STORAGE_KEY = "orderMaterialTracking.visibleColumns.v1";
+const COLUMN_VISIBILITY_STORAGE_KEY = "dashboard.visibleColumns.orderMaterialTracking.v1";
 const DEFAULT_VISIBLE_COLUMNS = [
   "internal_order_number",
   "source_path",
@@ -231,6 +231,7 @@ const els = {
   columnsList: document.getElementById("columnsList"),
   columnsShowAllButton: document.getElementById("columnsShowAllButton"),
   columnsResetButton: document.getElementById("columnsResetButton"),
+  exportExcelButton: document.getElementById("exportExcelButton"),
   lineTableBody: document.getElementById("lineTableBody"),
 };
 
@@ -790,7 +791,7 @@ function renderSortState() {
     button.classList.toggle("active", isActive);
     button.setAttribute("aria-sort", isActive ? (direction === "asc" ? "ascending" : "descending") : "none");
     if (indicator) {
-      indicator.textContent = isActive ? (direction === "asc" ? "↑" : "↓") : "";
+      indicator.textContent = isActive ? (direction === "asc" ? "â†‘" : "â†“") : "";
     }
   });
 }
@@ -992,6 +993,88 @@ function visibleRows() {
   return sortRows(state.lines.filter((row) => matchesAllFilters(row)));
 }
 
+function exportColumnType(columnKey) {
+  if (["rkb_amount", "rop_amount", "po_amount"].includes(columnKey)) return "currency";
+  if (["rkb_qty", "rop_qty", "po_qty", "received_qty", "invoiced_qty"].includes(columnKey)) return "number";
+  return "string";
+}
+
+function exportColumnValue(row, columnKey) {
+  switch (columnKey) {
+    case "internal_order_number":
+      return row.internal_order_number || "";
+    case "source_path":
+      return mappedLabel(SOURCE_PATH_LABELS, row.material_chain_source || "UNKNOWN_SOURCE");
+    case "sales_order_status":
+      return row.has_sales_order_link ? "Linked" : "Pre-SO";
+    case "linked_sales_order":
+      return splitSummaryValues(row.linked_sales_order_numbers).join(", ");
+    case "rkb_request":
+      return splitSummaryValues(row.rkb_actual_request_summary || row.rkb_actual_request_numeric_summary).join(", ");
+    case "rop_request":
+      return splitSummaryValues(row.rop_request_summary || row.rop_request_numeric_summary).join(", ");
+    case "related_po":
+      return splitSummaryValues(row.po_order_reference_summary).join(", ");
+    case "product_name":
+      return row.product_name || "";
+    case "item_type":
+      return mappedLabel(TRACKABILITY_LABELS, row.product_trackability_class);
+    case "material_status":
+      return materialStatusMeta(row).label;
+    case "uom":
+      return normalizeUomSummary(row.uom_summary || "");
+    case "rkb_qty":
+      return numberValue(row.rkb_actual_qty);
+    case "rkb_amount":
+      return numberValue(row.rkb_actual_subtotal);
+    case "rop_qty":
+      return numberValue(row.rop_qty);
+    case "rop_amount":
+      return numberValue(row.rop_subtotal);
+    case "po_qty":
+      return numberValue(row.po_qty);
+    case "po_amount":
+      return numberValue(row.po_subtotal);
+    case "received_qty":
+      return numberValue(row.po_received_qty);
+    case "invoiced_qty":
+      return numberValue(row.po_invoiced_qty);
+    case "flags":
+      return [
+        row.po_without_rop_flag ? "PO Without ROP" : "",
+        row.rop_without_po_flag ? "ROP Without PO" : "",
+        row.mixed_uom_flag ? "Mixed UoM" : "",
+        row.product_trackability_class !== "TRACKABLE_PRODUCT" ? "Non-Product / Service" : "",
+      ].filter(Boolean).join(", ");
+    default:
+      return "";
+  }
+}
+
+async function exportCurrentView() {
+  const rows = visibleRows();
+  const visibleKeys = TABLE_COLUMNS.filter((column) => isColumnVisible(column.key)).map((column) => column.key);
+  const columns = TABLE_COLUMNS
+    .filter((column) => visibleKeys.includes(column.key))
+    .map((column) => ({
+      key: column.key,
+      label: column.label,
+      type: exportColumnType(column.key),
+    }));
+  const exportRows = rows.map((row) => Object.fromEntries(
+    columns.map((column) => [column.key, exportColumnValue(row, column.key)])
+  ));
+  const perspectiveKey = currentPerspective() === "sales_order" ? "sales_order" : "internal_order";
+  const searchPart = DashboardExport.safeFilePart((els.internalOrderInput?.value || "").trim(), perspectiveKey);
+  await DashboardExport.exportXlsx({
+    endpoint: "/api/dashboard/export/xlsx",
+    button: els.exportExcelButton,
+    fileName: `order_material_tracking_${perspectiveKey}_${searchPart}_${DashboardExport.timestampSuffix()}.xlsx`,
+    sheetName: "Order Material Tracking",
+    columns,
+    rows: exportRows,
+  });
+}
 function renderLines() {
   const rows = visibleRows();
   const total = state.lines.length;
@@ -1204,6 +1287,7 @@ els.clearSortButton?.addEventListener("click", clearSort);
 els.columnsButton?.addEventListener("click", () => toggleColumnsPanel());
 els.columnsShowAllButton?.addEventListener("click", () => showAllColumns());
 els.columnsResetButton?.addEventListener("click", () => resetVisibleColumnsToDefault());
+els.exportExcelButton?.addEventListener("click", exportCurrentView);
 document.addEventListener("click", (event) => {
   handleSortInteraction(event);
   columnsClickOutside(event);
@@ -1242,3 +1326,5 @@ renderDashboard();
 if (initialSearchValue) {
   loadDashboard(initialSearchValue);
 }
+
+

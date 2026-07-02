@@ -1,4 +1,4 @@
-@import url("/static/dashboard/internal-orders.css");
+﻿@import url("/static/dashboard/dashboard-common.css");
 
 .sales-dashboard {
   width: min(100%, 1760px);
@@ -268,4 +268,96 @@ button.status-chip.is-active {
 .contribution-negative {
   color: var(--danger);
   font-weight: 760;
+}
+
+
+.sales-dashboard .filter-panel {
+  grid-template-columns: repeat(5, minmax(170px, 1fr));
+}
+
+.sales-dashboard th[data-column-key="expand"],
+.sales-dashboard td[data-column-key="expand"] {
+  min-width: 54px;
+}
+
+.sales-dashboard th[data-column-key="sales_order_number"],
+.sales-dashboard td[data-column-key="sales_order_number"] {
+  min-width: 150px;
+}
+
+.sales-dashboard th[data-column-key="customer_name"],
+.sales-dashboard td[data-column-key="customer_name"] {
+  min-width: 220px;
+}
+
+.sales-dashboard th[data-column-key="product_type_label"],
+.sales-dashboard td[data-column-key="product_type_label"],
+.sales-dashboard th[data-column-key="source_type"],
+.sales-dashboard td[data-column-key="source_type"],
+.sales-dashboard th[data-column-key="follow_up_status"],
+.sales-dashboard td[data-column-key="follow_up_status"] {
+  min-width: 170px;
+}
+
+.sales-dashboard th[data-column-key="sales_order_state"],
+.sales-dashboard td[data-column-key="sales_order_state"],
+.sales-dashboard th[data-column-key="delivery_date"],
+.sales-dashboard td[data-column-key="delivery_date"] {
+  min-width: 130px;
+}
+
+.sales-dashboard th[data-column-key="related_mo_qty"],
+.sales-dashboard td[data-column-key="related_mo_qty"],
+.sales-dashboard th[data-column-key="produced_mo_qty"],
+.sales-dashboard td[data-column-key="produced_mo_qty"],
+.sales-dashboard th[data-column-key="manufacturing_in_progress_qty"],
+.sales-dashboard td[data-column-key="manufacturing_in_progress_qty"],
+.sales-dashboard th[data-column-key="ordered_qty"],
+.sales-dashboard td[data-column-key="ordered_qty"],
+.sales-dashboard th[data-column-key="delivered_qty"],
+.sales-dashboard td[data-column-key="delivered_qty"],
+.sales-dashboard th[data-column-key="invoiced_qty"],
+.sales-dashboard td[data-column-key="invoiced_qty"] {
+  min-width: 120px;
+}
+
+.sales-dashboard th[data-column-key="qty_delivery_percent"],
+.sales-dashboard td[data-column-key="qty_delivery_percent"],
+.sales-dashboard th[data-column-key="qty_invoice_percent"],
+.sales-dashboard td[data-column-key="qty_invoice_percent"],
+.sales-dashboard th[data-column-key="amount_delivery_percent"],
+.sales-dashboard td[data-column-key="amount_delivery_percent"],
+.sales-dashboard th[data-column-key="amount_invoice_percent"],
+.sales-dashboard td[data-column-key="amount_invoice_percent"] {
+  min-width: 150px;
+}
+
+.sales-dashboard th[data-column-key="sales_amount_idr"],
+.sales-dashboard td[data-column-key="sales_amount_idr"],
+.sales-dashboard th[data-column-key="rkb_planned_cost"],
+.sales-dashboard td[data-column-key="rkb_planned_cost"],
+.sales-dashboard th[data-column-key="actual_cost"],
+.sales-dashboard td[data-column-key="actual_cost"],
+.sales-dashboard th[data-column-key="delivered_amount_idr"],
+.sales-dashboard td[data-column-key="delivered_amount_idr"],
+.sales-dashboard th[data-column-key="invoiced_amount_idr"],
+.sales-dashboard td[data-column-key="invoiced_amount_idr"] {
+  min-width: 170px;
+}
+
+.sales-dashboard th[data-column-key="shared_io"],
+.sales-dashboard td[data-column-key="shared_io"] {
+  min-width: 240px;
+}
+
+@media (max-width: 1280px) {
+  .sales-dashboard .filter-panel {
+    grid-template-columns: repeat(3, minmax(170px, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .sales-dashboard .filter-panel {
+    grid-template-columns: 1fr;
+  }
 }
