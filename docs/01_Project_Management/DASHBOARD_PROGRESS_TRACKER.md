@@ -62,6 +62,7 @@
 - [x] Sales Order Amount, SO RKB Kontribusi, and SO RKB Kontribusi % added for Sales Order Perspective as operational estimates only
 - [x] Repeated UoM display deduplicated in the frontend without changing mixed-UoM flag logic
 - [x] Visible Logout buttons added to the three dashboard pages
+- [x] User-controlled table column visibility added with local persistence
 
 ---
 

@@ -153,6 +153,17 @@
           <span class="filter-state" id="activeFilterLabel">Active filters: All Lines</span>
           <button class="secondary-button clear-filter-button" id="clearFilterButton" type="button">Clear All Filters</button>
           <button class="secondary-button clear-filter-button" id="clearSortButton" type="button">Clear Sort</button>
+          <button class="secondary-button clear-filter-button" id="columnsButton" type="button" aria-expanded="false">Columns</button>
+          <div class="columns-panel" id="columnsPanel" hidden>
+            <div class="columns-panel-head">
+              <strong>Columns</strong>
+              <div class="columns-panel-actions">
+                <button class="tiny-button" id="columnsShowAllButton" type="button">Show All</button>
+                <button class="tiny-button" id="columnsResetButton" type="button">Reset Default</button>
+              </div>
+            </div>
+            <div class="columns-list" id="columnsList"></div>
+          </div>
           <div class="toolbar-meta" id="tableMeta">-</div>
         </div>
       </div>
@@ -215,26 +226,26 @@
         <table>
           <thead>
             <tr>
-              <th><button class="sort-button" type="button" data-sort-key="internal_order_number">Internal Order<span class="sort-indicator" aria-hidden="true"></span></button></th>
-              <th><button class="sort-button" type="button" data-sort-key="source_path">Source Path<span class="sort-indicator" aria-hidden="true"></span></button></th>
-              <th><button class="sort-button" type="button" data-sort-key="sales_order_status">Sales Order Status<span class="sort-indicator" aria-hidden="true"></span></button></th>
-              <th><button class="sort-button" type="button" data-sort-key="linked_sales_order">Linked Sales Order<span class="sort-indicator" aria-hidden="true"></span></button></th>
-              <th><button class="sort-button" type="button" data-sort-key="rkb_request">RKB Number<span class="sort-indicator" aria-hidden="true"></span></button></th>
-              <th><button class="sort-button" type="button" data-sort-key="rop_request">ROP / Approval Number<span class="sort-indicator" aria-hidden="true"></span></button></th>
-              <th><button class="sort-button" type="button" data-sort-key="related_po">Related PO Number<span class="sort-indicator" aria-hidden="true"></span></button></th>
-              <th><button class="sort-button" type="button" data-sort-key="product_name">Product Name<span class="sort-indicator" aria-hidden="true"></span></button></th>
-              <th><button class="sort-button" type="button" data-sort-key="item_type">Item Type<span class="sort-indicator" aria-hidden="true"></span></button></th>
-              <th><button class="sort-button" type="button" data-sort-key="material_status">Material Status<span class="sort-indicator" aria-hidden="true"></span></button></th>
-              <th><button class="sort-button" type="button" data-sort-key="uom">UoM<span class="sort-indicator" aria-hidden="true"></span></button></th>
-              <th class="num"><button class="sort-button sort-button-num" type="button" data-sort-key="rkb_qty">RKB Qty<span class="sort-indicator" aria-hidden="true"></span></button></th>
-              <th class="num"><button class="sort-button sort-button-num" type="button" data-sort-key="rkb_amount">RKB Amount<span class="sort-indicator" aria-hidden="true"></span></button></th>
-              <th class="num"><button class="sort-button sort-button-num" type="button" data-sort-key="rop_qty">ROP Qty<span class="sort-indicator" aria-hidden="true"></span></button></th>
-              <th class="num"><button class="sort-button sort-button-num" type="button" data-sort-key="rop_amount">ROP Amount<span class="sort-indicator" aria-hidden="true"></span></button></th>
-              <th class="num"><button class="sort-button sort-button-num" type="button" data-sort-key="po_qty">PO Qty<span class="sort-indicator" aria-hidden="true"></span></button></th>
-              <th class="num"><button class="sort-button sort-button-num" type="button" data-sort-key="po_amount">PO Amount<span class="sort-indicator" aria-hidden="true"></span></button></th>
-              <th class="num"><button class="sort-button sort-button-num" type="button" data-sort-key="received_qty">Received Qty<span class="sort-indicator" aria-hidden="true"></span></button></th>
-              <th class="num"><button class="sort-button sort-button-num" type="button" data-sort-key="invoiced_qty">Invoiced Qty<span class="sort-indicator" aria-hidden="true"></span></button></th>
-              <th>Flags</th>
+              <th data-column-key="internal_order_number"><button class="sort-button" type="button" data-sort-key="internal_order_number">Internal Order<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th data-column-key="source_path"><button class="sort-button" type="button" data-sort-key="source_path">Source Path<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th data-column-key="sales_order_status"><button class="sort-button" type="button" data-sort-key="sales_order_status">Sales Order Status<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th data-column-key="linked_sales_order"><button class="sort-button" type="button" data-sort-key="linked_sales_order">Linked Sales Order<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th data-column-key="rkb_request"><button class="sort-button" type="button" data-sort-key="rkb_request">RKB Number<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th data-column-key="rop_request"><button class="sort-button" type="button" data-sort-key="rop_request">ROP / Approval Number<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th data-column-key="related_po"><button class="sort-button" type="button" data-sort-key="related_po">Related PO Number<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th data-column-key="product_name"><button class="sort-button" type="button" data-sort-key="product_name">Product Name<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th data-column-key="item_type"><button class="sort-button" type="button" data-sort-key="item_type">Item Type<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th data-column-key="material_status"><button class="sort-button" type="button" data-sort-key="material_status">Material Status<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th data-column-key="uom"><button class="sort-button" type="button" data-sort-key="uom">UoM<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th class="num" data-column-key="rkb_qty"><button class="sort-button sort-button-num" type="button" data-sort-key="rkb_qty">RKB Qty<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th class="num" data-column-key="rkb_amount"><button class="sort-button sort-button-num" type="button" data-sort-key="rkb_amount">RKB Amount<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th class="num" data-column-key="rop_qty"><button class="sort-button sort-button-num" type="button" data-sort-key="rop_qty">ROP Qty<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th class="num" data-column-key="rop_amount"><button class="sort-button sort-button-num" type="button" data-sort-key="rop_amount">ROP Amount<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th class="num" data-column-key="po_qty"><button class="sort-button sort-button-num" type="button" data-sort-key="po_qty">PO Qty<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th class="num" data-column-key="po_amount"><button class="sort-button sort-button-num" type="button" data-sort-key="po_amount">PO Amount<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th class="num" data-column-key="received_qty"><button class="sort-button sort-button-num" type="button" data-sort-key="received_qty">Received Qty<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th class="num" data-column-key="invoiced_qty"><button class="sort-button sort-button-num" type="button" data-sort-key="invoiced_qty">Invoiced Qty<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th data-column-key="flags">Flags</th>
             </tr>
           </thead>
           <tbody id="lineTableBody">

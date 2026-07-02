@@ -94,6 +94,47 @@ const CLASSIFICATION_REASON_LABELS = {
   UNKNOWN_FALLBACK: "Unclassified",
 };
 
+const COLUMN_VISIBILITY_STORAGE_KEY = "orderMaterialTracking.visibleColumns.v1";
+const DEFAULT_VISIBLE_COLUMNS = [
+  "internal_order_number",
+  "source_path",
+  "sales_order_status",
+  "linked_sales_order",
+  "product_name",
+  "item_type",
+  "material_status",
+  "rkb_request",
+  "rkb_amount",
+  "rop_request",
+  "rop_amount",
+  "related_po",
+  "po_amount",
+  "received_qty",
+  "receipt_status",
+];
+const TABLE_COLUMNS = [
+  { key: "internal_order_number", label: "Internal Order", defaultVisible: true },
+  { key: "source_path", label: "Source Path", defaultVisible: true },
+  { key: "sales_order_status", label: "Sales Order Status", defaultVisible: true },
+  { key: "linked_sales_order", label: "Linked Sales Order", defaultVisible: true },
+  { key: "rkb_request", label: "RKB Number", defaultVisible: true },
+  { key: "rop_request", label: "ROP / Approval Number", defaultVisible: true },
+  { key: "related_po", label: "Related PO Number", defaultVisible: true },
+  { key: "product_name", label: "Product Name", defaultVisible: true },
+  { key: "item_type", label: "Item Type", defaultVisible: true },
+  { key: "material_status", label: "Material Status", defaultVisible: true },
+  { key: "uom", label: "UoM", defaultVisible: false },
+  { key: "rkb_qty", label: "RKB Qty", defaultVisible: false },
+  { key: "rkb_amount", label: "RKB Amount", defaultVisible: true },
+  { key: "rop_qty", label: "ROP Qty", defaultVisible: false },
+  { key: "rop_amount", label: "ROP Amount", defaultVisible: true },
+  { key: "po_qty", label: "PO Qty", defaultVisible: false },
+  { key: "po_amount", label: "PO Amount", defaultVisible: true },
+  { key: "received_qty", label: "Received Qty", defaultVisible: true },
+  { key: "invoiced_qty", label: "Invoiced Qty", defaultVisible: false },
+  { key: "flags", label: "Flags", defaultVisible: true },
+];
+
 function humanizeEnum(value) {
   if (!value) return "-";
   return String(value)
@@ -130,6 +171,8 @@ const state = {
     direction: "asc",
   },
   loading: false,
+  visibleColumns: new Set(DEFAULT_VISIBLE_COLUMNS),
+  columnsPanelOpen: false,
 };
 
 const els = {
@@ -183,6 +226,11 @@ const els = {
   lineCount: document.getElementById("lineCount"),
   tableSubtitle: document.getElementById("tableSubtitle"),
   tableMeta: document.getElementById("tableMeta"),
+  columnsButton: document.getElementById("columnsButton"),
+  columnsPanel: document.getElementById("columnsPanel"),
+  columnsList: document.getElementById("columnsList"),
+  columnsShowAllButton: document.getElementById("columnsShowAllButton"),
+  columnsResetButton: document.getElementById("columnsResetButton"),
   lineTableBody: document.getElementById("lineTableBody"),
 };
 
@@ -250,6 +298,15 @@ function formatCompactAmountOrNA(value) {
   }
   return formatCompactAmount(value);
 }
+
+function formatReceiptStatus(row) {
+  const received = numberValue(row.po_received_qty);
+  const ordered = numberValue(row.po_qty);
+  if (ordered > 0 && received >= ordered) return "Fully Received";
+  if (received > 0) return "Partially Received";
+  return ordered > 0 ? "PO Created" : "-";
+}
+
 function formatQty(value) {
   const numeric = numberValue(value);
   const digits = Math.abs(numeric % 1) > 0 ? 2 : 0;
@@ -364,7 +421,7 @@ function clearEmptyState() {
   els.presenceSummary.textContent = "-";
   els.trackabilityBreakdownBody.innerHTML = '<tr><td colspan="7" class="empty-cell">Loading breakdown...</td></tr>';
   els.presenceBreakdownBody.innerHTML = '<tr><td colspan="5" class="empty-cell">Loading breakdown...</td></tr>';
-  els.lineTableBody.innerHTML = '<tr><td colspan="20" class="empty-cell">Loading data...</td></tr>';
+  els.lineTableBody.innerHTML = makeTableEmptyRow("Loading data...");
   els.tableSubtitle.textContent = `Loading ${perspectiveLabel()}...`;
   els.tableMeta.textContent = "-";
   els.lineCount.textContent = "- lines";
@@ -501,6 +558,109 @@ function renderPresenceBreakdown(rows) {
       <td class="num">${formatAmount(row.po_amount)}</td>
     </tr>
   `).join("");
+}
+
+function getColumnConfig(columnKey) {
+  return TABLE_COLUMNS.find((column) => column.key === columnKey);
+}
+
+function loadVisibleColumns() {
+  try {
+    const raw = localStorage.getItem(COLUMN_VISIBILITY_STORAGE_KEY);
+    if (!raw) return new Set(DEFAULT_VISIBLE_COLUMNS);
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set(DEFAULT_VISIBLE_COLUMNS);
+    const allowed = new Set(TABLE_COLUMNS.map((column) => column.key));
+    const cleaned = parsed.filter((value) => allowed.has(value));
+    return new Set(cleaned.length ? cleaned : DEFAULT_VISIBLE_COLUMNS);
+  } catch {
+    return new Set(DEFAULT_VISIBLE_COLUMNS);
+  }
+}
+
+function persistVisibleColumns() {
+  localStorage.setItem(COLUMN_VISIBILITY_STORAGE_KEY, JSON.stringify([...state.visibleColumns]));
+}
+
+function isColumnVisible(columnKey) {
+  return state.visibleColumns.has(columnKey);
+}
+
+function applyColumnVisibility() {
+  TABLE_COLUMNS.forEach((column) => {
+    const visible = isColumnVisible(column.key);
+    document.querySelectorAll(`[data-column-key="${column.key}"]`).forEach((element) => {
+      element.hidden = !visible;
+    });
+  });
+  if (els.columnsList) {
+    els.columnsList.querySelectorAll('input[data-column-toggle]').forEach((input) => {
+      input.checked = isColumnVisible(input.dataset.columnToggle);
+    });
+  }
+}
+
+function setVisibleColumns(keys) {
+  state.visibleColumns = new Set(keys.filter((key) => getColumnConfig(key)));
+  if (!state.visibleColumns.size) {
+    state.visibleColumns = new Set(DEFAULT_VISIBLE_COLUMNS);
+  }
+  persistVisibleColumns();
+  applyColumnVisibility();
+}
+
+function resetVisibleColumnsToDefault() {
+  setVisibleColumns(DEFAULT_VISIBLE_COLUMNS);
+}
+
+function showAllColumns() {
+  setVisibleColumns(TABLE_COLUMNS.map((column) => column.key));
+}
+
+function renderColumnControls() {
+  if (!els.columnsList) return;
+  els.columnsList.innerHTML = TABLE_COLUMNS.map((column) => `
+    <label class="column-toggle">
+      <input type="checkbox" data-column-toggle="${column.key}" ${isColumnVisible(column.key) ? 'checked' : ''}>
+      <span>${escapeHtml(column.label)}</span>
+    </label>
+  `).join('');
+  applyColumnVisibility();
+}
+
+function toggleColumnsPanel(force) {
+  state.columnsPanelOpen = typeof force === 'boolean' ? force : !state.columnsPanelOpen;
+  if (els.columnsPanel) els.columnsPanel.hidden = !state.columnsPanelOpen;
+  if (els.columnsButton) els.columnsButton.setAttribute('aria-expanded', String(state.columnsPanelOpen));
+}
+
+function updateColumnsButtonLabel() {
+  if (!els.columnsButton) return;
+  els.columnsButton.textContent = `Columns (${state.visibleColumns.size})`;
+}
+
+function columnsClickOutside(event) {
+  if (!state.columnsPanelOpen) return;
+  if (!els.columnsPanel || !els.columnsButton) return;
+  if (els.columnsPanel.contains(event.target) || els.columnsButton.contains(event.target)) return;
+  toggleColumnsPanel(false);
+}
+
+function handleColumnsChange(event) {
+  const toggle = event.target.closest('[data-column-toggle]');
+  if (!toggle) return;
+  const key = toggle.dataset.columnToggle;
+  if (!key) return;
+  if (toggle.checked) state.visibleColumns.add(key);
+  else state.visibleColumns.delete(key);
+  persistVisibleColumns();
+  applyColumnVisibility();
+  updateColumnsButtonLabel();
+}
+
+function makeTableEmptyRow(message) {
+  const visibleColumnCount = TABLE_COLUMNS.filter((column) => isColumnVisible(column.key)).length;
+  return `<tr><td colspan="${Math.max(1, visibleColumnCount)}" class="empty-cell">${safeText(message)}</td></tr>`;
 }
 
 function getFilterDefinition(filterKey) {
@@ -841,37 +1001,38 @@ function renderLines() {
     const emptyMessage = total === 0
       ? (state.payload?.metadata?.empty_state_message || `No ${perspectiveLabel()} material rows found.`)
       : `No ${perspectiveLabel()} rows match the selected filters.`;
-    els.lineTableBody.innerHTML = `<tr><td colspan="20" class="empty-cell">${safeText(emptyMessage)}</td></tr>`;
+    els.lineTableBody.innerHTML = makeTableEmptyRow(emptyMessage);
     return;
   }
 
   els.lineTableBody.innerHTML = rows.map((row) => {
     const status = materialStatusMeta(row);
+    const receiptStatus = formatReceiptStatus(row);
     return `
     <tr>
-      <td>${safeText(row.internal_order_number)}</td>
-      <td>${renderSourcePathCell(row)}</td>
-      <td>${renderSalesOrderLinkCell(row)}</td>
-      <td>${renderDocumentReferences(row.linked_sales_order_numbers)}</td>
-      <td>${renderDocumentReferences(row.rkb_actual_request_summary || row.rkb_actual_request_numeric_summary)}</td>
-      <td>${renderDocumentReferences(row.rop_request_summary || row.rop_request_numeric_summary)}</td>
-      <td>${renderDocumentReferences(row.po_order_reference_summary)}</td>
-      <td>
+      <td data-column-key="internal_order_number">${safeText(row.internal_order_number)}</td>
+      <td data-column-key="source_path">${renderSourcePathCell(row)}</td>
+      <td data-column-key="sales_order_status">${renderSalesOrderLinkCell(row)}</td>
+      <td data-column-key="linked_sales_order">${renderDocumentReferences(row.linked_sales_order_numbers)}</td>
+      <td data-column-key="rkb_request">${renderDocumentReferences(row.rkb_actual_request_summary || row.rkb_actual_request_numeric_summary)}</td>
+      <td data-column-key="rop_request">${renderDocumentReferences(row.rop_request_summary || row.rop_request_numeric_summary)}</td>
+      <td data-column-key="related_po">${renderDocumentReferences(row.po_order_reference_summary)}</td>
+      <td data-column-key="product_name">
         <div>${safeText(row.product_name)}</div>
         <div class="subtle-cell">${safeText(row.product_key)}</div>
       </td>
-      <td>${badge(mappedLabel(TRACKABILITY_LABELS, row.product_trackability_class), row.is_trackable_product ? "status-complete" : "status-muted")}</td>
-      <td>${badge(status.label, status.tone)}</td>
-      <td>${safeText(normalizeUomSummary(row.uom_summary))}</td>
-      <td class="num">${formatQty(row.rkb_actual_qty)}</td>
-      <td class="num">${formatAmount(row.rkb_actual_subtotal)}</td>
-      <td class="num">${formatQty(row.rop_qty)}</td>
-      <td class="num">${formatAmount(row.rop_subtotal)}</td>
-      <td class="num">${formatQty(row.po_qty)}</td>
-      <td class="num">${formatAmount(row.po_subtotal)}</td>
-      <td class="num">${formatQty(row.po_received_qty)}</td>
-      <td class="num">${formatQty(row.po_invoiced_qty)}</td>
-      <td>${renderLineFlags(row)}</td>
+      <td data-column-key="item_type">${badge(mappedLabel(TRACKABILITY_LABELS, row.product_trackability_class), row.is_trackable_product ? "status-complete" : "status-muted")}</td>
+      <td data-column-key="material_status">${badge(status.label, status.tone)}</td>
+      <td data-column-key="uom">${safeText(normalizeUomSummary(row.uom_summary))}</td>
+      <td data-column-key="rkb_qty" class="num">${formatQty(row.rkb_actual_qty)}</td>
+      <td data-column-key="rkb_amount" class="num">${formatAmount(row.rkb_actual_subtotal)}</td>
+      <td data-column-key="rop_qty" class="num">${formatQty(row.rop_qty)}</td>
+      <td data-column-key="rop_amount" class="num">${formatAmount(row.rop_subtotal)}</td>
+      <td data-column-key="po_qty" class="num">${formatQty(row.po_qty)}</td>
+      <td data-column-key="po_amount" class="num">${formatAmount(row.po_subtotal)}</td>
+      <td data-column-key="received_qty" class="num">${formatQty(row.po_received_qty)}</td>
+      <td data-column-key="invoiced_qty" class="num">${formatQty(row.po_invoiced_qty)}</td>
+      <td data-column-key="flags"><div>${renderLineFlags(row)}</div><div class="receipt-status">${safeText(receiptStatus)}</div></td>
     </tr>
   `;
   }).join("");
@@ -883,6 +1044,8 @@ function renderDashboard() {
     renderLines();
     renderFilterState();
     renderSortState();
+    applyColumnVisibility();
+    updateColumnsButtonLabel();
     return;
   }
 
@@ -896,6 +1059,8 @@ function renderDashboard() {
   renderLines();
   renderFilterState();
   renderSortState();
+  applyColumnVisibility();
+  updateColumnsButtonLabel();
 }
 
 async function loadDashboard(searchValue) {
@@ -943,6 +1108,8 @@ async function loadDashboard(searchValue) {
     renderLines();
     renderFilterState();
     renderSortState();
+    applyColumnVisibility();
+    updateColumnsButtonLabel();
     showError(error.message || `Failed to load ${perspectiveLabel()} data.`);
     els.loadStatus.textContent = "Failed to load";
   } finally {
@@ -1004,6 +1171,18 @@ function handleSortKeydown(event) {
 }
 
 function handleControlChange(event) {
+  const columnToggle = event.target.closest("[data-column-toggle]");
+  if (columnToggle) {
+    const key = columnToggle.dataset.columnToggle;
+    if (!key) return;
+    if (columnToggle.checked) state.visibleColumns.add(key);
+    else state.visibleColumns.delete(key);
+    persistVisibleColumns();
+    applyColumnVisibility();
+    updateColumnsButtonLabel();
+    return;
+  }
+
   const select = event.target.closest("[data-filter-control]");
   if (select) {
     setSelectFilter(select.dataset.filterControl, select.value);
@@ -1022,7 +1201,13 @@ els.kpiGrid?.addEventListener("click", handleCardInteraction);
 els.kpiGrid?.addEventListener("keydown", handleCardKeydown);
 els.clearFilterButton?.addEventListener("click", clearAllFilters);
 els.clearSortButton?.addEventListener("click", clearSort);
-document.addEventListener("click", handleSortInteraction);
+els.columnsButton?.addEventListener("click", () => toggleColumnsPanel());
+els.columnsShowAllButton?.addEventListener("click", () => showAllColumns());
+els.columnsResetButton?.addEventListener("click", () => resetVisibleColumnsToDefault());
+document.addEventListener("click", (event) => {
+  handleSortInteraction(event);
+  columnsClickOutside(event);
+});
 document.addEventListener("keydown", handleSortKeydown);
 document.addEventListener("change", handleControlChange);
 els.perspectiveInputs.forEach((input) => {
@@ -1050,7 +1235,9 @@ const initialSearchValue = initialPerspective === "sales_order"
   ? (initialParams.get("sales_order_number") || "")
   : (initialParams.get("internal_order_number") || DEFAULT_INTERNAL_ORDER);
 els.internalOrderInput.value = initialSearchValue;
+state.visibleColumns = loadVisibleColumns();
 updatePerspectiveUI();
+renderColumnControls();
 renderDashboard();
 if (initialSearchValue) {
   loadDashboard(initialSearchValue);

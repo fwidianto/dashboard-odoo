@@ -137,6 +137,8 @@ Not included for now:
 
 Cards should use compact number display with Indonesian-friendly labels: Ribu, Juta, Miliar, Triliun.
 
+The Order Material Tracking table also supports user-controlled column visibility, with choices saved locally in the browser.
+
 Examples:
 
 ```text
