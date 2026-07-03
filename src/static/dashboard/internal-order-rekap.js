@@ -1,5 +1,6 @@
 ﻿const DEFAULT_INTERNAL_ORDER = "426IO026";
 const DEFAULT_PERSPECTIVE = "internal_order";
+const REVIEW_SIGNAL_COLLAPSE_STORAGE_KEY = "dashboard.reviewSignals.orderMaterialTracking.collapsed.v1";
 
 const TAB_DEFS = [
   { key: "all", label: "All Lines", predicate: () => true },
@@ -95,6 +96,7 @@ const CLASSIFICATION_REASON_LABELS = {
 };
 
 const COLUMN_VISIBILITY_STORAGE_KEY = "dashboard.visibleColumns.orderMaterialTracking.v1";
+const REVIEW_SIGNAL_ORDER = ["Healthy", "Watchlist", "Needs Review", "Supplier Follow-up", "Operational Follow-up"];
 const DEFAULT_VISIBLE_COLUMNS = [
   "internal_order_number",
   "source_path",
@@ -103,6 +105,7 @@ const DEFAULT_VISIBLE_COLUMNS = [
   "product_name",
   "item_type",
   "material_status",
+  "review_signal",
   "rkb_request",
   "rkb_amount",
   "rop_request",
@@ -133,6 +136,8 @@ const TABLE_COLUMNS = [
   { key: "received_qty", label: "Received Qty", defaultVisible: true },
   { key: "invoiced_qty", label: "Invoiced Qty", defaultVisible: false },
   { key: "flags", label: "Flags", defaultVisible: true },
+  { key: "review_signal", label: "Review Signal", defaultVisible: true },
+  { key: "review_note", label: "Review Note", defaultVisible: false },
 ];
 
 function humanizeEnum(value) {
@@ -159,6 +164,7 @@ const state = {
     materialStatus: "all",
     salesOrderStatus: "all",
     presenceStatus: "all",
+    reviewSignal: "all",
     flags: {
       po_without_rop: false,
       rop_without_po: false,
@@ -173,6 +179,7 @@ const state = {
   loading: false,
   visibleColumns: new Set(DEFAULT_VISIBLE_COLUMNS),
   columnsPanelOpen: false,
+  reviewSignalsCollapsed: false,
 };
 
 const els = {
@@ -218,6 +225,18 @@ const els = {
   materialStatusFilter: document.getElementById("materialStatusFilter"),
   salesOrderStatusFilter: document.getElementById("salesOrderStatusFilter"),
   presenceStatusFilter: document.getElementById("presenceStatusFilter"),
+  reviewSignalsPanel: document.getElementById("reviewSignalsPanel"),
+  reviewSignalsToggle: document.getElementById("reviewSignalsToggle"),
+  reviewSignalsToggleIcon: document.getElementById("reviewSignalsToggleIcon"),
+  reviewSignalsBody: document.getElementById("reviewSignalsBody"),
+  reviewSignalCards: document.getElementById("reviewSignalCards"),
+  reviewSignalMix: document.getElementById("reviewSignalMix"),
+  reviewDetectionCards: document.getElementById("reviewDetectionCards"),
+  reviewHealthyCount: document.getElementById("reviewHealthyCount"),
+  reviewWatchlistCount: document.getElementById("reviewWatchlistCount"),
+  reviewNeedsReviewCount: document.getElementById("reviewNeedsReviewCount"),
+  reviewSupplierFollowUpCount: document.getElementById("reviewSupplierFollowUpCount"),
+  reviewOperationalFollowUpCount: document.getElementById("reviewOperationalFollowUpCount"),
   trackabilitySummary: document.getElementById("trackabilitySummary"),
   presenceSummary: document.getElementById("presenceSummary"),
   trackabilityBreakdownBody: document.getElementById("trackabilityBreakdownBody"),
@@ -438,6 +457,7 @@ function resetInteractiveState() {
     materialStatus: "all",
     salesOrderStatus: "all",
     presenceStatus: "all",
+    reviewSignal: "all",
     flags: {
       po_without_rop: false,
       rop_without_po: false,
@@ -684,6 +704,7 @@ function activeFilterSummary() {
   if (state.filters.materialStatus !== "all") entries.push(`Material Status: ${selectOptionLabel(MATERIAL_STATUS_OPTIONS, state.filters.materialStatus)}`);
   if (state.filters.salesOrderStatus !== "all") entries.push(`Sales Order Status: ${selectOptionLabel(SALES_ORDER_STATUS_OPTIONS, state.filters.salesOrderStatus)}`);
   if (state.filters.presenceStatus !== "all") entries.push(`Presence: ${selectOptionLabel(PRESENCE_STATUS_OPTIONS, state.filters.presenceStatus)}`);
+  if (state.filters.reviewSignal !== "all") entries.push(`Review Signal: ${state.filters.reviewSignal}`);
   if (state.filters.flags.po_without_rop) entries.push("Flag: PO Without ROP");
   if (state.filters.flags.rop_without_po) entries.push("Flag: ROP Without PO");
   if (state.filters.flags.mixed_uom) entries.push("Flag: Mixed UoM");
@@ -716,6 +737,7 @@ function clearAllFilters() {
   state.filters.materialStatus = "all";
   state.filters.salesOrderStatus = "all";
   state.filters.presenceStatus = "all";
+  state.filters.reviewSignal = "all";
   state.filters.flags = {
     po_without_rop: false,
     rop_without_po: false,
@@ -752,6 +774,7 @@ function renderFilterState() {
       state.filters.materialStatus !== "all" ||
       state.filters.salesOrderStatus !== "all" ||
       state.filters.presenceStatus !== "all" ||
+      state.filters.reviewSignal !== "all" ||
       Object.values(state.filters.flags).some(Boolean);
     els.clearFilterButton.disabled = !hasActiveFilters;
   }
@@ -778,6 +801,12 @@ function renderFilterState() {
   document.querySelectorAll(".kpi-grid-io [data-filter]").forEach((element) => {
     const isActive = element.dataset.filter === state.filters.card;
     element.classList.toggle("active", isActive);
+    element.setAttribute("aria-pressed", String(isActive));
+  });
+
+  els.reviewSignalCards?.querySelectorAll("[data-review-signal]").forEach((element) => {
+    const isActive = element.dataset.reviewSignal === state.filters.reviewSignal;
+    element.classList.toggle("is-active", isActive);
     element.setAttribute("aria-pressed", String(isActive));
   });
 }
@@ -878,6 +907,208 @@ function materialStatusMeta(row) {
   return { label: "Needs Review", tone: "status-followup" };
 }
 
+function hasPo(row) {
+  return numberValue(row.po_qty) > 0 || Math.abs(numberValue(row.po_subtotal)) > 0;
+}
+
+function hasRop(row) {
+  return numberValue(row.rop_qty) > 0 || Math.abs(numberValue(row.rop_subtotal)) > 0;
+}
+
+function isPoFullyReceived(row) {
+  const poQty = numberValue(row.po_qty);
+  return poQty > 0 && numberValue(row.po_received_qty) >= poQty;
+}
+
+function isPoPartiallyReceived(row) {
+  const poQty = numberValue(row.po_qty);
+  const receivedQty = numberValue(row.po_received_qty);
+  return poQty > 0 && receivedQty > 0 && receivedQty < poQty;
+}
+
+function hasPoNotReceived(row) {
+  return hasPo(row) && numberValue(row.po_received_qty) <= 0;
+}
+
+function hasMismatchFlag(row) {
+  return row.po_without_rop_flag === true
+    || row.mixed_uom_flag === true
+    || row.product_trackability_class === "UNKNOWN_PRODUCT_CLASS"
+    || Math.abs(numberValue(row.excess_rop_amount)) > 0
+    || Math.abs(numberValue(row.po_excess_amount)) > 0;
+}
+
+function deriveReviewSignal(row) {
+  const materialStatus = materialStatusMeta(row).label;
+  if (row.po_without_rop_flag === true) return "Needs Review";
+  if (row.mixed_uom_flag === true) return "Needs Review";
+  if (row.product_trackability_class === "UNKNOWN_PRODUCT_CLASS") return "Needs Review";
+  if (materialStatus === "Needs Review") return "Needs Review";
+  if (Math.abs(numberValue(row.excess_rop_amount)) > 0) return "Needs Review";
+  if (Math.abs(numberValue(row.po_excess_amount)) > 0) return "Needs Review";
+
+  if (row.rop_without_po_flag === true) return "Supplier Follow-up";
+  if (hasPoNotReceived(row)) return "Supplier Follow-up";
+  if (isPoPartiallyReceived(row)) return "Supplier Follow-up";
+
+  if (row.has_sales_order_link === false) return "Operational Follow-up";
+  if (row.material_chain_source === "UNKNOWN_SOURCE") return "Operational Follow-up";
+  if (row.product_trackability_class !== "TRACKABLE_PRODUCT") return "Operational Follow-up";
+
+  if (row.material_chain_source === "FROM_STOCK") return "Healthy";
+  if (isPoFullyReceived(row) && !hasMismatchFlag(row) && row.rop_without_po_flag !== true) return "Healthy";
+
+  return "Watchlist";
+}
+
+function deriveReviewNote(row) {
+  const materialStatus = materialStatusMeta(row).label;
+  if (row.po_without_rop_flag === true) return "PO exists without linked ROP; check procurement chain.";
+  if (row.mixed_uom_flag === true) return "Mixed UoM detected; quantity comparison may need review.";
+  if (row.product_trackability_class === "UNKNOWN_PRODUCT_CLASS") return "Product classification is unclear.";
+  if (materialStatus === "Needs Review") return "Material chain status needs checking.";
+  if (Math.abs(numberValue(row.excess_rop_amount)) > 0) return "ROP amount differs from RKB reference; review variance.";
+  if (Math.abs(numberValue(row.po_excess_amount)) > 0) return "PO amount differs from ROP reference; review variance.";
+
+  if (row.rop_without_po_flag === true) return "ROP exists but no PO is linked yet.";
+  if (hasPoNotReceived(row)) return "PO created but material has not been received.";
+  if (isPoPartiallyReceived(row)) return "PO partially received; supplier follow-up may be needed.";
+
+  if (row.has_sales_order_link === false) return "Pre-SO Internal Order; monitor until sales order linkage is available.";
+  if (row.material_chain_source === "UNKNOWN_SOURCE") return "Material source path is unclear.";
+  if (row.product_trackability_class !== "TRACKABLE_PRODUCT") return "Non-product/service row; review operational meaning if needed.";
+
+  if (row.material_chain_source === "FROM_STOCK") return "Material is covered from stock.";
+  if (isPoFullyReceived(row) && !hasMismatchFlag(row) && row.rop_without_po_flag !== true) return "PO material received; no immediate material follow-up.";
+
+  if (["RKB Only", "ROP Created", "PO Created"].includes(materialStatus)) return "Material chain is in progress; monitor until complete.";
+  return "Monitor material chain until completion.";
+}
+
+function cssClassForReviewSignal(signal) {
+  if (signal === "Healthy") return "status-complete";
+  if (signal === "Watchlist") return "status-progress";
+  if (signal === "Needs Review") return "status-danger";
+  if (signal === "Supplier Follow-up" || signal === "Operational Follow-up") return "status-followup";
+  return "status-muted";
+}
+
+function reviewSignalBadge(signal) {
+  return badge(signal, cssClassForReviewSignal(signal));
+}
+
+function summarizeReviewSignals(rows) {
+  const counts = Object.fromEntries(REVIEW_SIGNAL_ORDER.map((signal) => [signal, 0]));
+  rows.forEach((row) => {
+    const signal = row.review_signal || deriveReviewSignal(row);
+    if (Object.prototype.hasOwnProperty.call(counts, signal)) counts[signal] += 1;
+  });
+
+  return {
+    total: rows.length,
+    counts,
+    detections: {
+      ropWithoutPo: rows.filter((row) => row.rop_without_po_flag === true).length,
+      poNotReceived: rows.filter((row) => hasPoNotReceived(row)).length,
+      partiallyReceived: rows.filter((row) => isPoPartiallyReceived(row)).length,
+      poWithoutRop: rows.filter((row) => row.po_without_rop_flag === true).length,
+      mixedUom: rows.filter((row) => row.mixed_uom_flag === true).length,
+      nonProductService: rows.filter((row) => row.product_trackability_class !== "TRACKABLE_PRODUCT").length,
+      excessRopAmount: rows.filter((row) => Math.abs(numberValue(row.excess_rop_amount)) > 0).length,
+      poExcessAmount: rows.filter((row) => Math.abs(numberValue(row.po_excess_amount)) > 0).length,
+    },
+  };
+}
+
+function renderReviewSignals(rows) {
+  if (
+    !els.reviewHealthyCount ||
+    !els.reviewWatchlistCount ||
+    !els.reviewNeedsReviewCount ||
+    !els.reviewSupplierFollowUpCount ||
+    !els.reviewOperationalFollowUpCount ||
+    !els.reviewSignalMix ||
+    !els.reviewDetectionCards
+  ) {
+    return;
+  }
+
+  const summary = summarizeReviewSignals(rows);
+  els.reviewHealthyCount.textContent = formatCount(summary.counts.Healthy);
+  els.reviewWatchlistCount.textContent = formatCount(summary.counts.Watchlist);
+  els.reviewNeedsReviewCount.textContent = formatCount(summary.counts["Needs Review"]);
+  els.reviewSupplierFollowUpCount.textContent = formatCount(summary.counts["Supplier Follow-up"]);
+  els.reviewOperationalFollowUpCount.textContent = formatCount(summary.counts["Operational Follow-up"]);
+
+  els.reviewSignalCards?.querySelectorAll("[data-review-signal]").forEach((card) => {
+    card.classList.toggle("is-active", state.filters.reviewSignal === card.dataset.reviewSignal);
+  });
+
+  els.reviewSignalMix.innerHTML = REVIEW_SIGNAL_ORDER.map((signal) => {
+    const count = summary.counts[signal];
+    const width = summary.total ? Math.max(2, (count / summary.total) * 100) : 0;
+    return `
+      <div class="review-mix-row">
+        <div class="review-mix-label"><span>${safeText(signal)}</span><strong>${formatCount(count)}</strong></div>
+        <div class="review-mix-track"><span class="${cssClassForReviewSignal(signal)}" style="width:${width}%"></span></div>
+      </div>
+    `;
+  }).join("");
+
+  const detections = [
+    { title: "ROP without PO", count: summary.detections.ropWithoutPo, note: "ROP exists but no PO is linked yet." },
+    { title: "PO not received", count: summary.detections.poNotReceived, note: "PO created but material has not been received." },
+    { title: "Partially received", count: summary.detections.partiallyReceived, note: "PO partially received; supplier follow-up may be needed." },
+    { title: "PO without ROP", count: summary.detections.poWithoutRop, note: "PO exists without linked ROP; check procurement chain." },
+    { title: "Mixed UoM", count: summary.detections.mixedUom, note: "Mixed UoM detected; quantity comparison may need review." },
+    { title: "Non-product/service rows", count: summary.detections.nonProductService, note: "Valid operational rows; review meaning when needed." },
+    { title: "Excess ROP amount", count: summary.detections.excessRopAmount, note: "ROP amount differs from RKB reference." },
+    { title: "PO excess amount", count: summary.detections.poExcessAmount, note: "PO amount differs from ROP reference." },
+  ];
+
+  els.reviewDetectionCards.innerHTML = detections.map((item) => `
+    <article class="detection-card">
+      <div><span>${safeText(item.title)}</span><strong>${formatCount(item.count)}</strong></div>
+      <p>${safeText(item.note)}</p>
+    </article>
+  `).join("");
+}
+
+function updateReviewSignalsCollapsed() {
+  if (!els.reviewSignalsPanel || !els.reviewSignalsBody || !els.reviewSignalsToggle) return;
+  els.reviewSignalsPanel.classList.toggle("is-collapsed", state.reviewSignalsCollapsed);
+  els.reviewSignalsBody.hidden = state.reviewSignalsCollapsed;
+  els.reviewSignalsToggle.setAttribute("aria-expanded", String(!state.reviewSignalsCollapsed));
+  if (els.reviewSignalsToggleIcon) els.reviewSignalsToggleIcon.textContent = state.reviewSignalsCollapsed ? "v" : "^";
+}
+
+function initReviewSignalsCollapsed() {
+  try {
+    state.reviewSignalsCollapsed = localStorage.getItem(REVIEW_SIGNAL_COLLAPSE_STORAGE_KEY) === "1";
+  } catch {
+    state.reviewSignalsCollapsed = false;
+  }
+  updateReviewSignalsCollapsed();
+}
+
+function toggleReviewSignalsCollapsed() {
+  state.reviewSignalsCollapsed = !state.reviewSignalsCollapsed;
+  updateReviewSignalsCollapsed();
+  try {
+    localStorage.setItem(REVIEW_SIGNAL_COLLAPSE_STORAGE_KEY, state.reviewSignalsCollapsed ? "1" : "0");
+  } catch {
+    // Ignore storage errors.
+  }
+}
+
+function setReviewSignalFilter(signal) {
+  state.filters.reviewSignal = state.filters.reviewSignal === signal ? "all" : signal;
+  renderDashboard();
+}
+
+function reviewSignalFilterRows() {
+  return state.lines.filter((row) => matchesAllFilters(row, { skipReviewSignal: true }));
+}
 function renderLineFlags(row) {
   const flags = [];
   if (row.po_without_rop_flag) flags.push(flag("PO Without ROP", "danger"));
@@ -910,8 +1141,8 @@ function matchesFlags(row) {
   return true;
 }
 
-function matchesAllFilters(row) {
-  const { tab, card, itemType, materialStatus, salesOrderStatus, presenceStatus } = state.filters;
+function matchesAllFilters(row, options = {}) {
+  const { tab, card, itemType, materialStatus, salesOrderStatus, presenceStatus, reviewSignal } = state.filters;
   if (!matchesTab(row, tab)) return false;
   if (!getFilterDefinition(card).predicate(row)) return false;
   if (!matchesSelectFilter(row.product_trackability_class, itemType)) return false;
@@ -919,6 +1150,7 @@ function matchesAllFilters(row) {
   if (!matchesSalesOrderStatus(row, salesOrderStatus)) return false;
   if (!matchesSelectFilter(row.product_presence_status, presenceStatus)) return false;
   if (!matchesFlags(row)) return false;
+  if (!options.skipReviewSignal && reviewSignal !== "all" && row.review_signal !== reviewSignal) return false;
   return true;
 }
 
@@ -944,6 +1176,10 @@ function getSortValue(row, key) {
       return mappedLabel(TRACKABILITY_LABELS, row.product_trackability_class);
     case "material_status":
       return materialStatusMeta(row).label;
+    case "review_signal":
+      return row.review_signal || "";
+    case "review_note":
+      return row.review_note || "";
     case "uom":
       return normalizeUomSummary(row.uom_summary || "");
     case "rkb_qty":
@@ -1046,6 +1282,10 @@ function exportColumnValue(row, columnKey) {
         row.mixed_uom_flag ? "Mixed UoM" : "",
         row.product_trackability_class !== "TRACKABLE_PRODUCT" ? "Non-Product / Service" : "",
       ].filter(Boolean).join(", ");
+    case "review_signal":
+      return row.review_signal || "";
+    case "review_note":
+      return row.review_note || "";
     default:
       return "";
   }
@@ -1116,6 +1356,8 @@ function renderLines() {
       <td data-column-key="received_qty" class="num">${formatQty(row.po_received_qty)}</td>
       <td data-column-key="invoiced_qty" class="num">${formatQty(row.po_invoiced_qty)}</td>
       <td data-column-key="flags"><div>${renderLineFlags(row)}</div><div class="receipt-status">${safeText(receiptStatus)}</div></td>
+      <td data-column-key="review_signal">${reviewSignalBadge(row.review_signal)}</td>
+      <td data-column-key="review_note">${safeText(row.review_note)}</td>
     </tr>
   `;
   }).join("");
@@ -1124,6 +1366,7 @@ function renderLines() {
 function renderDashboard() {
   if (!state.payload) {
     renderTabs();
+    renderReviewSignals([]);
     renderLines();
     renderFilterState();
     renderSortState();
@@ -1139,6 +1382,7 @@ function renderDashboard() {
   renderTrackabilityBreakdown(state.payload.breakdowns?.by_trackability_class || []);
   renderPresenceBreakdown(state.payload.breakdowns?.by_product_presence_status || []);
   renderTabs();
+  renderReviewSignals(reviewSignalFilterRows());
   renderLines();
   renderFilterState();
   renderSortState();
@@ -1176,7 +1420,12 @@ async function loadDashboard(searchValue) {
 
     state.payload = payload;
     state.perspective = payload?.metadata?.perspective || payload?.perspective || perspective;
-    state.lines = Array.isArray(payload.lines) ? payload.lines : [];
+    state.lines = (Array.isArray(payload.lines) ? payload.lines : []).map((row) => {
+      const enriched = { ...row };
+      enriched.review_signal = deriveReviewSignal(enriched);
+      enriched.review_note = deriveReviewNote(enriched);
+      return enriched;
+    });
     resetInteractiveState();
     updatePerspectiveUI();
     renderDashboard();
@@ -1188,6 +1437,7 @@ async function loadDashboard(searchValue) {
     resetInteractiveState();
     clearEmptyState();
     renderTabs();
+    renderReviewSignals([]);
     renderLines();
     renderFilterState();
     renderSortState();
@@ -1288,6 +1538,19 @@ els.columnsButton?.addEventListener("click", () => toggleColumnsPanel());
 els.columnsShowAllButton?.addEventListener("click", () => showAllColumns());
 els.columnsResetButton?.addEventListener("click", () => resetVisibleColumnsToDefault());
 els.exportExcelButton?.addEventListener("click", exportCurrentView);
+els.reviewSignalsToggle?.addEventListener("click", toggleReviewSignalsCollapsed);
+els.reviewSignalCards?.addEventListener("click", (event) => {
+  const card = event.target.closest("[data-review-signal]");
+  if (!card) return;
+  setReviewSignalFilter(card.dataset.reviewSignal);
+});
+els.reviewSignalCards?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const card = event.target.closest("[data-review-signal]");
+  if (!card) return;
+  event.preventDefault();
+  setReviewSignalFilter(card.dataset.reviewSignal);
+});
 document.addEventListener("click", (event) => {
   handleSortInteraction(event);
   columnsClickOutside(event);
@@ -1322,9 +1585,9 @@ els.internalOrderInput.value = initialSearchValue;
 state.visibleColumns = loadVisibleColumns();
 updatePerspectiveUI();
 renderColumnControls();
+initReviewSignalsCollapsed();
 renderDashboard();
 if (initialSearchValue) {
   loadDashboard(initialSearchValue);
 }
-
 

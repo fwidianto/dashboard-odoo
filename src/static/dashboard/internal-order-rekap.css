@@ -177,6 +177,212 @@
   color: var(--accent-strong);
 }
 
+.review-signals-panel {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 14px;
+  padding: 16px;
+}
+
+.review-signals-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.review-signals-head h2 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.review-signals-head p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.review-toggle-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.review-toggle-button:hover,
+.review-toggle-button:focus-visible {
+  border-color: var(--accent);
+  background: #f8fbfb;
+  outline: none;
+}
+
+.review-signals-body {
+  display: grid;
+  gap: 14px;
+}
+
+.review-signal-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(130px, 1fr));
+  gap: 10px;
+}
+
+.review-signal-card {
+  display: grid;
+  gap: 6px;
+  min-height: 76px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+.review-signal-card span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 760;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.review-signal-card strong {
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.review-signal-card:hover,
+.review-signal-card:focus-visible {
+  border-color: var(--accent);
+  background: #f8fbfb;
+  outline: none;
+}
+
+.review-signal-card.is-active {
+  border-color: var(--accent);
+  background: #edf8f8;
+  box-shadow: 0 8px 20px rgba(20, 122, 120, 0.1);
+}
+
+.review-signal-content {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.85fr) minmax(320px, 1.15fr);
+  gap: 14px;
+}
+
+.review-mix,
+.detection-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.review-mix {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.review-mix-row {
+  display: grid;
+  gap: 6px;
+}
+
+.review-mix-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.review-mix-label strong {
+  color: var(--text);
+}
+
+.review-mix-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #eef2f4;
+}
+
+.review-mix-track span {
+  display: block;
+  height: 100%;
+  min-width: 0;
+  border-radius: inherit;
+  background: var(--muted);
+}
+
+.review-mix-track .status-complete {
+  background: #3f8f72;
+}
+
+.review-mix-track .status-progress {
+  background: #c28a2c;
+}
+
+.review-mix-track .status-danger {
+  background: #b85c52;
+}
+
+.review-mix-track .status-followup {
+  background: #587b9b;
+}
+
+.detection-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  gap: 10px;
+}
+
+.detection-card {
+  display: grid;
+  gap: 6px;
+  min-height: 82px;
+  padding: 10px;
+}
+
+.detection-card div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.detection-card span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 760;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.detection-card strong {
+  color: var(--text);
+  font-size: 18px;
+}
+
+.detection-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
 .breakdown-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -442,7 +648,7 @@
 }
 
 .table-panel table {
-  min-width: 2720px;
+  min-width: 3000px;
 }
 
 .table-panel thead th {
@@ -490,6 +696,23 @@
   border-radius: 8px;
 }
 
+.table-panel th[data-column-key="review_signal"],
+.table-panel td[data-column-key="review_signal"] {
+  min-width: 170px;
+}
+
+.table-panel th[data-column-key="review_note"],
+.table-panel td[data-column-key="review_note"] {
+  min-width: 260px;
+}
+
+@media (max-width: 1100px) {
+  .review-signal-grid,
+  .review-signal-content,
+  .detection-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
 @media (max-width: 1280px) {
   .search-panel,
   .breakdown-grid {
@@ -512,7 +735,7 @@
 }
 
 .table-panel table {
-  min-width: 2720px;
+  min-width: 3000px;
 }
 
 .table-panel th {

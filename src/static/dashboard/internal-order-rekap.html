@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Internal Order Rekap</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="/static/dashboard/internal-order-rekap.css?v=20260702-shared-ui">
+  <link rel="stylesheet" href="/static/dashboard/internal-order-rekap.css?v=20260703-review-signals">
 </head>
 <body>
   <main class="page-shell io-rekap-dashboard">
@@ -76,6 +76,31 @@
       <article class="kpi-card kpi-card-filterable" data-filter="po_invoiced_ratio" role="button" tabindex="0" aria-pressed="false"><span class="kpi-label">PO Invoiced Ratio</span><strong id="kpiInvoicedRatio">-</strong></article>
     </section>
 
+
+    <section class="review-signals-panel panel" id="reviewSignalsPanel" aria-label="Review Signals">
+      <div class="review-signals-head">
+        <div>
+          <h2>Review Signals</h2>
+          <p>Material/procurement review grouping based on currently filtered rows.</p>
+        </div>
+        <button class="review-toggle-button" id="reviewSignalsToggle" type="button" aria-expanded="true" aria-controls="reviewSignalsBody" title="Toggle Review Signals">
+          <span id="reviewSignalsToggleIcon" aria-hidden="true">^</span>
+        </button>
+      </div>
+      <div class="review-signals-body" id="reviewSignalsBody">
+        <div class="review-signal-grid" id="reviewSignalCards">
+          <article class="review-signal-card" data-review-signal="Healthy" role="button" tabindex="0"><span>Healthy</span><strong id="reviewHealthyCount">-</strong></article>
+          <article class="review-signal-card" data-review-signal="Watchlist" role="button" tabindex="0"><span>Watchlist</span><strong id="reviewWatchlistCount">-</strong></article>
+          <article class="review-signal-card" data-review-signal="Needs Review" role="button" tabindex="0"><span>Needs Review</span><strong id="reviewNeedsReviewCount">-</strong></article>
+          <article class="review-signal-card" data-review-signal="Supplier Follow-up" role="button" tabindex="0"><span>Supplier Follow-up</span><strong id="reviewSupplierFollowUpCount">-</strong></article>
+          <article class="review-signal-card" data-review-signal="Operational Follow-up" role="button" tabindex="0"><span>Operational Follow-up</span><strong id="reviewOperationalFollowUpCount">-</strong></article>
+        </div>
+        <div class="review-signal-content">
+          <div class="review-mix" id="reviewSignalMix" aria-label="Review Signal Mix"></div>
+          <div class="detection-grid" id="reviewDetectionCards" aria-label="Review Signal detection cards"></div>
+        </div>
+      </div>
+    </section>
     <section class="panel explanation-panel" aria-label="Dashboard explanation">
       <strong>How to read this view</strong>
       <ul>
@@ -248,11 +273,13 @@
               <th class="num" data-column-key="received_qty"><button class="sort-button sort-button-num" type="button" data-sort-key="received_qty">Received Qty<span class="sort-indicator" aria-hidden="true"></span></button></th>
               <th class="num" data-column-key="invoiced_qty"><button class="sort-button sort-button-num" type="button" data-sort-key="invoiced_qty">Invoiced Qty<span class="sort-indicator" aria-hidden="true"></span></button></th>
               <th data-column-key="flags">Flags</th>
+              <th data-column-key="review_signal"><button class="sort-button" type="button" data-sort-key="review_signal">Review Signal<span class="sort-indicator" aria-hidden="true"></span></button></th>
+              <th data-column-key="review_note"><button class="sort-button" type="button" data-sort-key="review_note">Review Note<span class="sort-indicator" aria-hidden="true"></span></button></th>
             </tr>
           </thead>
           <tbody id="lineTableBody">
             <tr>
-              <td colspan="20" class="empty-cell">Loading Internal Order data...</td>
+              <td colspan="22" class="empty-cell">Loading Internal Order data...</td>
             </tr>
           </tbody>
         </table>
@@ -262,6 +289,6 @@
 
   <script src="/static/dashboard/dashboard-table-tools.js"></script>
   <script src="/static/dashboard/dashboard-export.js"></script>
-  <script src="/static/dashboard/internal-order-rekap.js?v=20260702-shared-ui"></script>
+  <script src="/static/dashboard/internal-order-rekap.js?v=20260703-review-signals"></script>
 </body>
 </html>
