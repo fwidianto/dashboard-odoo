@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sales Order Traceability Dashboard</title>
-  <link rel="stylesheet" href="/static/dashboard/sales-orders.css?v=20260702-shared-ui">
+  <link rel="stylesheet" href="/static/dashboard/sales-orders.css?v=20260703-review-signals">
 </head>
 <body>
   <main class="page-shell sales-dashboard">
@@ -57,6 +57,28 @@
       <article class="kpi-card filterable-kpi" id="unknownSourceCard" data-source-type="UNKNOWN_SOURCE" role="button" tabindex="0"><span class="kpi-label">Unknown Source</span><strong id="kpiUnknownSource">-</strong></article>
     </section>
 
+
+    <section class="review-signals-panel" aria-label="Review Signals">
+      <div class="section-head">
+        <div>
+          <h2>Review Signals</h2>
+          <p>Operational review grouping based on the currently filtered Sales Orders.</p>
+        </div>
+      </div>
+
+      <div class="review-signal-grid" id="reviewSignalCards">
+        <article class="review-signal-card"><span>Healthy</span><strong id="reviewHealthyCount">-</strong></article>
+        <article class="review-signal-card"><span>Watchlist</span><strong id="reviewWatchlistCount">-</strong></article>
+        <article class="review-signal-card"><span>Needs Review</span><strong id="reviewNeedsReviewCount">-</strong></article>
+        <article class="review-signal-card"><span>Supplier Follow-up</span><strong id="reviewSupplierFollowUpCount">-</strong></article>
+        <article class="review-signal-card"><span>Operational Follow-up</span><strong id="reviewOperationalFollowUpCount">-</strong></article>
+      </div>
+
+      <div class="review-signal-content">
+        <div class="review-mix" id="reviewSignalMix" aria-label="Review Signal Mix"></div>
+        <div class="detection-grid" id="reviewDetectionCards" aria-label="Review Signal detection cards"></div>
+      </div>
+    </section>
     <section class="filter-panel" aria-label="Sales Order filters">
       <label>
         <span>SO Number</span>
@@ -137,6 +159,8 @@
               <th data-column-key="source_type"><button class="sort-button" type="button" data-sort="source_type">Source Type</button></th>
               <th data-column-key="sales_order_state"><button class="sort-button" type="button" data-sort="sales_order_state">SO Status</button></th>
               <th data-column-key="follow_up_status"><button class="sort-button" type="button" data-sort="follow_up_status">Follow-Up</button></th>
+              <th data-column-key="review_signal"><button class="sort-button" type="button" data-sort="review_signal">Review Signal</button></th>
+              <th data-column-key="review_note"><button class="sort-button" type="button" data-sort="review_note">Review Note</button></th>
               <th class="num" data-column-key="related_mo_qty"><button class="sort-button" type="button" data-sort="total_related_mo_qty">Related MO Qty</button></th>
               <th class="num" data-column-key="produced_mo_qty"><button class="sort-button" type="button" data-sort="total_done_mo_qty">Produced MO Qty</button></th>
               <th class="num" data-column-key="manufacturing_in_progress_qty"><button class="sort-button" type="button" data-sort="total_in_progress_mo_qty">Manufacturing In Progress Qty</button></th>
@@ -159,7 +183,7 @@
           </thead>
           <tbody id="dashboardRows">
             <tr>
-              <td colspan="26" class="empty-cell">Loading dashboard data...</td>
+              <td colspan="28" class="empty-cell">Loading dashboard data...</td>
             </tr>
           </tbody>
         </table>
@@ -169,6 +193,8 @@
 
   <script src="/static/dashboard/dashboard-table-tools.js"></script>
   <script src="/static/dashboard/dashboard-export.js"></script>
-  <script src="/static/dashboard/sales-orders.js?v=20260702-shared-ui"></script>
+  <script src="/static/dashboard/sales-orders.js?v=20260703-review-signals"></script>
 </body>
 </html>
+
+

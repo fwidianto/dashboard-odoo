@@ -10,6 +10,8 @@ const TABLE_COLUMNS = [
   { key: "source_type", label: "Source Type", defaultVisible: true, exportType: "string", exportValue: (row) => sourceLabel(row) || "" },
   { key: "sales_order_state", label: "SO Status", defaultVisible: true, exportType: "string", exportValue: (row) => row.sales_order_state || "" },
   { key: "follow_up_status", label: "Follow-Up", defaultVisible: true, exportType: "string", exportValue: (row) => followUpLabel(row.follow_up_status) || "" },
+  { key: "review_signal", label: "Review Signal", defaultVisible: true, exportType: "string", exportValue: (row) => row.review_signal || "" },
+  { key: "review_note", label: "Review Note", defaultVisible: false, exportType: "string", exportValue: (row) => row.review_note || "" },
   { key: "related_mo_qty", label: "Related MO Qty", defaultVisible: false, exportType: "number", exportValue: (row) => numberValue(row.total_related_mo_qty) },
   { key: "produced_mo_qty", label: "Produced MO Qty", defaultVisible: false, exportType: "number", exportValue: (row) => numberValue(row.total_done_mo_qty) },
   { key: "manufacturing_in_progress_qty", label: "Manufacturing In Progress Qty", defaultVisible: false, exportType: "number", exportValue: (row) => numberValue(row.total_in_progress_mo_qty) },
@@ -84,6 +86,14 @@ const els = {
   sourceFilter: document.getElementById("sourceFilter"),
   statusFilter: document.getElementById("statusFilter"),
   followUpFilter: document.getElementById("followUpFilter"),
+  reviewSignalCards: document.getElementById("reviewSignalCards"),
+  reviewSignalMix: document.getElementById("reviewSignalMix"),
+  reviewDetectionCards: document.getElementById("reviewDetectionCards"),
+  reviewHealthyCount: document.getElementById("reviewHealthyCount"),
+  reviewWatchlistCount: document.getElementById("reviewWatchlistCount"),
+  reviewNeedsReviewCount: document.getElementById("reviewNeedsReviewCount"),
+  reviewSupplierFollowUpCount: document.getElementById("reviewSupplierFollowUpCount"),
+  reviewOperationalFollowUpCount: document.getElementById("reviewOperationalFollowUpCount"),
   statusStrip: document.getElementById("statusStrip"),
   productTypeStrip: document.getElementById("productTypeStrip"),
   sourceStrip: document.getElementById("sourceStrip"),
@@ -133,6 +143,7 @@ const followUpLabels = {
 
 const sourceOrder = ["FROM_INTERNAL_ORDER", "FROM_STOCK", "MAKE_TO_ORDER", "MIXED_SOURCE", "UNKNOWN_SOURCE", "CANCELLED_RECORD"];
 const followUpOrder = ["CANCELLED_RECORD", "UNKNOWN_SOURCE", "DELAYED_DELIVERY", "WAITING_PRODUCTION", "WAITING_DELIVERY", "WAITING_INVOICE", "COMPLETED"];
+const reviewSignalOrder = ["Healthy", "Watchlist", "Needs Review", "Supplier Follow-up", "Operational Follow-up"];
 
 let columnController = null;
 
@@ -345,6 +356,62 @@ function isCancelled(row) {
   return row.is_cancelled || row.follow_up_status === "CANCELLED_RECORD";
 }
 
+
+function deriveReviewSignal(row) {
+  if (isCancelled(row)) return "Excluded";
+  if (row.follow_up_status === "COMPLETED") return "Healthy";
+  if (row.follow_up_status === "DELAYED_DELIVERY") return "Needs Review";
+  if (row.follow_up_status === "UNKNOWN_SOURCE" || row.source_type === "UNKNOWN_SOURCE") return "Needs Review";
+  if (row.follow_up_status === "WAITING_PRODUCTION" || row.follow_up_status === "WAITING_DELIVERY") return "Operational Follow-up";
+  if (row.follow_up_status === "WAITING_INVOICE") return "Watchlist";
+  return "Watchlist";
+}
+
+function deriveReviewNote(row) {
+  if (isCancelled(row)) return "Cancelled Sales Order is excluded from active review counts.";
+  if (row.follow_up_status === "COMPLETED") return "Delivery and invoice review complete.";
+  if (row.follow_up_status === "DELAYED_DELIVERY") return "Delivery is delayed and needs review.";
+  if (row.follow_up_status === "UNKNOWN_SOURCE" || row.source_type === "UNKNOWN_SOURCE") return "Source relationship needs checking.";
+  if (row.follow_up_status === "WAITING_PRODUCTION") return "Manufacturing follow-up is required.";
+  if (row.follow_up_status === "WAITING_DELIVERY") return "Delivery/fulfillment follow-up is required.";
+  if (row.follow_up_status === "WAITING_INVOICE") return "Invoice pending after fulfillment progress.";
+  return "In progress; monitor until complete.";
+}
+
+function summarizeReviewSignals(rows) {
+  const active = rows.filter((row) => !isCancelled(row));
+  const counts = Object.fromEntries(reviewSignalOrder.map((signal) => [signal, 0]));
+  active.forEach((row) => {
+    const signal = deriveReviewSignal(row);
+    if (Object.prototype.hasOwnProperty.call(counts, signal)) counts[signal] += 1;
+  });
+
+  return {
+    total: active.length,
+    counts,
+    detections: {
+      delayedDelivery: active.filter((row) => row.follow_up_status === "DELAYED_DELIVERY").length,
+      waitingInvoice: active.filter((row) => row.follow_up_status === "WAITING_INVOICE").length,
+      sourceRelationshipCheck: active.filter((row) => row.follow_up_status === "UNKNOWN_SOURCE" || row.source_type === "UNKNOWN_SOURCE").length,
+      operationalFollowUp: counts["Operational Follow-up"],
+      supplierFollowUp: 0,
+      contributionWatchlist: 0,
+      contributionWatchlistIncluded: false,
+    },
+  };
+}
+
+function cssClassForReviewSignal(signal) {
+  if (signal === "Healthy") return "status-complete";
+  if (signal === "Watchlist") return "status-progress";
+  if (signal === "Needs Review") return "status-danger";
+  if (signal === "Operational Follow-up" || signal === "Supplier Follow-up") return "status-followup";
+  return "status-muted";
+}
+
+function reviewSignalBadge(signal) {
+  return badge(signal, cssClassForReviewSignal(signal));
+}
 function summarize(rows) {
   const active = rows.filter((row) => !isCancelled(row));
   const orderedQty = active.reduce((sum, row) => sum + numberValue(row.ordered_qty), 0);
@@ -406,6 +473,49 @@ function renderKpis(rows, sourceRows = rows) {
   els.barQtyInvoice.style.width = progressWidth(summary.qtyInvoiceProgress);
   els.barAmountDelivery.style.width = progressWidth(summary.amountDeliveryProgress);
   els.barAmountInvoice.style.width = progressWidth(summary.amountInvoiceProgress);
+}
+
+function renderReviewSignals(rows) {
+  const summary = summarizeReviewSignals(rows);
+  els.reviewHealthyCount.textContent = formatNumber(summary.counts["Healthy"]);
+  els.reviewWatchlistCount.textContent = formatNumber(summary.counts.Watchlist);
+  els.reviewNeedsReviewCount.textContent = formatNumber(summary.counts["Needs Review"]);
+  els.reviewSupplierFollowUpCount.textContent = formatNumber(summary.counts["Supplier Follow-up"]);
+  els.reviewOperationalFollowUpCount.textContent = formatNumber(summary.counts["Operational Follow-up"]);
+
+  els.reviewSignalMix.innerHTML = reviewSignalOrder.map((signal) => {
+    const count = summary.counts[signal];
+    const width = summary.total ? Math.max(2, (count / summary.total) * 100) : 0;
+    return `
+      <div class="review-mix-row">
+        <div class="review-mix-label">
+          <span>${signal}</span>
+          <strong>${formatNumber(count)}</strong>
+        </div>
+        <div class="review-mix-track"><span class="${cssClassForReviewSignal(signal)}" style="width:${width}%"></span></div>
+      </div>
+    `;
+  }).join("");
+
+  const detections = [
+    { title: "Delayed delivery", count: summary.detections.delayedDelivery, note: "Delivery date has passed before full delivery.", status: "Detected" },
+    { title: "Waiting invoice", count: summary.detections.waitingInvoice, note: "Invoice pending after fulfillment progress.", status: "Detected" },
+    { title: "Source relationship check", count: summary.detections.sourceRelationshipCheck, note: "Source type or follow-up status is unknown.", status: "Detected" },
+    { title: "Operational follow-up", count: summary.detections.operationalFollowUp, note: "Manufacturing or fulfillment follow-up is required.", status: "Detected" },
+    { title: "Supplier follow-up not detected from SO Phase 1", count: summary.detections.supplierFollowUp, note: "No reliable procurement follow-up field is exposed on this Sales Order payload.", status: "Not included" },
+    { title: "Contribution watchlist", count: summary.detections.contributionWatchlist, note: "Not included in Phase 1 because contribution fields are review context, not approved accounting profit rules.", status: "Not included" },
+  ];
+
+  els.reviewDetectionCards.innerHTML = detections.map((item) => `
+    <article class="detection-card ${item.status === "Not included" ? "is-muted" : ""}">
+      <div>
+        <span>${item.title}</span>
+        <strong>${formatNumber(item.count)}</strong>
+      </div>
+      <p>${item.note}</p>
+      <em>${item.status}</em>
+    </article>
+  `).join("");
 }
 
 function renderStatusStrip(rows) {
@@ -668,6 +778,8 @@ function tableRow(row) {
       <td data-column-key="source_type">${sourceBadge(row)}</td>
       <td data-column-key="sales_order_state">${badge(row.sales_order_state, isCancelled(row) ? "status-muted" : "status-progress")}</td>
       <td data-column-key="follow_up_status">${followUpBadge(row.follow_up_status)}</td>
+      <td data-column-key="review_signal">${reviewSignalBadge(row.review_signal)}</td>
+      <td data-column-key="review_note">${safeText(row.review_note)}</td>
       <td class="num" data-column-key="related_mo_qty">${formatQty(row.total_related_mo_qty)}</td>
       <td class="num" data-column-key="produced_mo_qty">${formatQty(row.total_done_mo_qty)}</td>
       <td class="num" data-column-key="manufacturing_in_progress_qty">${formatQty(row.total_in_progress_mo_qty)}</td>
@@ -968,6 +1080,7 @@ function applyFilters() {
   els.clearSortButton.disabled = state.sortKey === "commitment_date" && state.sortDirection === "asc";
 
   renderKpis(state.filteredRows, rowsForSourceStrip);
+  renderReviewSignals(state.filteredRows);
   renderStatusStrip(rowsForStatusStrip);
   renderProductTypeStrip(rowsForProductTypeStrip);
   renderSourceStrip(rowsForSourceStrip);
@@ -1019,7 +1132,12 @@ async function loadDashboard() {
       throw new Error(`Request failed: ${response.status}`);
     }
     const payload = await response.json();
-    state.rows = (payload.rows || []).map((row) => ({ ...row, detail_loaded: false }));
+    state.rows = (payload.rows || []).map((row) => {
+      const enriched = { ...row };
+      enriched.review_signal = deriveReviewSignal(enriched);
+      enriched.review_note = deriveReviewNote(enriched);
+      return { ...enriched, detail_loaded: false };
+    });
     state.expanded.clear();
     state.detailCache.clear();
     state.detailLoading.clear();
@@ -1208,6 +1326,10 @@ columnController = DashboardTableTools.createColumnController({
 
 updateSortIndicators();
 loadDashboard();
+
+
+
+
 
 
 
