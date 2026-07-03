@@ -1,6 +1,7 @@
 ﻿const ACTIVE_STATUS_FILTER = "__ACTIVE__";
 const DEFAULT_YEAR_FILTER = "2026";
 const COLUMN_STORAGE_KEY = "dashboard.visibleColumns.salesOrders.v1";
+const REVIEW_SIGNAL_COLLAPSE_STORAGE_KEY = "dashboard.reviewSignals.salesOrders.collapsed.v1";
 const TABLE_COLUMNS = [
   { key: "expand", label: "Detail", defaultVisible: true, fixed: true, exportable: false },
   { key: "sales_order_number", label: "SO Number", defaultVisible: true, exportType: "string", exportValue: (row) => row.sales_order_number || "" },
@@ -63,6 +64,8 @@ const state = {
   },
   filtersInitialized: false,
   quickFilter: "",
+  reviewSignalFilter: "",
+  reviewSignalsCollapsed: false,
 };
 
 const els = {
@@ -86,6 +89,10 @@ const els = {
   sourceFilter: document.getElementById("sourceFilter"),
   statusFilter: document.getElementById("statusFilter"),
   followUpFilter: document.getElementById("followUpFilter"),
+  reviewSignalsPanel: document.getElementById("reviewSignalsPanel"),
+  reviewSignalsToggle: document.getElementById("reviewSignalsToggle"),
+  reviewSignalsToggleIcon: document.getElementById("reviewSignalsToggleIcon"),
+  reviewSignalsBody: document.getElementById("reviewSignalsBody"),
   reviewSignalCards: document.getElementById("reviewSignalCards"),
   reviewSignalMix: document.getElementById("reviewSignalMix"),
   reviewDetectionCards: document.getElementById("reviewDetectionCards"),
@@ -220,6 +227,47 @@ function setAllStatuses() {
 function toggleQuickFilter(value) {
   state.quickFilter = state.quickFilter === value ? "" : value;
   applyFilters();
+}
+
+function setReviewSignalFilter(signal) {
+  state.reviewSignalFilter = state.reviewSignalFilter === signal ? "" : signal;
+  state.pagination.page = 1;
+  applyFilters();
+}
+
+function reviewSignalMatches(row) {
+  return !state.reviewSignalFilter || row.review_signal === state.reviewSignalFilter;
+}
+
+function saveReviewSignalsCollapsed() {
+  try {
+    localStorage.setItem(REVIEW_SIGNAL_COLLAPSE_STORAGE_KEY, state.reviewSignalsCollapsed ? "1" : "0");
+  } catch {
+    // Ignore storage errors; the toggle still works for the current page load.
+  }
+}
+
+function updateReviewSignalsCollapsed() {
+  if (!els.reviewSignalsPanel || !els.reviewSignalsBody || !els.reviewSignalsToggle) return;
+  els.reviewSignalsPanel.classList.toggle("is-collapsed", state.reviewSignalsCollapsed);
+  els.reviewSignalsBody.hidden = state.reviewSignalsCollapsed;
+  els.reviewSignalsToggle.setAttribute("aria-expanded", String(!state.reviewSignalsCollapsed));
+  if (els.reviewSignalsToggleIcon) els.reviewSignalsToggleIcon.textContent = state.reviewSignalsCollapsed ? "v" : "^";
+}
+
+function initReviewSignalsCollapsed() {
+  try {
+    state.reviewSignalsCollapsed = localStorage.getItem(REVIEW_SIGNAL_COLLAPSE_STORAGE_KEY) === "1";
+  } catch {
+    state.reviewSignalsCollapsed = false;
+  }
+  updateReviewSignalsCollapsed();
+}
+
+function toggleReviewSignalsCollapsed() {
+  state.reviewSignalsCollapsed = !state.reviewSignalsCollapsed;
+  updateReviewSignalsCollapsed();
+  saveReviewSignalsCollapsed();
 }
 
 function setFollowUpFilter(status) {
@@ -494,6 +542,10 @@ function renderReviewSignals(rows) {
   els.reviewNeedsReviewCount.textContent = formatNumber(summary.counts["Needs Review"]);
   els.reviewSupplierFollowUpCount.textContent = formatNumber(summary.counts["Supplier Follow-up"]);
   els.reviewOperationalFollowUpCount.textContent = formatNumber(summary.counts["Operational Follow-up"]);
+
+  els.reviewSignalCards?.querySelectorAll("[data-review-signal]").forEach((card) => {
+    card.classList.toggle("is-active", state.reviewSignalFilter === card.dataset.reviewSignal);
+  });
 
   els.reviewSignalMix.innerHTML = reviewSignalOrder.map((signal) => {
     const count = summary.counts[signal];
@@ -1066,6 +1118,7 @@ function rowMatchesCurrentFilters(row, options = {}) {
   const matchesSource = options.skipSource || selectionMatches("source", row.source_type);
   const matchesStatus = options.skipStatus || selectionMatches("status", row.sales_order_state);
   const matchesFollowUp = options.skipFollowUp || selectionMatches("followUp", row.follow_up_status);
+  const matchesReviewSignal = reviewSignalMatches(row);
   const matchesQuickFilter = !state.quickFilter
     || (state.quickFilter === "DELIVERED_SO" && row.has_delivered_qty)
     || (state.quickFilter === "INVOICED_SO" && row.has_invoiced_qty);
@@ -1077,6 +1130,7 @@ function rowMatchesCurrentFilters(row, options = {}) {
     && matchesSource
     && matchesStatus
     && matchesFollowUp
+    && matchesReviewSignal
     && matchesQuickFilter
     && dateOverlaps(row, commitmentFrom, commitmentTo);
 }
@@ -1110,6 +1164,7 @@ function activeFilterSummary() {
   if (state.filters.source.size) entries.push(`Source: ${checklistSummary("source", "All sources", sourceLabel)}`);
   if (state.filters.status.size && !setsEqualToArray(state.filters.status, activeStatusValues())) entries.push(`SO Status: ${checklistSummary("status", "All statuses", (value) => safeText(value))}`);
   if (state.filters.followUp.size) entries.push(`Follow-Up: ${checklistSummary("followUp", "All follow-up", followUpLabel)}`);
+  if (state.reviewSignalFilter) entries.push(`Review Signal: ${state.reviewSignalFilter}`);
   if (els.commitmentFromFilter.value || els.commitmentToFilter.value) entries.push(`Delivery Date: ${els.commitmentFromFilter.value || "..."} to ${els.commitmentToFilter.value || "..."}`);
   if (state.quickFilter) entries.push(`Quick Filter: ${quickFilterLabels[state.quickFilter] || state.quickFilter}`);
   return entries.length ? `Filters: ${entries.join(", ")}` : "Filters: Active current-year Sales Orders";
@@ -1171,6 +1226,7 @@ function clearFilters() {
   state.filters.productType.clear();
   state.filters.source.clear();
   state.filters.followUp.clear();
+  state.reviewSignalFilter = "";
   setActiveOnlyStatus();
   state.quickFilter = "";
   applyFilters();
@@ -1230,6 +1286,19 @@ els.clearFiltersButton.addEventListener("click", clearFilters);
 els.clearToolbarFiltersButton.addEventListener("click", clearFilters);
 els.clearSortButton.addEventListener("click", clearSort);
 els.exportExcelButton.addEventListener("click", exportCurrentView);
+els.reviewSignalsToggle?.addEventListener("click", toggleReviewSignalsCollapsed);
+els.reviewSignalCards?.addEventListener("click", (event) => {
+  const card = event.target.closest("[data-review-signal]");
+  if (!card) return;
+  setReviewSignalFilter(card.dataset.reviewSignal);
+});
+els.reviewSignalCards?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const card = event.target.closest("[data-review-signal]");
+  if (!card) return;
+  event.preventDefault();
+  setReviewSignalFilter(card.dataset.reviewSignal);
+});
 els.salesOrderTable.addEventListener("click", (event) => {
   const button = event.target.closest("[data-sort]");
   if (!button) return;
@@ -1337,15 +1406,6 @@ columnController = DashboardTableTools.createColumnController({
 });
 
 updateSortIndicators();
+initReviewSignalsCollapsed();
 loadDashboard();
-
-
-
-
-
-
-
-
-
-
 

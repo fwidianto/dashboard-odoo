@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sales Order Traceability Dashboard</title>
-  <link rel="stylesheet" href="/static/dashboard/sales-orders.css?v=20260703-review-signals">
+  <link rel="stylesheet" href="/static/dashboard/sales-orders.css?v=20260703-review-ui">
 </head>
 <body>
   <main class="page-shell sales-dashboard">
@@ -58,25 +58,30 @@
     </section>
 
 
-    <section class="review-signals-panel" aria-label="Review Signals">
-      <div class="section-head">
+    <section class="review-signals-panel" id="reviewSignalsPanel" aria-label="Review Signals">
+      <div class="section-head review-signals-head">
         <div>
           <h2>Review Signals</h2>
           <p>Operational review grouping based on the currently filtered Sales Orders.</p>
         </div>
+        <button class="review-toggle-button" id="reviewSignalsToggle" type="button" aria-expanded="true" aria-controls="reviewSignalsBody" title="Toggle Review Signals">
+          <span id="reviewSignalsToggleIcon" aria-hidden="true">^</span>
+        </button>
       </div>
 
-      <div class="review-signal-grid" id="reviewSignalCards">
-        <article class="review-signal-card"><span>Healthy</span><strong id="reviewHealthyCount">-</strong></article>
-        <article class="review-signal-card"><span>Watchlist</span><strong id="reviewWatchlistCount">-</strong></article>
-        <article class="review-signal-card"><span>Needs Review</span><strong id="reviewNeedsReviewCount">-</strong></article>
-        <article class="review-signal-card"><span>Supplier Follow-up</span><strong id="reviewSupplierFollowUpCount">-</strong></article>
-        <article class="review-signal-card"><span>Operational Follow-up</span><strong id="reviewOperationalFollowUpCount">-</strong></article>
-      </div>
+      <div class="review-signals-body" id="reviewSignalsBody">
+        <div class="review-signal-grid" id="reviewSignalCards">
+          <article class="review-signal-card" data-review-signal="Healthy" role="button" tabindex="0"><span>Healthy</span><strong id="reviewHealthyCount">-</strong></article>
+          <article class="review-signal-card" data-review-signal="Watchlist" role="button" tabindex="0"><span>Watchlist</span><strong id="reviewWatchlistCount">-</strong></article>
+          <article class="review-signal-card" data-review-signal="Needs Review" role="button" tabindex="0"><span>Needs Review</span><strong id="reviewNeedsReviewCount">-</strong></article>
+          <article class="review-signal-card" data-review-signal="Supplier Follow-up" role="button" tabindex="0"><span>Supplier Follow-up</span><strong id="reviewSupplierFollowUpCount">-</strong></article>
+          <article class="review-signal-card" data-review-signal="Operational Follow-up" role="button" tabindex="0"><span>Operational Follow-up</span><strong id="reviewOperationalFollowUpCount">-</strong></article>
+        </div>
 
-      <div class="review-signal-content">
-        <div class="review-mix" id="reviewSignalMix" aria-label="Review Signal Mix"></div>
-        <div class="detection-grid" id="reviewDetectionCards" aria-label="Review Signal detection cards"></div>
+        <div class="review-signal-content">
+          <div class="review-mix" id="reviewSignalMix" aria-label="Review Signal Mix"></div>
+          <div class="detection-grid" id="reviewDetectionCards" aria-label="Review Signal detection cards"></div>
+        </div>
       </div>
     </section>
     <section class="filter-panel" aria-label="Sales Order filters">
@@ -193,8 +198,9 @@
 
   <script src="/static/dashboard/dashboard-table-tools.js"></script>
   <script src="/static/dashboard/dashboard-export.js"></script>
-  <script src="/static/dashboard/sales-orders.js?v=20260703-review-signals"></script>
+  <script src="/static/dashboard/sales-orders.js?v=20260703-review-ui"></script>
 </body>
 </html>
+
 
 

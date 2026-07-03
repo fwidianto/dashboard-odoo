@@ -225,8 +225,10 @@ button.status-chip.is-active {
   padding: 6px;
 }
 
+.filter-panel label.checklist-option,
 .checklist-option {
   display: flex;
+  flex-direction: row;
   align-items: center;
   gap: 8px;
   padding: 7px 6px;
@@ -240,10 +242,23 @@ button.status-chip.is-active {
   background: #f8fafb;
 }
 
-.checklist-option input {
+.checklist-option input[type="checkbox"] {
+  flex: 0 0 auto;
   width: 15px;
+  min-height: 15px;
   height: 15px;
+  margin: 0;
   accent-color: var(--accent);
+}
+
+.checklist-option span {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.25;
+  text-transform: none;
 }
 
 .filterable-kpi {
@@ -374,6 +389,7 @@ button.status-chip.is-active {
 .review-signals-panel {
   display: grid;
   gap: 14px;
+  margin-bottom: 16px;
   padding: 16px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -383,11 +399,46 @@ button.status-chip.is-active {
 
 .review-signals-panel .section-head {
   display: flex;
-  align-items: end;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
 }
 
+
+.review-toggle-button {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 760;
+  line-height: 1;
+}
+
+.review-toggle-button:hover,
+.review-toggle-button:focus {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  background: #f8fbfb;
+  outline: none;
+}
+
+.review-signals-body {
+  display: grid;
+  gap: 14px;
+}
+
+.review-signals-body[hidden] {
+  display: none;
+}
+
+.review-signals-panel.is-collapsed {
+  gap: 0;
+}
 .review-signals-panel h2 {
   margin: 0;
   color: var(--text);
@@ -415,6 +466,22 @@ button.status-chip.is-active {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #f8fafb;
+  cursor: pointer;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
+}
+
+.review-signal-card:hover,
+.review-signal-card:focus {
+  transform: translateY(-1px);
+  border-color: rgba(45, 92, 78, 0.34);
+  box-shadow: 0 6px 14px rgba(31, 41, 55, 0.08);
+  outline: none;
+}
+
+.review-signal-card.is-active {
+  border-color: rgba(45, 92, 78, 0.46);
+  background: #f4fbfa;
+  box-shadow: 0 0 0 2px rgba(45, 92, 78, 0.12), 0 6px 18px rgba(23, 33, 43, 0.04);
 }
 
 .review-signal-card span,
@@ -547,3 +614,4 @@ button.status-chip.is-active {
     grid-template-columns: 1fr;
   }
 }
+
