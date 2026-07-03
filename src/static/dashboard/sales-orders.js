@@ -476,6 +476,18 @@ function renderKpis(rows, sourceRows = rows) {
 }
 
 function renderReviewSignals(rows) {
+  if (
+    !els.reviewHealthyCount ||
+    !els.reviewWatchlistCount ||
+    !els.reviewNeedsReviewCount ||
+    !els.reviewSupplierFollowUpCount ||
+    !els.reviewOperationalFollowUpCount ||
+    !els.reviewSignalMix ||
+    !els.reviewDetectionCards
+  ) {
+    return;
+  }
+
   const summary = summarizeReviewSignals(rows);
   els.reviewHealthyCount.textContent = formatNumber(summary.counts["Healthy"]);
   els.reviewWatchlistCount.textContent = formatNumber(summary.counts.Watchlist);
@@ -1326,6 +1338,7 @@ columnController = DashboardTableTools.createColumnController({
 
 updateSortIndicators();
 loadDashboard();
+
 
 
 
