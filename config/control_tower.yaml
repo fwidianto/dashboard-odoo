@@ -1,21 +1,30 @@
-version: "phase0-v2"
+version: "phase0-v3"
+status: "PRE_IMPLEMENTATION_PLANNING_ONLY"
+
 company_scope:
+  company_id: 3
   display_name: "Nobi Putra Angkasa, PT"
   business_name: "PT Nobi Putra Angkasa"
+  note: "Use company_id as the data-layer filter; names are presentation metadata."
 
 protocol:
-  sop_version: "draft-v4"
-  rule_registry_version: "v1-draft-v2"
-  validation_version: "phase0-v2"
-  current_focus: "PROCESS_AND_SOP_DASHBOARD_VALIDATION"
+  sop_version: "draft-v2-baseline"
+  rule_registry_version: "v2-validated-baseline"
+  validation_version: "odoo18-final-2026-07-20"
+  authority: "docs/09_Odoo18_Validation/SOP_SYSTEM_ALIGNMENT_MATRIX_FINAL.md"
+  implementation_backlog: "docs/09_Odoo18_Validation/DASHBOARD_IMPLEMENTATION_BACKLOG_V2.md"
+  implementation_authorized: false
 
 business_start:
   stage: "CUSTOMER_PO_CONFIRMED_QUOTATION"
-  assumptions:
-    - "quotation_confirmed_by_customer"
-    - "customer_po_available"
-  technical_root_available: false
-  coverage_mode: "MANUAL"
+  confirmed_so_controls:
+    effective_from: "2026-01-01"
+    required_fields:
+      - "client_order_ref"
+      - "x_studio_tanggal_po_cust"
+  technical_root_available: true
+  technical_root: "sale.order"
+  coverage_mode: "HYBRID"
 
 root_types:
   - code: "SALES_ORDER"
@@ -30,42 +39,42 @@ root_types:
     primary_key: "id"
     business_key: "name"
     role: "internal_production_root"
+  - code: "PURCHASE_ORDER"
+    model: "purchase.order"
+    table: "purchase_order"
+    primary_key: "id"
+    business_key: "name"
+    role: "procurement_and_receipt_root"
+  - code: "ACCOUNT_MOVE"
+    model: "account.move"
+    table: "account_move"
+    primary_key: "id"
+    business_key: "name"
+    role: "invoice_and_receivable_root"
 
 canonical_statuses:
+  - "DRAFT"
   - "NOT_STARTED"
   - "WAITING"
   - "IN_PROGRESS"
+  - "READY_RESERVED"
+  - "PARTIAL_BACKORDER"
   - "BLOCKED"
-  - "PARTIAL"
-  - "COMPLETED"
-  - "EXCEPTION"
-  - "NOT_APPLICABLE"
+  - "DONE_POSTED"
   - "CANCELLED"
-  - "UNKNOWN"
-  - "MANUAL"
-  - "MAPPING_PENDING"
-  - "VALIDATION_PENDING"
-
-status_precedence:
   - "EXCEPTION"
-  - "BLOCKED"
-  - "CANCELLED"
-  - "PARTIAL"
-  - "IN_PROGRESS"
-  - "WAITING"
-  - "VALIDATION_PENDING"
-  - "MAPPING_PENDING"
-  - "MANUAL"
-  - "NOT_STARTED"
-  - "COMPLETED"
+  - "DATA_EXCEPTION"
   - "NOT_APPLICABLE"
   - "UNKNOWN"
+  - "MANUAL"
+  - "VALIDATION_PENDING"
 
 coverage_modes:
   - "ODOO"
+  - "DERIVED"
   - "HYBRID"
   - "MANUAL"
-  - "PENDING_MAPPING"
+  - "RUNTIME_ONLY"
 
 confidence_levels:
   - "HIGH"
@@ -77,180 +86,261 @@ nodes:
   - id: "CT-00"
     name: "Customer PO / Confirmed Quotation"
     owner: "Marketing"
-    readiness: "MANUAL"
-    coverage_mode: "MANUAL"
+    readiness: "READY_FOR_DESIGN_MANUAL_EVIDENCE"
+    coverage_mode: "HYBRID"
     root_applicability: ["SALES_ORDER"]
-    sop_reference: "SOP 3.1 / Business Start"
-    entry_condition: "quotation confirmed by customer and customer PO available"
-    exit_condition: "Sales Order created from the approved customer basis"
-    counts_are_valid: false
+    entry_condition: "customer commitment exists"
+    exit_condition: "SO created with required reference and date"
+    counts_are_valid: true
+    counts_scope: "confirmed SO from 2026 using required fields"
+
   - id: "CT-01"
     name: "Sales Order & Approval"
     owner: "Marketing / Admin Sales"
-    approver: "According to approved SO authority"
-    readiness: "PARTIAL"
+    approver: "VP Operations"
+    readiness: "READY_FOR_DESIGN"
     coverage_mode: "ODOO"
     root_applicability: ["SALES_ORDER"]
-    sop_reference: "SOP 3.1"
-    entry_condition: "customer order basis available and SO created"
-    exit_condition: "SO approved/confirmed or cancelled"
+    entry_condition: "SO exists"
+    exit_condition: "SO confirmed, cancelled, or retained Draft with approved reason"
     counts_are_valid: true
+
   - id: "CT-02"
     name: "Distribusi JO / Operational Handover"
-    owner: "Marketing / Admin Sales"
+    owner: "Marketing / Operations"
     readiness: "MANUAL"
     coverage_mode: "MANUAL"
-    future_coverage_mode: "ODOO"
     root_applicability: ["SALES_ORDER"]
-    sop_reference: "SOP 3.1 / Distribusi JO"
-    entry_condition: "SO approved/confirmed"
-    exit_condition: "order information distributed to relevant functions"
+    entry_condition: "business order information is available"
+    exit_condition: "relevant internal parties receive the handover"
+    sequencing: "independent_manual_milestone"
+    may_occur_while_so_draft: true
+    infer_from_so_state: false
     counts_are_valid: false
+
   - id: "CT-03"
-    name: "Fulfilment Decision"
+    name: "Fulfilment Classification"
     owner: "Marketing / PPIC"
     readiness: "PARTIAL"
-    coverage_mode: "ODOO"
+    coverage_mode: "DERIVED"
     root_applicability: ["SALES_ORDER"]
-    sop_reference: "SOP 3.1-3.2"
+    classification_grain: "sale_order_line"
+    header_rollup: true
+    counts_are_valid: false
+    blocked_by:
+      - "direct_so_io_many_to_many_extraction"
+      - "line_level_stock_and_mo_evidence_contract"
+
   - id: "CT-04"
-    name: "Internal Order / Stock Fulfilment"
+    name: "Internal Order"
     owner: "PPIC"
-    readiness: "READY"
-    coverage_mode: "ODOO"
+    readiness: "PROVISIONAL"
+    coverage_mode: "DERIVED"
     root_applicability: ["SALES_ORDER", "INTERNAL_ORDER"]
-    sop_reference: "SOP 3.1-3.2"
+    administrative_state_separate: true
+    production_status_provisional: true
+    utilization_status_provisional: true
+    counts_are_valid: false
+
   - id: "CT-05"
     name: "Manufacturing Planning"
     owner: "PPIC"
     readiness: "PARTIAL"
-    coverage_mode: "ODOO"
+    coverage_mode: "HYBRID"
     root_applicability: ["SALES_ORDER", "INTERNAL_ORDER"]
-    sop_reference: "SOP 3.2"
+    mo_suppression_code: "MO_SUPPRESSED_BY_IO"
+
   - id: "CT-06"
     name: "RKB / ROP Purchase Request"
     owner: "PPIC / Requester"
-    approver: "Assistant VP then VP Operations"
     readiness: "PARTIAL"
     coverage_mode: "ODOO"
     root_applicability: ["SALES_ORDER", "INTERNAL_ORDER"]
-    sop_reference: "SOP 3.3"
+    rfq_creation_behavior: "custom_user_triggered_server_action"
+
   - id: "CT-07"
     name: "RFQ / Purchase Order"
     owner: "Procurement"
-    approver: "Assistant VP review / VP Operations confirm"
-    readiness: "PARTIAL"
+    approver: "PO Confirmed/Purchase state is operational approval"
+    readiness: "READY_FOR_DESIGN_PARTIAL"
     coverage_mode: "ODOO"
-    root_applicability: ["SALES_ORDER", "INTERNAL_ORDER"]
-    sop_reference: "SOP 3.4"
+    root_applicability: ["SALES_ORDER", "INTERNAL_ORDER", "PURCHASE_ORDER"]
+    reset_is_correction: true
+
   - id: "CT-08"
     name: "Receipt & Inspection"
-    owner: "WHD / Gudang"
-    readiness: "PARTIAL"
+    owner: "WHD / Requester"
+    readiness: "READY_FOR_DESIGN_HYBRID"
     coverage_mode: "HYBRID"
-    root_applicability: ["SALES_ORDER", "INTERNAL_ORDER"]
-    sop_reference: "SOP 3.5"
+    root_applicability: ["SALES_ORDER", "INTERNAL_ORDER", "PURCHASE_ORDER"]
+    quality_module_used: false
+    external_evidence_required: true
+
   - id: "CT-09"
     name: "Material Transfer / Pre-Production"
     owner: "PPIC / WHD"
     readiness: "PARTIAL"
-    coverage_mode: "ODOO"
+    coverage_mode: "HYBRID"
     root_applicability: ["SALES_ORDER", "INTERNAL_ORDER"]
-    sop_reference: "SOP 3.6"
+    bon_is_consumption: false
+
   - id: "CT-10"
     name: "Production / Finish Good"
-    owner: "PPIC / Produksi / WHD"
-    readiness: "PARTIAL"
+    owner: "PPIC / Production / WHD"
+    readiness: "HYBRID"
     coverage_mode: "HYBRID"
     root_applicability: ["SALES_ORDER", "INTERNAL_ORDER"]
-    sop_reference: "SOP 3.6"
-    operational_evidence_required: true
-    note: "not all production users/processes currently use Odoo"
+    external_evidence_required: true
+    legacy_locations_not_used:
+      - "KRW/FG"
+      - "FF5/FG"
+
   - id: "CT-11"
     name: "Delivery"
-    owner: "Marketing / WHD"
-    readiness: "PARTIAL"
+    owner: "WHD / Marketing"
+    readiness: "READY_FOR_DESIGN_HYBRID"
     coverage_mode: "HYBRID"
     root_applicability: ["SALES_ORDER"]
-    sop_reference: "SOP 3.7"
+    cancel_cascades_to_so: false
+
   - id: "CT-12"
     name: "Invoice"
     owner: "Accounting"
-    readiness: "PARTIAL"
+    readiness: "READY_FOR_DESIGN_PARTIAL"
     coverage_mode: "ODOO"
-    root_applicability: ["SALES_ORDER"]
-    sop_reference: "Case 4.5"
+    root_applicability: ["SALES_ORDER", "ACCOUNT_MOVE"]
+    verify_final_state_after_action_error: true
+
   - id: "CT-13"
     name: "Payment / Collection"
     owner: "Accounting"
-    readiness: "INVESTIGATION"
-    coverage_mode: "PENDING_MAPPING"
-    root_applicability: ["SALES_ORDER"]
-    sop_reference: "Accounting SOP Pending"
+    readiness: "PROVISIONAL"
+    coverage_mode: "ODOO"
+    root_applicability: ["SALES_ORDER", "ACCOUNT_MOVE"]
     counts_are_valid: false
-    validation_sources:
-      - "payment_record"
-      - "invoice_residual_receivable"
-      - "account_receivable_reconciliation"
-    validation_rule: "compare all sources before selecting source of truth"
+    required_sources:
+      - "posted_invoice"
+      - "amount_residual"
+      - "receivable_journal_items"
+      - "partial_full_reconciliation"
+      - "payment_entries"
+      - "reversal_credit_note_adjustment_evidence"
+    blocked_by:
+      - "accounting_taxonomy_approval"
 
-approval_overlays:
-  - code: "SO_APPROVAL"
-    node_id: "CT-01"
-  - code: "ROP_APPROVAL"
-    node_id: "CT-06"
-  - code: "PO_REVIEW_CONFIRM"
-    node_id: "CT-07"
-  - code: "LOCK_UNLOCK_APPROVAL"
-    node_id: "DYNAMIC_AFFECTED_NODE"
-  - code: "EXCEPTION_APPROVAL"
-    node_id: "DYNAMIC_AFFECTED_NODE"
+  - id: "CT-X1"
+    name: "Correction / Reset / Cancellation Exposure"
+    owner: "Dynamic process owner"
+    readiness: "PARTIAL_RUNTIME_ONLY"
+    coverage_mode: "RUNTIME_ONLY"
+    root_applicability: ["SALES_ORDER", "INTERNAL_ORDER", "PURCHASE_ORDER", "ACCOUNT_MOVE"]
+    verify_final_state: true
+    verify_downstream: true
+    counts_are_valid: false
+
+  - id: "CT-X2"
+    name: "Exception Worklist"
+    owner: "Data Health Owner"
+    readiness: "READY_FOR_DESIGN"
+    coverage_mode: "DERIVED"
+    root_applicability: ["SALES_ORDER", "INTERNAL_ORDER", "PURCHASE_ORDER", "ACCOUNT_MOVE"]
+    counts_are_valid: true
+    blocked_by:
+      - "data_health_owner_and_cadence_approval"
 
 source_classifications:
   - "FROM_STOCK"
   - "FROM_INTERNAL_ORDER"
   - "MAKE_TO_ORDER"
   - "MIXED_SOURCE"
-  - "UNKNOWN_SOURCE"
+  - "SOURCE_DATA_EXCEPTION"
 
-current_validation_scope:
-  - "customer_po_to_sales_order"
-  - "sales_order_approval_to_distribusi_jo"
-  - "fulfilment_source_branches"
-  - "manufacturing_procurement_receipt_wip_links"
-  - "production_odoo_manual_coverage"
-  - "delivery_to_invoice"
-  - "payment_vs_receivable_reconciliation"
-  - "sop_rule_vs_dashboard_output"
+io_production_statuses:
+  - "NOT_STARTED"
+  - "IN_PROGRESS"
+  - "PARTIALLY_PRODUCED"
+  - "FULLY_PRODUCED"
+  - "OVER_PRODUCED"
+  - "CANCELLED"
+  - "DATA_EXCEPTION"
+
+io_utilization_statuses:
+  - "NOT_UTILIZED"
+  - "PARTIALLY_UTILIZED"
+  - "FULLY_UTILIZED"
+  - "OVER_UTILIZED"
+  - "DATA_EXCEPTION"
+
+exception_vocabulary:
+  - "MO_SUPPRESSED_BY_IO"
+  - "MIXED_SOURCE"
+  - "RESET_TO_DRAFT_WITH_OPEN_DOWNSTREAM"
+  - "RESET_TO_DRAFT_WITH_OPEN_RECEIPT"
+  - "RESET_TO_DRAFT_WITH_DRAFT_VENDOR_BILL"
+  - "CANCEL_BLOCKED_OR_FAILED"
+  - "ACTION_APPLIED_WITH_RPC_ERROR"
+  - "CANCELED_PARENT_WITH_OPEN_DOWNSTREAM"
+  - "CANCELED_PARENT_WITH_DONE_DOWNSTREAM"
+  - "CANCELED_PARENT_WITH_RESERVED_STOCK"
+  - "CANCELED_PARENT_WITH_PARTIAL_BACKORDER"
+  - "CANCELLED_PO_WITH_OPEN_RECEIPT"
+  - "CANCELLED_SO_WITH_ACTIVE_DOWNSTREAM"
+  - "IO_PRODUCTION_DATA_EXCEPTION"
+  - "IO_UTILIZATION_DATA_EXCEPTION"
+  - "AUTOMATION_EFFECT_UNCONFIRMED"
+
+approval_overlays:
+  - code: "SO_APPROVAL"
+    node_id: "CT-01"
+  - code: "ROP_APPROVAL"
+    node_id: "CT-06"
+  - code: "PO_CONFIRM_APPROVAL"
+    node_id: "CT-07"
+  - code: "CORRECTION_APPROVAL"
+    node_id: "CT-X1"
+  - code: "EXCEPTION_APPROVAL"
+    node_id: "DYNAMIC_AFFECTED_NODE"
+
+current_gate:
+  required_decisions:
+    - "data_health_owner_and_review_cadence"
+    - "structured_log_note_and_reason_codes"
+    - "accounting_payment_taxonomy"
+    - "io_product_uom_and_multi_io_allocation"
+    - "parent_child_mo_relation"
+    - "cancellation_replacement_procedures"
+  next_implementation_phase: "NATIVE_RELATION_EXTRACTION"
 
 deferred_features:
   - "formal_ticketing"
   - "ai_sop_change_proposal_automation"
   - "dashboard_writeback_to_odoo"
+  - "production_odoo_configuration_changes"
 
 api_contracts:
   process_map: "/api/control-tower/process-map"
   node_records: "/api/control-tower/nodes/{node_id}/records"
-  journey: "/api/control-tower/journey/{root_type}/{root_id}"
+  journey: "/api/control-tower/journey/{root_model}/{root_id}"
+  exceptions: "/api/control-tower/exceptions"
   rule: "/api/control-tower/rules/{rule_id}"
 
 required_output_fields:
-  - "root_type"
+  - "root_model"
   - "root_id"
+  - "related_model"
+  - "related_id"
   - "node_id"
   - "native_status"
   - "canonical_status"
   - "operational_status"
   - "status_reason"
   - "owner"
-  - "approver"
   - "coverage_mode"
   - "data_confidence"
-  - "mapping_status"
   - "age_days"
   - "open_exception_count"
   - "highest_severity"
-  - "last_activity_at"
+  - "evidence_required"
   - "source_updated_at"
   - "rule_version"
-  - "validation_version"
+  - "sop_version"
