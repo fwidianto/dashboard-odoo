@@ -1,357 +1,245 @@
 # MVP Specification — Odoo Protocol Control Tower
 
-Status: Phase 0 Draft v2 — validation-first
+**Status:** Phase 0 Draft v3 — post-validation, pre-implementation  
+**Authority:** `docs/09_Odoo18_Validation/`
 
-## 1. Current Objective
+## 1. Product Objective
 
-Before building the active UI, validate that the current Odoo Protocol, actual operating process, Odoo source data, and existing dashboards describe the same flow.
+The first release is a read-only Control Tower that:
 
-The first implementation remains a read-only application page that shows the end-to-end process as clickable stages and reuses existing traceability views/APIs. Implementation begins only after the selected process mappings pass sample-record validation.
+- traces SO/IO/MO/ROP/PO/Receipt/Delivery/Invoice/Payment relationships;
+- shows native and canonical states without hiding uncertainty;
+- identifies reset/cancellation downstream exposure;
+- exposes owner, severity, evidence, confidence, and SOP rule;
+- reuses validated dashboard assets only after data-contract reconciliation.
 
-The product must answer:
+The MVP does not write to Odoo, close issues automatically, or publish unapproved Payment/IO KPIs.
 
-1. How many records are currently at each data-valid stage?
-2. Which records are waiting, in progress, partial, blocked, completed, exception, manual, or mapping pending?
-3. Who owns the next action and approval?
-4. Which SOP rule applies?
-5. What upstream/downstream documents are related?
-6. Is the displayed status proven by Odoo, derived, hybrid, or manual?
-
-## 2. Validated Process Architecture
+## 2. Process Architecture
 
 ```text
 Customer PO / Confirmed Quotation
-→ Sales Order & Approval
-→ Distribusi JO / Operational Handover
-→ Fulfilment Decision
-→ Internal Order / Manufacturing Planning when applicable
-→ RKB / ROP when applicable
-→ RFQ / Purchase Order when applicable
-→ Receipt when applicable
-→ Material Transfer / Pre-Production
-→ Production / Finish Good
+→ Sales Order
+→ line-level fulfilment: Stock / IO / New MO / Mixed
+→ RKB / ROP when required
+→ user-triggered RFQ / PO
+→ Receipt and inspection
+→ Material Transfer / WIP
+→ Production / FG to Stock
 → Delivery
 → Invoice
 → Payment / Collection
 ```
 
-Approval is not one generic stage. It appears inside the relevant stage:
+Distribusi JO is displayed as a separate manual milestone/coverage indicator. It may occur while SO is Draft and is not a mandatory Odoo transition between Sales Order and fulfilment.
 
-- SO approval at Sales Order;
-- ROP approval at RKB / ROP;
-- PO review/Confirm at RFQ / PO;
-- Lock/Unlock as an overlay on the affected document.
+Cross-cutting overlays:
 
-## 3. Page Structure
+- approval;
+- Reset/Unlock/Cancel exposure;
+- exception severity;
+- Log Note/manual evidence;
+- rule/SOP version;
+- owner and confidence.
 
-### A. Header
+## 3. MVP Pages
 
-- selected company;
-- data refresh timestamp;
-- SOP version;
-- Rule Registry version;
-- validation status/version;
-- total open Critical/High exceptions;
-- filters: date, owner, customer/project, source type, status, confidence, coverage mode.
+### 3.1 Header
 
-### B. End-to-End Process Map
+- company/site;
+- source refresh timestamp;
+- SOP/rule/validation version;
+- total Critical/High review items;
+- filters: date, owner, customer/project, source, state, severity, confidence, coverage.
 
-Every stage shows:
+### 3.2 Process Map
 
-- active count only when data-valid;
-- waiting count;
-- partial count;
-- exception count;
+Each node shows only data-valid counts:
+
+- Open/Waiting;
+- Ready/Reserved;
+- Partial/Backorder;
+- Done/Posted;
+- Cancelled;
+- Exception/Needs Review;
 - oldest age;
 - highest severity;
-- process owner;
-- data-readiness;
-- data confidence;
-- coverage mode: Odoo, Hybrid, Manual, or Mapping Pending.
+- owner;
+- readiness/confidence/coverage.
 
-Manual or unmapped stages must not show misleading zero values.
+Manual/provisional nodes return a reason and `counts_are_valid=false`, not fabricated zero.
 
-### C. Stage Worklist
+### 3.3 Exception Worklist
 
-Clicking a stage opens:
+Minimum columns:
 
 ```text
-Document Number / Manual Milestone Reference
-Root SO / IO
-Customer / Project
-Native Odoo Status
-Canonical Status
-Operational Status when available
-Status Reason
+Rule ID
+Severity
+Root model/ID/reference
+Related model/ID/reference
+Native state
+Canonical state
+Status reason
 Age
-Owner / Approver
-Related Documents
-Open Exceptions
-Highest Severity
-SOP / Rule
-Coverage Mode
-Data Confidence
-Last Activity
-Source Updated At
+Process owner
+Evidence/confidence
+Suggested review
+SOP reference
+Source updated at
 ```
 
-### D. Record Journey Drawer/Page
+### 3.4 Record Journey
 
-Clicking one record opens:
+For one SO or IO show:
 
-- business start evidence: Customer PO / confirmed quotation where available;
-- root identity and source classification;
-- process journey;
-- current and completed stages;
-- waiting/blocked/manual/mapping-pending stages;
-- related SO, IO, MO, ROP, PO, Receipt, Delivery, Invoice, and payment evidence;
-- approval status within each relevant document;
-- ERP status versus operational/manual status;
-- anomaly history when available;
-- related SOP sections and Rule IDs;
-- data confidence, coverage mode, and source timestamp.
+- customer-order evidence;
+- line-level source;
+- `MIXED_SOURCE` and `MO_SUPPRESSED_BY_IO` where relevant;
+- all native upstream/downstream relations;
+- open/reserved/partial/backorder exposure;
+- Done/Posted historical evidence;
+- manual/hybrid milestones;
+- Invoice residual and reconciliation evidence where available;
+- rule/evidence/confidence.
 
-## 4. Validation Scope Before UI Build
+### 3.5 IO Panel
 
-### Validation Pack A — Customer Order and Handover
+Display separately:
 
-1. Customer PO / Confirmed Quotation;
-2. Sales Order creation and approval/Confirm;
-3. Distribusi JO timing, recipients, and evidence;
-4. Fulfilment Decision.
+- administrative state;
+- Production Status;
+- Utilization Status;
+- requested/planned/produced/utilized quantities;
+- `DATA_EXCEPTION` reason.
 
-### Validation Pack B — Fulfilment Branches
+Do not publish final KPI percentages before product/UoM/allocation approval.
 
-1. Trading from Stock;
-2. Sales Order from Internal Order;
-3. Make-to-Order / JO;
-4. Mixed Source.
+### 3.6 Accounting Panel
 
-### Validation Pack C — Procurement and Manufacturing
+Display transaction evidence first:
 
-1. MO planning;
-2. RKB / ROP approval;
-3. RFQ / PO review and approval;
-4. Receipt and inspection;
-5. Material Transfer / WIP;
-6. Production / Finish Good, including manual production evidence.
+- invoice state/posting;
+- residual;
+- reconciliation status;
+- payment records;
+- reversal/Credit Note/adjustment evidence.
 
-### Validation Pack D — Commercial Completion
+Business-facing Payment labels remain gated by Accounting approval.
 
-1. Delivery;
-2. Invoice / DP / Final Invoice;
-3. payment record;
-4. invoice residual and receivable reconciliation.
+## 4. Required Data Contract
 
-## 5. MVP Data Scope After Validation
+1. native IDs for every root and related record;
+2. direct SO–IO many-to-many extraction;
+3. line-level fulfilment source;
+4. stable company ID;
+5. picking/move/move-line/reservation/backorder relations;
+6. invoice/move-line/residual/reconciliation relations;
+7. separate administrative, operational, derived, and manual states;
+8. evidence/confidence and rule version;
+9. explicit `UNKNOWN`/`DATA_EXCEPTION` behavior;
+10. cancelled parents remain visible when downstream exposure exists.
 
-### Fully Live First
+## 5. Core Exception Scope
 
-1. Sales Order;
-2. Fulfilment Decision;
-3. Internal Order / Manufacturing summary;
-4. Delivery;
-5. Invoice progress.
+Initial worklist supports:
 
-### Partially Live / Hybrid
+- `MO_SUPPRESSED_BY_IO` as valid informational state;
+- `MIXED_SOURCE`;
+- `RESET_TO_DRAFT_WITH_OPEN_DOWNSTREAM`;
+- `CANCELLED_PO_WITH_OPEN_RECEIPT`;
+- `CANCELLED_SO_WITH_ACTIVE_DOWNSTREAM`;
+- reserved/partial/backorder/done downstream overlays;
+- `IO_PRODUCTION_DATA_EXCEPTION`;
+- `IO_UTILIZATION_DATA_EXCEPTION`;
+- Accounting truth conflicts after taxonomy approval.
 
-1. Customer PO / Confirmed Quotation;
-2. Distribusi JO;
-3. RKB / ROP;
-4. RFQ / Purchase Order;
-5. Receipt;
-6. Material Transfer / WIP;
-7. Production / Finish Good.
-
-### Validation Pending
-
-1. Payment / Collection source of truth;
-2. complete approval event history;
-3. complete external evidence linkage.
-
-Formal ticketing and AI SOP proposal are not part of the current validation/MVP scope.
+`CANCEL_BLOCKED_OR_FAILED` and `ACTION_APPLIED_WITH_RPC_ERROR` require runtime/action observability and may initially remain audit/manual evidence rather than continuously derived rules.
 
 ## 6. Proposed API Contracts
 
 ### `GET /api/control-tower/process-map`
 
-Returns aggregate stage health with readiness and coverage:
-
-```json
-{
-  "sop_version": "draft-v4",
-  "rule_version": "v1",
-  "validation_version": "phase0-v2",
-  "source_updated_at": "timestamp",
-  "nodes": [
-    {
-      "node_id": "CT-01",
-      "name": "Sales Order & Approval",
-      "readiness": "READY",
-      "coverage_mode": "ODOO",
-      "confidence": "HIGH",
-      "counts_are_valid": true,
-      "counts": {
-        "WAITING": 0,
-        "IN_PROGRESS": 0,
-        "PARTIAL": 0,
-        "COMPLETED": 0,
-        "EXCEPTION": 0
-      },
-      "oldest_age_days": 0,
-      "highest_severity": null
-    }
-  ]
-}
-```
-
-For Manual or Mapping Pending stages, `counts_are_valid` is `false` and the API must return a reason rather than a fabricated zero.
+Returns node readiness, coverage, confidence, valid counts, age, and severity.
 
 ### `GET /api/control-tower/nodes/{node_id}/records`
 
-Filters:
+Server-side filters and pagination by state, owner, severity, date, source, company/site, confidence, and coverage.
 
-- canonical status;
-- operational status;
-- owner / approver;
-- severity;
-- date range;
-- customer/project;
-- source type;
-- confidence;
-- coverage mode;
-- page and page size.
+### `GET /api/control-tower/journey/{root_model}/{root_id}`
 
-### `GET /api/control-tower/journey/{root_type}/{root_id}`
+Returns the normalized native-ID document graph and stage summary.
 
-Returns the complete journey for one SO or IO, including manual and pending milestones.
+### `GET /api/control-tower/exceptions`
+
+Returns rule outputs with owner, evidence, confidence, SOP reference, and suggested review.
 
 ### `GET /api/control-tower/rules/{rule_id}`
 
-Returns business-facing rule metadata, SOP reference, evidence requirement, and validation status.
+Returns versioned business/technical rule metadata and readiness.
 
-## 7. Proposed Data Views
+No endpoint performs write-back in the MVP.
+
+## 7. Proposed Read Models
 
 ```text
+vw_ct_native_relations
 vw_ct_process_instances
+vw_ct_line_source
 vw_ct_stage_status
-vw_ct_stage_summary
 vw_ct_document_links
+vw_ct_parent_downstream_exposure
+vw_ct_io_production_status
+vw_ct_io_utilization_status
+vw_ct_accounting_truth
 vw_ct_exception_worklist
+vw_ct_stage_summary
 vw_ct_order_journey
-vw_ct_validation_evidence
 ```
 
-### `vw_ct_process_instances`
+Views are built in this order: native relations → transaction facts → canonical statuses → exceptions → aggregates.
 
-One row per root SO/IO.
+## 8. UI Guardrails
 
-### `vw_ct_stage_status`
-
-One row per root and stage with native status, canonical status, operational status, coverage mode, and confidence.
-
-### `vw_ct_stage_summary`
-
-Aggregate counts used by the process map. Counts are only published for validated mappings.
-
-### `vw_ct_document_links`
-
-Normalized upstream/downstream document graph.
-
-### `vw_ct_exception_worklist`
-
-Rule output linked to owner and SOP. Formal ticket storage is deferred.
-
-### `vw_ct_order_journey`
-
-UI-ready root-level journey summary.
-
-### `vw_ct_validation_evidence`
-
-Stores or references sample-record validation results, expected outcome, actual outcome, reviewer, and evidence location.
-
-## 8. UI Behavior
-
-- Stage click filters without navigating away where practical.
-- Exception count opens the worklist prefiltered to `EXCEPTION`.
-- Manual/Mapping Pending stages explain what evidence or mapping is missing.
-- Status reason is readable, not only code.
-- ERP Status and Operational Status are visually distinct.
-- Raw technical diagnostics stay behind an expandable section.
-- Existing Sales Order/Internal Order pages remain available as deep links.
-- No write action to Odoo.
-- No automatic ticket closure or SOP update.
+- server-side pagination/filtering;
+- no all-row client hydration;
+- ERP, Derived, Hybrid, Manual, and Unknown states are visually distinct;
+- Done/Posted history is not hidden because a parent is Cancel/Draft;
+- raw diagnostics remain expandable;
+- existing dashboard pages remain deep links until replaced;
+- no direct Odoo write action;
+- no auto-close or AI SOP publication.
 
 ## 9. Acceptance Criteria
 
-The first release is acceptable when:
+The MVP is acceptable when:
 
-1. one SO can be traced from available customer-order evidence to all related documents;
-2. stage definitions have process-owner approval;
-3. each live stage count reconciles to its worklist and sample Odoo records;
-4. Distribusi JO is shown as a manual/future-Odoo milestone without false automated conclusions;
-5. approval is shown in the correct document context;
-6. Production displays Odoo and manual coverage honestly;
-7. each exception shows Rule ID, owner, severity, suggested action, SOP reference, confidence, and evidence requirement;
-8. source timestamp and data confidence are visible;
-9. cancelled records are excluded from active counts but remain searchable;
-10. Mixed Source is represented line-first and header-rollup;
-11. missing stages show `Manual`, `Data Mapping Pending`, or `Validation Pending`, not misleading zero;
-12. PT Nobi Putra Angkasa scope is enforced in the data layer;
-13. payment is not declared valid until payment record and receivable reconciliation samples agree;
-14. regression cases pass for each approved mapping.
+1. counts reconcile to worklists and sampled Odoo records;
+2. every join uses native IDs where available;
+3. SO–IO many-to-many and mixed-source lines are represented correctly;
+4. `MO_SUPPRESSED_BY_IO` is not counted as production failure;
+5. Distribusi JO is shown as manual, not inferred from SO state;
+6. reset/cancel downstream exposure remains visible;
+7. manual/hybrid evidence is labelled honestly;
+8. `DATA_EXCEPTION` is preserved rather than allocated by inference;
+9. company scope uses stable ID;
+10. Payment labels are not published before Accounting approval;
+11. every exception has Rule ID, owner, severity, evidence/confidence, and SOP reference;
+12. normal, partial, reset, cancelled, Done/Posted, manual, and accepted-exception tests pass;
+13. performance uses server-side data access;
+14. source timestamp and rule/SOP version are visible.
 
 ## 10. Implementation Sequence
 
-### Sprint 0A — Business Process Validation
+1. stakeholder and SOP approval gate;
+2. native relation extraction;
+3. line source and stock/accounting truth contract;
+4. canonical state and exception views;
+5. reconciliation/regression tests;
+6. server-side APIs;
+7. process map, worklist, and journey UI;
+8. IO panel after quantity-contract approval;
+9. Accounting panel after taxonomy approval;
+10. production-safe UAT and release.
 
-- validate CT-00 to CT-13 with process owners;
-- identify Odoo, Hybrid, Manual, and Pending coverage;
-- select sample transactions;
-- record actual evidence and expected SOP outcome.
-
-### Sprint 0B — Data and Dashboard Reconciliation
-
-- trace sample records through existing views/APIs;
-- compare Dashboard output with Odoo and physical/manual evidence;
-- classify mismatch as data issue, dashboard logic issue, SOP gap, or valid exception;
-- approve node and rule mappings.
-
-### Sprint 1 — Read Model
-
-- build normalized document links;
-- create stage status and validation evidence views;
-- create stage summary API;
-- add source timestamp, readiness, coverage, and confidence.
-
-### Sprint 2 — UI
-
-- process map;
-- stage worklist;
-- journey detail;
-- deep links to existing dashboards.
-
-### Sprint 3 — Consistency Rules
-
-- implement approved Priority 1 rules;
-- add severity and owner;
-- add SOP Rule Explorer;
-- run regression tests.
-
-### Future Phase — Active Improvement Loop
-
-- formal ticketing;
-- assignment/evidence/verification/closure;
-- AI SOP impact proposal;
-- human approval workflow.
-
-## 11. Explicit Non-Goals for Current Scope
-
-- writing back to Odoo;
-- replacing Odoo UI;
-- automatic process correction;
-- formal ticketing implementation;
-- automatic SOP publication;
-- profitability/COGS engine;
-- choosing a payment source of truth before Accounting reconciliation validation;
-- treating manual production completion as proven only from Odoo status.
+Formal ticketing, write-back, and AI change proposal are later phases.
