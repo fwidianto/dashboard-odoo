@@ -6,12 +6,14 @@ This folder contains the validated technical and SOP-alignment baseline for the 
 
 ## Current Authority
 
-1. `SOP_SYSTEM_ALIGNMENT_MATRIX_FINAL.md` — authoritative business/system alignment baseline.
-2. `CONFIRMED_SOP_DECISIONS_2026-07-20.md` — concise confirmed decisions and exception vocabulary.
-3. `FULL_RUNTIME_CANCELLATION_AND_OUTSTANDING_MATRIX.md` — controlled runtime evidence.
-4. `FINAL_SOP_SYSTEM_CLOSURE_AUDIT.md` — final read-only anomaly and IO classification audit.
-5. `DATA_HEALTH_RULE_CATALOG_V2.md` — implementable, provisional, manual-evidence, and blocked rules.
-6. `DASHBOARD_IMPLEMENTATION_BACKLOG_V2.md` — ordered post-approval extraction, data-contract, SQL/API, UI, and release backlog.
+1. `SOP_SYSTEM_ALIGNMENT_MATRIX_FINAL.md` - authoritative business/system alignment baseline.
+2. `CONFIRMED_SOP_DECISIONS_2026-07-20.md` - concise confirmed decisions and exception vocabulary.
+3. `FULL_RUNTIME_CANCELLATION_AND_OUTSTANDING_MATRIX.md` - controlled runtime evidence.
+4. `FINAL_SOP_SYSTEM_CLOSURE_AUDIT.md` - final read-only anomaly and IO classification audit.
+5. `DATA_HEALTH_RULE_CATALOG_V2.md` - implementable, provisional, manual-evidence, and blocked rules.
+6. `DASHBOARD_IMPLEMENTATION_BACKLOG_V2.md` - ordered post-approval extraction, data-contract, SQL/API, UI, and release backlog.
+7. `IMPLEMENTATION_READINESS_GATE_V2.md` - workstream-by-workstream authorization boundary.
+8. `DECISION_TO_DATA_CONTRACT_MAP_V2.md` - exact effect of each open owner decision on the future data contract.
 
 The alignment baseline supersedes earlier working assumptions wherever they conflict.
 
@@ -21,7 +23,7 @@ The alignment baseline supersedes earlier working assumptions wherever they conf
 - Distribusi JO is outside Odoo and may occur while SO is Draft.
 - SO fulfilment source is line-level and may be `MIXED_SOURCE`.
 - IO-linked MO auto-cancellation is `MO_SUPPRESSED_BY_IO`.
-- ROP → RFQ/PO is a custom user-triggered Server Action.
+- ROP -> RFQ/PO is a custom user-triggered Server Action.
 - Reset to Draft is correction and may leave active downstream records.
 - Payment truth requires residual and reconciliation evidence.
 
@@ -33,22 +35,24 @@ The current documents authorize:
 - data-health rule definition;
 - extraction/data-contract design;
 - acceptance criteria and test-case preparation;
-- implementation sequencing.
+- implementation sequencing;
+- feature-branch preparation for native-ID, relation, and fixture work that does not change production behavior.
 
 They do not yet authorize:
 
 - production Odoo configuration changes;
-- SQL/API/UI changes on the active dashboard branch;
+- direct SQL/API/UI changes on the active production/dashboard branch;
 - Payment KPI publication;
 - inferred multi-IO SO allocation;
-- write-back or automated issue closure.
+- write-back or automated issue closure;
+- mixing unrelated frontend edits into validation work.
 
-Implementation starts after VP Operations/process-owner approval, Accounting taxonomy approval, IO allocation decisions, and Data Health governance assignment.
+Implementation starts after VP Operations/process-owner approval, Accounting taxonomy approval, IO allocation decisions, and Data Health governance assignment. Detection-only and extraction-integrity work must still follow the readiness gate and acceptance criteria.
 
 ## Required Data-Contract Changes
 
 1. preserve native Odoo IDs and direct relation paths;
-2. extract SO–IO many-to-many directly;
+2. extract SO-IO many-to-many directly;
 3. classify fulfilment per SO line;
 4. use stable company ID;
 5. add stock picking/move/reservation/backorder evidence;
@@ -60,13 +64,13 @@ Implementation starts after VP Operations/process-owner approval, Accounting tax
 
 ## Next Gate
 
-Use the Personal OS stakeholder review pack to close:
+Use the Personal OS stakeholder review pack, decision register, and meeting-minutes template to close:
 
 - Data Health owner and cadence;
 - structured Log Note policy;
 - Accounting payment/reconciliation taxonomy;
 - IO product/UoM and multi-IO allocation;
-- Parent–Child MO relation;
+- Parent-Child MO relation;
 - Procurement/WHD and Sales/Operations cancellation policies.
 
-After decisions are recorded, convert the backlog into scoped Codex implementation tasks, beginning with extraction integrity rather than frontend redesign.
+Meanwhile, technical preparation is limited to the items marked `READY_NOW` in `IMPLEMENTATION_READINESS_GATE_V2.md` and must remain isolated on a feature branch with reconciliation tests.
