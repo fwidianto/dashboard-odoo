@@ -157,6 +157,12 @@ LINK_SPECS: tuple[LinkSpec, ...] = (
     LinkSpec("purchase.order.line", "x_studio_many2one_field_ij0j0", "approval.request", "IO_TO_PO_LINE"),
     LinkSpec("purchase.order.line", "x_studio_many2one_field_n6i7C", "approval.request", "ROP_TO_PO_LINE"),
     LinkSpec("purchase.order.line", "x_studio_many2one_field_n6i7c", "approval.request", "ROP_TO_PO_LINE"),
+    # Custom fields berikut dapat berupa many2one pada Odoo. Bila ternyata char,
+    # direct link dilewati dan exact-text secondary link tetap tersedia.
+    LinkSpec("mrp.production", "x_studio_nomor_io", "approval.request", "IO_TO_MO_REFERENCE"),
+    LinkSpec("mrp.production", "x_studio_nomor_jo", "sale.order", "SO_TO_MO_JO_REFERENCE"),
+    LinkSpec("purchase.order.line", "x_studio_jo", "sale.order", "SO_TO_PO_LINE_JO_REFERENCE"),
+    LinkSpec("account.move.line", "x_studio_sales_order", "sale.order", "SO_TO_ACCOUNT_LINE_REFERENCE"),
     LinkSpec("stock.picking", "sale_id", "sale.order", "SO_TO_DELIVERY"),
     LinkSpec("stock.picking", "backorder_id", "stock.picking", "PICKING_TO_BACKORDER"),
     LinkSpec("stock.move", "picking_id", "stock.picking", "PICKING_TO_MOVE"),
