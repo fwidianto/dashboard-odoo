@@ -1,86 +1,105 @@
 # Phase 0 Decision Register — Control Tower
 
-Status: Business Process Validation in Progress
+**Status:** validation completed; stakeholder approval gate remains  
+**Authority:** `docs/09_Odoo18_Validation/SOP_SYSTEM_ALIGNMENT_MATRIX_FINAL.md`
 
-## Confirmed / Working Decisions
+## 1. Confirmed Decisions
 
 | ID | Decision | Status |
 | --- | --- | --- |
-| `CTD-001` | Business-facing term is **Tahap Proses**; technical term may remain `Process Node`. | Working Confirmed |
-| `CTD-002` | Odoo Protocol defines expected process; Dashboard Odoo checks actual data. | Confirmed Concept |
-| `CTD-003` | Dashboard exceptions may later create tickets; closed tickets may trigger AI SOP Change Proposals. | Confirmed Future Concept |
-| `CTD-004` | Human process owners and VP Operations retain approval authority. | Confirmed |
-| `CTD-005` | Business journey begins from Customer PO / Confirmed Quotation, while Sales Order remains the initial technical root. | Confirmed Working Decision |
-| `CTD-006` | Every Quotation in operational scope is considered customer-confirmed and supported by a customer PO. | Confirmed Working Decision |
-| `CTD-007` | Distribusi JO occurs after SO approval/confirmation as operational information handover to related functions. | Confirmed Working Decision |
-| `CTD-008` | Distribusi JO is not yet consistently in Odoo; future direction is to record the handover in Odoo. | Confirmed Direction |
-| `CTD-009` | Approvals are shown within the relevant document stage rather than collected into one generic Approval stage. | Working Interpretation for Validation |
-| `CTD-010` | Production is treated as Hybrid Odoo-Manual because not all users/processes currently use Odoo. | Confirmed Current Condition |
-| `CTD-011` | Payment validity must compare payment records and receivable reconciliation before selecting a source of truth. | Confirmed Investigation Approach |
-| `CTD-012` | Formal ticketing is deferred. Current focus is process clarification and SOP-dashboard consistency validation. | Confirmed Current Scope |
-| `CTD-013` | MVP/read model remains read-only and does not write back to Odoo. | Proposed Technical Guardrail |
-| `CTD-014` | Missing data is shown as `Data Mapping Pending`, `Manual`, or `Validation Pending`, not as zero. | Proposed Technical Guardrail |
-| `CTD-015` | PT Nobi Putra Angkasa is the initial company scope. | Existing Project Rule |
-| `CTD-016` | Internal Order remains a separate root for internal production journey. | Provisional |
-| `CTD-017` | Mixed-source SO uses one SO root; status is calculated line-first and rolled up. | Provisional |
+| `CTD-001` | Business-facing term is **Tahap Proses**; technical term may remain `Process Node`. | Confirmed |
+| `CTD-002` | Odoo Protocol defines expected process; Dashboard Odoo checks actual data and exceptions. | Confirmed |
+| `CTD-003` | Human process owners and VP Operations retain approval authority. | Confirmed |
+| `CTD-004` | Customer PO / Confirmed Quotation is the business start; Sales Order is the technical customer root. | Confirmed |
+| `CTD-005` | Confirmed SO from 2026 requires Customer Reference and Customer PO Date. | Confirmed by closure audit |
+| `CTD-006` | Distribusi JO is outside Odoo and may occur while SO is Draft. | Confirmed correction |
+| `CTD-007` | SO state must not be used to infer Distribusi JO completion. | Confirmed |
+| `CTD-008` | Approvals remain inside the relevant document node, not a generic Approval node. | Confirmed structure |
+| `CTD-009` | SO fulfilment is classified per line and rolled up to `MIXED_SOURCE` when needed. | Confirmed |
+| `CTD-010` | IO-linked SO may create an MO that auto-cancels as `MO_SUPPRESSED_BY_IO`. | Confirmed custom behavior |
+| `CTD-011` | ROP→RFQ/PO is a custom user-triggered Server Action. | Confirmed custom behavior |
+| `CTD-012` | PO Confirmed/Purchase is the official operational approval state. | Confirmed |
+| `CTD-013` | Reset to Draft is correction and may leave open/reserved/accounting downstream. | Confirmed runtime behavior |
+| `CTD-014` | Cancel success is determined by final state; error may coexist with successful state change. | Confirmed runtime behavior |
+| `CTD-015` | Done/Posted downstream remains historical evidence. | Confirmed governance |
+| `CTD-016` | Production is Hybrid Odoo–Manual. | Confirmed current condition |
+| `CTD-017` | Native IDs and relation tables take precedence over display text. | Confirmed data contract |
+| `CTD-018` | IO administrative state is separate from derived Production and Utilization statuses. | Confirmed |
+| `CTD-019` | Unresolved IO product/UoM/multi-IO allocation remains `DATA_EXCEPTION`. | Confirmed safety rule |
+| `CTD-020` | Payment truth uses residual and reconciliation; final labels need Accounting. | Confirmed technical basis / owner decision pending |
+| `CTD-021` | Initial Control Tower remains read-only. | Confirmed guardrail |
+| `CTD-022` | Missing/manual/provisional data is shown explicitly, never fabricated as zero. | Confirmed guardrail |
+| `CTD-023` | PT Nobi Putra Angkasa is the initial business scope; technical design should remain extensible. | Confirmed |
+| `CTD-024` | Formal ticketing, write-back, and AI SOP proposals remain future scope. | Confirmed deferral |
 
-## Clarification of Approval Placement
+The earlier statement that Distribusi JO must follow SO Confirm is superseded.
 
-The previous question about “which approvals appear as a stage” is resolved with this working model:
+## 2. Approval Placement
 
-| Approval / Review | Where It Appears |
+| Approval / Review | Control Tower placement |
 | --- | --- |
-| Sales Order approval / Confirm | `CT-01 Sales Order & Approval` |
+| SO Confirm by VP Operations | `CT-01 Sales Order & Approval` |
 | ROP approval | `CT-06 RKB / ROP` |
-| PO review Log Note and Confirm | `CT-07 RFQ / Purchase Order` |
-| Lock / Unlock request and approval | Overlay on the affected document node |
-| Exception approval | Overlay on the affected anomaly/document |
+| PO Confirm | `CT-07 RFQ / Purchase Order` |
+| Reset/Unlock request and approval | `CT-X1 Correction / Reset / Cancellation Exposure` overlay |
+| exception approval | related exception/root document |
+| Accounting correction approval | Invoice/Payment node and Accounting procedure |
 
-This avoids a generic Approval node that removes approval from its document context. This interpretation still needs confirmation during process-owner validation.
+## 3. Decisions Still Required
 
-## Questions Requiring Validation
+| ID | Decision | Why it matters | Owner |
+| --- | --- | --- | --- |
+| `CTV-001` | Data Health Owner and review cadence | required for worklist ownership/escalation | VP Operations |
+| `CTV-002` | structured Log Note format, reason codes, and approvers | required for correction audit trail | VP Operations / process owners |
+| `CTV-003` | payment/reconciliation labels and accepted adjustments | required before CT-13 KPI publication | Accounting |
+| `CTV-004` | DP, overpayment, Credit Note/write-off/compensation treatment | required for settlement classification | Accounting |
+| `CTV-005` | management payment date | required for aging/reporting | Accounting |
+| `CTV-006` | IO product matching and UoM conversion | required for production KPI | PPIC / Operations |
+| `CTV-007` | multi-IO SO quantity allocation | required for utilization KPI | PPIC / Operations |
+| `CTV-008` | Parent–Child MO persistent relation | required for genealogy rules | PPIC / Odoo technical owner |
+| `CTV-009` | cancellation/replacement procedure for PO/Receipt and SO/Delivery | required for corrective SOP | Procurement/WHD/Marketing/Operations |
+| `CTV-010` | customer commercial attachment/evidence policy | reference/date already confirmed; attachment policy remains open | Marketing |
+| `CTV-011` | aging/SLA thresholds | required for Waiting/Blocked severity | process owners / VP Operations |
+| `CTV-012` | deep-link access by role | required for production UI | Odoo Admin |
 
-| ID | Question | Why It Matters | Proposed Validation | Decision Owner |
-| --- | --- | --- | --- | --- |
-| `CTV-001` | What is the minimum evidence that a customer PO and confirmed quotation are the basis of an SO? | CT-00 cannot be data-valid without a traceable reference | Inspect attachments, Customer Reference, source document, or agreed field on sample SOs | Marketing / Admin Sales |
-| `CTV-002` | How is Distribusi JO currently performed and evidenced? | Determines current manual status and future Odoo design | Review current recipient list, message format, timing, and whether Log Note/Activity can represent it | Marketing / VP Operations |
-| `CTV-003` | Which Production activities are recorded in Odoo and which remain manual? | Prevents dashboard from equating ERP status with physical completion | Walk through one real MO from planning, Bon, production document, QC, output, and stock transfer | PPIC / Produksi / WHD |
-| `CTV-004` | Is the approval placement above correct for actual authority and timing? | Controls stage status and owner of next action | Validate SO, ROP, PO, and Unlock examples | VP Operations / Process Owners |
-| `CTV-005` | How are full payment, partial payment, credit note, reversal, and outstanding AR represented? | Determines CT-13 source of truth | Reconcile payment records, invoice residual, and AR reconciliation on sample invoices | Accounting |
-| `CTV-006` | Should Invoice DP and Final Invoice remain sub-types under one Invoice node? | Affects process map and journey detail | Validate with Accounting using DP and settlement samples | Accounting / VP Operations |
-| `CTV-007` | Who formally validates dashboard-to-SOP mapping and signs off each node? | Needed before rules become production controls | Use process owner plus VP Operations for final business approval | VP Operations |
-| `CTV-008` | Can dashboard users open the Odoo record directly? | Requires URL, access, and security validation | Test read-through deep links by user role | Odoo Admin |
-| `CTV-009` | What aging/SLA threshold applies per stage? | Needed for WAITING versus BLOCKED/EXCEPTION | Defer hard-code until sample aging and owner review | Process Owners / VP Operations |
-| `CTV-010` | Should Control Tower remain NPA-only or be multi-company-ready? | Affects data architecture and filters | Keep NPA data scope; design extensible | VP Operations |
-| `CTV-011` | Should Log Note be parsed or initially only linked? | Affects approval and handover evidence | Link first; parse only after format and access are standardized | VP Operations / Odoo Admin |
+## 4. Deferred
 
-## Deferred Questions
-
-| ID | Topic | Reason for Deferral |
+| ID | Topic | Reason |
 | --- | --- | --- |
-| `CTF-001` | Ticket tool: Helpdesk, custom model, or external register | Process and SOP-dashboard mapping must be validated first |
-| `CTF-002` | AI-generated SOP update automation | Depends on validated tickets, resolution records, and version governance |
-| `CTF-003` | Write-back from dashboard to Odoo | Current architecture remains read-only |
+| `CTF-001` | centralized ticket tool | governance owner/status model must be approved first |
+| `CTF-002` | write-back from dashboard | read-only first release |
+| `CTF-003` | AI-generated SOP change workflow | requires trusted closed issues and version governance |
+| `CTF-004` | production configuration automation | outside current documentation/analytics scope |
 
-## Current Validation Order
+## 5. Completed Validation Evidence
 
-1. Customer PO / confirmed quotation → Sales Order.
-2. SO approval/Confirm → Distribusi JO.
-3. Fulfilment branch: Stock, IO, JO/MO, Mixed.
-4. Manufacturing, procurement, Receipt, and WIP links.
-5. Production Odoo/manual coverage.
-6. Delivery → Invoice.
-7. Payment and receivable reconciliation.
-8. Rule-by-rule SOP-dashboard consistency review.
+- Odoo 18 dataset identity and schema/relationship audit;
+- automation/server-action mapping;
+- controlled runtime cancellation/reset audit;
+- final read-only closure audit;
+- 348 cancelled POs with zero open Receipt anomalies in 2026 scope;
+- 357 confirmed SOs with complete reference/date in 2026 scope;
+- 39 IO production/utilization classifications with explicit Data Exceptions;
+- final SOP–System Alignment Matrix;
+- validated Rule Catalog and Dashboard Backlog.
 
-## Review Method
+## 6. Current Gate Order
 
-Every validated decision must update:
+1. stakeholder decisions in Section 3;
+2. SOP Draft v2 approval;
+3. freeze data contract and acceptance tests;
+4. native relation extraction;
+5. canonical/exception SQL views;
+6. API;
+7. Control Tower UI;
+8. production-safe UAT and release.
 
-1. Process Node Register;
-2. Rule Registry;
-3. Data Readiness Matrix;
-4. machine-readable config/data contract;
-5. SOP section related to the process;
-6. test cases and sample record evidence;
-7. MVP acceptance criteria when affected.
+Every approved decision must update:
+
+- Process Node Register;
+- Rule Registry;
+- Data Readiness Matrix;
+- MVP Specification;
+- relevant SOP section;
+- tests and evidence;
+- rule/SOP version.
