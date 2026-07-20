@@ -1,427 +1,267 @@
-# Business Flow - Manufacturing Profitability System
+# Business Flow — Odoo 18 Manufacturing and Operations Analytics
 
-## Objective
+**Status:** authoritative business-flow baseline aligned on 20 July 2026  
+**Authority:** `docs/09_Odoo18_Validation/SOP_SYSTEM_ALIGNMENT_MATRIX_FINAL.md`
 
-The primary objective of this system is to measure and monitor profitability throughout the manufacturing process, from customer demand to final invoice collection.
-
-The system must answer:
-
-* Is a Sales Order profitable?
-* Is a Manufacturing Order profitable?
-* How accurate was the estimator's budget?
-* How accurate was PPIC's material planning?
-* Where did cost overruns occur?
-* Which customers, products, and projects generate the highest profit?
+This document defines business meaning for analytics and Control Tower design. It does not authorize production configuration changes.
 
 ---
 
-# Glossary
+## 1. Objective
+
+The system must trace operational demand, production, procurement, inventory, delivery, invoicing, and payment while answering:
+
+- where each order is in the process;
+- which source fulfils each SO line;
+- whether related documents are open, reserved, partial, done, posted, or cancelled;
+- whether cancellation/reset leaves downstream exposure;
+- whether IO production and utilization can be calculated safely;
+- whether revenue, cost, invoice, and payment evidence are consistent.
+
+---
+
+## 2. Glossary
 
 | Term | Meaning |
 | --- | --- |
-| SO | Sales Order. Customer demand and revenue document. |
-| JO | Job Order. Factory terminology for an SO that requires new production. Every JO is an SO, but not every SO is a JO. |
-| IO | Internal Order. Internal make-to-stock demand used to produce finished goods before a customer SO exists. |
-| RKB | PPIC material planning for comparison. It does not directly trigger purchasing. |
-| ROP / PEMBELIAN | Procurement request / Request of Purchase. |
-
-Important clarification:
-
-* JO is not a separate demand type from SO.
-* JO means the Sales Order requires production or represents production demand.
-* If an SO consumes finished goods already produced from Internal Order, it is not treated as JO.
-* Keep IO separate from JO.
+| SO | Sales Order; system root for customer demand and revenue. |
+| JO | Factory/operational reference to customer work or SO-related production demand; not a separate entity competing with SO. |
+| Distribusi JO | Manual operational handover outside Odoo; may occur while SO is still Draft. |
+| IO | Internal Order; production for stock/future utilization stored in the Approvals structure. |
+| MO | Manufacturing Order; recorded production execution. |
+| RKB | PPIC material planning/comparison; does not directly start purchasing. |
+| ROP / PEMBELIAN | Procurement request that can create RFQ/PO through a custom user-triggered Server Action. |
+| Receipt | Incoming stock picking and moves related to PO. |
+| Delivery | Outgoing picking and moves related to SO. |
+| WIP / Pre-Production | Physical/internal holding area before recorded consumption. |
+| Virtual Production | Odoo virtual location used for consumption/output accounting; not a physical warehouse. |
 
 ---
 
-# 1. Business Entities
+## 3. End-to-End Flow
 
-## Sales Order (SO)
+```text
+Customer PO / Confirmed Quotation
+→ Distribusi JO outside Odoo when operationally needed
+→ Sales Order
+→ VP Operations Confirm SO
+→ Fulfilment per line: Stock / Internal Order / New MO / Mixed
+→ RKB when required
+→ ROP / PEMBELIAN
+→ user-triggered RFQ / PO creation
+→ PO Confirmed
+→ Receipt and external inspection
+→ Bon: Stock → Pre-Production/WIP
+→ Consumption: Pre-Production/WIP → Virtual Production
+→ Output: Virtual Production → Post-Production
+→ WHD transfer: Post-Production → Stock
+→ Delivery
+→ Invoice
+→ Payment / Reconciliation
+```
 
-Sales Order represents confirmed customer demand.
+Important:
 
-A Sales Order may:
+- Distribusi JO is not an Odoo stage and must not be inferred from SO state.
+- SO may remain Draft while waiting for IO production, technical clarification, or management considerations.
+- Production remains Hybrid Odoo–Manual.
+- Payment status requires accounting residual and reconciliation evidence.
 
-* Consume existing finished goods inventory
-* Trigger a Manufacturing Order
-* Be linked to a previous Internal Order
+---
 
-Sales Order source types for V1:
+## 4. Sales Order
 
-| SO source type | Business meaning |
+### 4.1 Customer evidence
+
+For confirmed SOs from 2026 onward, Customer Reference and Customer PO Date are mandatory controls. The closure audit found both fields complete for all 357 confirmed SOs in scope.
+
+### 4.2 Approval
+
+VP Operations confirmation in Odoo is the official system approval. The confirmed `sale` state is the operational system evidence; physical signatures may remain external.
+
+### 4.3 Fulfilment source
+
+Source is classified per SO line:
+
+| Source | Meaning |
 | --- | --- |
-| FROM_INTERNAL_ORDER | SO links to an IO and uses finished goods already produced from that IO. No new MO should be needed for this SO. |
-| MAKE_TO_ORDER / JO | SO requires new production and creates or links to MO. Factory users call this JO. |
-| FROM_STOCK | SO is delivered from available stock without IO/MO. |
+| `FROM_STOCK` | fulfilled from available stock without a new production requirement. |
+| `FROM_INTERNAL_ORDER` | fulfilled using stock produced under one or more IOs. |
+| `MAKE_TO_ORDER` | requires a new MO linked to customer demand. |
+| `MIXED_SOURCE` | the SO contains lines from more than one source. |
+| `SOURCE_DATA_EXCEPTION` | source cannot be proven safely. |
 
-Sales Order is the primary revenue source.
+Do not flatten mixed SOs to an IO-first header rule.
 
-Key Table:
+### 4.4 Internal Order suppression behavior
 
-* sale_order
-* sale_order_line
+An SO linked to IO may still create a new MO that is immediately cancelled by active automation. This is valid `MO_SUPPRESSED_BY_IO`, not ordinary production cancellation or failure.
 
----
+### 4.5 Cancellation
 
-## Internal Order (IO)
-
-Internal Order is demand created internally by the company.
-
-Purpose:
-
-* Build stock before customer order arrives
-* Prepare inventory for expected demand
-* Produce strategic finished goods
-
-Internal Orders generate Manufacturing Orders before customer Sales Orders exist.
-
-For dashboard v1, Internal Order is not a separate missing master table.
-Internal Order exists inside the approval module:
-
-* `approval_product_line`
-* `x_studio_category = MANUFACTURE`
-
-For MANUFACTURE approval lines, `approval_request_id` displays the Internal Order number.
-The primary bridge to Manufacturing Order is:
-
-* `approval_product_line.approval_request_id = mrp_production.x_studio_nomor_io`
-
-`approval_product_line.x_studio_nomor_io` is secondary context and should not be the primary Internal Order bridge for v1.
-
-Later Sales Orders produced from Internal Order stock are linked by the Sales Order IO field:
-
-* `sale_order.x_studio_io_1`
-
-This field is stored as set/list text, for example `{1081}` or `{1361,1578}`.
-It must be parsed into individual numeric approval request IDs.
-
-One Sales Order may reference multiple Internal Orders.
-One Internal Order may be referenced by multiple Sales Orders.
-
-Do not infer the Internal Order to Sales Order relationship directly from MO.
-
-Once a customer order arrives:
-
-* Sales Order references Internal Order
-* Existing finished goods inventory is delivered
-* No new Manufacturing Order is required
+Cancel is successful only when final SO state becomes `cancel`. Done/posted downstream records remain historical evidence; open downstream documents require explicit resolution or approved exception.
 
 ---
 
-## Manufacturing Order (MO)
+## 5. Internal Order
 
-Manufacturing Order represents production execution.
+IO is represented in the approval module, including MANUFACTURE-category approval lines. Use native relation IDs and relation tables as the source of truth.
 
-Key Table:
+The direct SO–IO relationship is many-to-many. One SO may reference multiple IOs and one IO may be used by multiple SOs. The relation table must be extracted directly; display/set text is secondary evidence.
 
-* mrp_production
+Administrative approval status is not reliable operational progress. Production and utilization are separate derived dimensions.
 
-Purpose:
+### 5.1 Proposed Production Status
 
-* Convert raw materials into finished goods
+- `NOT_STARTED`;
+- `IN_PROGRESS`;
+- `PARTIALLY_PRODUCED`;
+- `FULLY_PRODUCED`;
+- `OVER_PRODUCED`;
+- `CANCELLED`;
+- `DATA_EXCEPTION`.
 
-Manufacturing Orders may originate from:
+### 5.2 Proposed Utilization Status
 
-1. Sales Orders that require production, also called JO by factory users
-2. Internal Orders
+- `NOT_UTILIZED`;
+- `PARTIALLY_UTILIZED`;
+- `FULLY_UTILIZED`;
+- `OVER_UTILIZED`;
+- `DATA_EXCEPTION`.
 
-JO fields in Odoo should be interpreted as Sales Order / job-order references where valid, not as a separate entity competing with SO.
-
----
-
-# 2. Manufacturing Scenarios
-
-## Scenario A - Make To Order
-
-Customer PO
-→ Sales Order
-→ Manufacturing Order
-→ Finished Goods
-→ Delivery
-→ Invoice
-→ Accounts Receivable
-
-Flow:
-
-SO
-→ MO
-→ DO
-→ Invoice
-→ AR
+Use `DATA_EXCEPTION` for incompatible/mixed product or UoM, missing direct relations, contradictory lifecycle evidence, or multi-IO SO quantity without approved allocation.
 
 ---
 
-## Scenario B - Make To Stock
+## 6. Manufacturing
 
-Internal Order
-→ Manufacturing Order
-→ Finished Goods Inventory
+MO may originate from:
 
-Later:
+1. customer/JO production demand;
+2. Internal Order;
+3. valid special processes such as conversion or stock production.
 
-Customer PO
-→ Sales Order
-→ Delivery
-→ Invoice
-→ AR
+Production movement:
 
-Flow:
+```text
+Bon: Stock → Pre-Production/WIP
+Consumption: Pre-Production/WIP → Virtual Production
+Output: Virtual Production → Post-Production
+WHD transfer: Post-Production → Stock
+```
 
-IO
-→ MO
-→ Finished Goods Stock
+`KRW/FG` and `FF5/FG` are legacy Scala locations and are not used in the current flow.
 
-Then
+Odoo MO and stock records prove recorded execution, but do not alone prove every shop-floor, QC, signature, or external-document step.
 
-SO
-→ DO
-→ Invoice
-→ AR
-
-No new MO is generated.
+Parent–Child MO business dependency exists, but exact genealogy must not be published until a trusted persistent relation is available.
 
 ---
 
-## Scenario C - Existing Finished Goods Available
+## 7. RKB, ROP, and Purchase Order
 
-Customer PO
-→ Sales Order
+### 7.1 RKB
 
-If stock is available:
+RKB is planning/comparison. It does not directly trigger purchasing.
 
-SO
-→ Delivery
-→ Invoice
-→ AR
+### 7.2 ROP / PEMBELIAN
 
-No MO is created.
+ROP is the procurement request. RFQ/PO creation is performed through a custom, user-triggered Server Action, not a fully automatic standard Odoo transition.
 
----
+### 7.3 PO approval
 
-# 3. Cost Planning Flow
+PO state Confirmed/Purchase is accepted as official operational approval. Approver/sign helper fields are supporting metadata.
 
-## Estimator Stage
+### 7.4 Reset to Draft
 
-Before production begins:
+Reset to Draft is correction, not cancellation. Runtime evidence proved a PO can change `purchase → draft` while Draft Vendor Bill, Receipt, and Stock Moves remain active and linked.
 
-Estimator prepares projected cost.
+Therefore analytics must expose `RESET_TO_DRAFT_WITH_OPEN_DOWNSTREAM` rather than assuming cascade cleanup.
 
-Estimator Output:
+### 7.5 PO cancellation
 
-* Material Cost
-* Labor Cost
-* Overhead Cost
-* Expected Total Cost
-* Expected Profit
-
-Source:
-Excel file outside Odoo
-
-Estimator provides baseline profitability expectation.
+Cancel PO may be blocked or fail when downstream is active. A cancelled PO with an open Receipt is a Data Health anomaly. No such case was found among 348 cancelled POs in the audited 2026 scope.
 
 ---
 
-## Commercial Flow
+## 8. Receipt, Inventory, and Delivery
 
-Estimator
-→ Marketing
-→ Customer
-→ Customer PO
-→ BOQ
-→ PPIC
+WHD validates Receipt after physical/documentary inspection. The Odoo Quality module is not part of the current operational flow.
+
+Service Receipt may require BAP/BAST or contract evidence.
+
+Cancel Receipt can cancel related stock movements but does not automatically cancel the PO.
+
+WHD validates Delivery after customer receipt/evidence. Cancel Delivery does not automatically cancel the SO.
+
+DO Manual/Internal Transfer is an exception and must be reconciled against normal SO/MO/Delivery flow.
 
 ---
 
-# 4. PPIC Planning Flow
+## 9. Invoice and Payment
 
-PPIC translates commercial requirements into manufacturing requirements.
+Invoice and accounting evidence must use native accounting relationships.
 
-Responsibilities:
+A Draft Invoice cancellation can change state even when the runtime/API response returns an error. Final state must be checked before retrying; classify as `ACTION_APPLIED_WITH_RPC_ERROR` where applicable.
 
-* Determine required materials
-* Check inventory availability
-* Forecast shortages
-* Plan production
+Payment technical truth uses:
 
-Output:
+- posted invoice;
+- amount residual;
+- receivable journal items;
+- partial/full reconciliation;
+- payment entries;
+- reversal, Credit Note, write-off, compensation, or adjustment evidence.
 
-RKB (Rencana Kebutuhan Material)
+Sales helper/copied paid fields are not the accounting source of truth.
 
-Stored in:
+Final business labels, DP allocation, overpayment, adjustment treatment, and management payment date remain pending Accounting approval.
 
-approval_product_line
+---
 
-Approval categories:
+## 10. Correction and Cancellation Vocabulary
 
-| Category | Business role |
+| Code | Meaning |
 | --- | --- |
-| RKB | Material planning / PPIC comparison |
-| PEMBELIAN | ROP / Request of Purchase |
-| ROP | Same business meaning as PEMBELIAN |
-| MANUFACTURE | Internal Order |
-| INTERNAL USE | Out of current dashboard scope |
-
-(Custom module)
-
----
-
-# 5. RKB Purpose
-
-RKB is the detailed material requirement list for PPIC planning and comparison.
-
-It serves as:
-
-* Production planning document
-* Cost comparison document
-
-RKB is significantly more detailed than Estimator data.
-
-Because RKB contains actual material requirements, it can be matched directly against Manufacturing Orders.
-
-RKB does not directly trigger purchasing. Procurement request flow comes from ROP/PEMBELIAN approval lines.
+| `RESET_TO_DRAFT_WITH_OPEN_DOWNSTREAM` | parent returned to Draft while operational/accounting downstream remains active. |
+| `CANCEL_BLOCKED_OR_FAILED` | action returned an error and target state did not change. |
+| `ACTION_APPLIED_WITH_RPC_ERROR` | action returned an error but target state changed. |
+| `CANCELED_PARENT_WITH_OPEN_DOWNSTREAM` | cancelled/reset parent with open child records. |
+| `CANCELED_PARENT_WITH_DONE_DOWNSTREAM` | cancelled/reset parent with completed historical evidence. |
+| `CANCELED_PARENT_WITH_RESERVED_STOCK` | cancelled/reset parent with reserved/assigned movement. |
+| `CANCELED_PARENT_WITH_PARTIAL_BACKORDER` | cancelled/reset parent with partial quantity or open backorder. |
+| `CANCELLED_PO_WITH_OPEN_RECEIPT` | cancelled PO with incoming Receipt not Cancel/Done. |
+| `CANCELLED_SO_WITH_ACTIVE_DOWNSTREAM` | cancelled SO with active MO, Delivery, PO, Invoice, or Backorder. |
+| `AUTOMATION_EFFECT_UNCONFIRMED` | trigger shape matches but exact execution/effect is not proven. |
 
 ---
 
-# 6. Procurement & Inventory Flow
+## 11. Data Contract Principles
 
-Important v1 rule:
-
-* RKB is planning/comparison only and does not directly trigger purchasing.
-* ROP / PEMBELIAN is the approval-based Request of Purchase flow.
-* MANUFACTURE approval lines represent Internal Order flow into Manufacturing Order.
-
-RKB
-→ Check Inventory
-
-If material available:
-
-Inventory
-→ Manufacturing Order
-
-If material unavailable:
-
-Purchase Request
-→ Purchase Order
-→ Goods Receipt
-→ Inventory
-→ Manufacturing Order
+1. Preserve native Odoo IDs alongside display values.
+2. Use direct foreign keys and relation tables before text matching.
+3. Extract SO–IO many-to-many directly.
+4. Classify fulfilment per SO line.
+5. Use stable company ID, not display name.
+6. Keep administrative, operational, and derived statuses separate.
+7. Keep helper automation fields secondary to transaction truth.
+8. Expose stock picking/move/backorder evidence.
+9. Expose invoice residual and reconciliation before Payment KPIs.
+10. Return `UNKNOWN`/`DATA_EXCEPTION` rather than infer unresolved allocation.
+11. Keep cancelled parents visible when downstream exposure exists.
+12. Link rule version to SOP version and effective date.
 
 ---
 
-# 7. Profitability Framework
+## 12. Dashboard Hierarchy
 
-## Level 1 - Estimator Profitability
+1. **Sales Order Control** — demand, line source, commitment, delivery/invoice exposure.
+2. **Internal Order Control** — requested, produced, utilized, remaining, and data exceptions.
+3. **Manufacturing Control** — MO lifecycle, components, WIP, output, and site movement.
+4. **Procurement and Receipt Control** — ROP, PO, Receipt, backorder, and quantity mismatch.
+5. **Delivery Control** — readiness, partial/backorder, evidence, and cancellation exposure.
+6. **Accounting Control** — invoice, residual, reconciliation, and payment taxonomy after approval.
+7. **Exception Worklist** — severity, owner, age, evidence, SOP reference, and resolution status.
+8. **Profitability Analytics** — estimator, RKB, actual production, procurement, and final SO cost/revenue.
 
-Expected Profit
-
-Revenue
-minus
-Estimator Cost
-
-Purpose:
-
-Measure quotation quality.
-
----
-
-## Level 2 - PPIC Profitability
-
-Expected Profit
-
-Revenue
-minus
-RKB Cost
-
-Purpose:
-
-Measure planning accuracy.
-
----
-
-## Level 3 - Manufacturing Profitability
-
-Actual Profit
-
-Revenue
-minus
-Actual MO Consumption
-minus
-Labor
-minus
-Overhead
-
-Purpose:
-
-Measure production efficiency.
-
----
-
-## Level 4 - Final Sales Order Profitability
-
-Revenue
-minus
-All Actual Costs
-
-Purpose:
-
-Determine true business profitability.
-
----
-
-# 8. Dashboard Hierarchy
-
-Level 1
-
-Sales Order Dashboard
-
-* Sales value
-* Gross profit
-* Margin %
-* Customer profitability
-
----
-
-Level 2
-
-Internal Order Dashboard
-
-* Stock build value
-* Inventory turnover
-* Conversion to Sales Order
-
----
-
-Level 3
-
-Manufacturing Dashboard
-
-* MO cost
-* Material variance
-* Production efficiency
-* Cost overrun
-
----
-
-Level 4
-
-Estimator vs Actual Dashboard
-
-Estimator Cost
-vs
-RKB Cost
-vs
-Actual Cost
-
-Variance analysis
-
----
-
-Level 5
-
-Executive Profitability Dashboard
-
-Customer Profitability
-Product Profitability
-Project Profitability
-Salesperson Profitability
-Monthly Profit Trend
+Implementation must begin with extraction and data-contract integrity before UI redesign.
