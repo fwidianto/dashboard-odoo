@@ -77,9 +77,10 @@ This index lists the documentation cleanup locations created for the Odoo Analyt
 | Canonical Status Model | `docs/08_Control_Tower/PROCESS_STATUS_MODEL.md` | Defines consistent cross-module status semantics and precedence. |
 | Rule Registry v1 | `docs/08_Control_Tower/RULE_REGISTRY_V1.md` | Links SOP rules to data checks, severity, owner, action, and implementation readiness. |
 | Data Readiness Matrix | `docs/08_Control_Tower/DATA_READINESS_MATRIX.md` | Assesses current data and dashboard readiness for every process stage. |
+| Process–SOP–Dashboard Validation Plan | `docs/08_Control_Tower/PROCESS_SOP_DASHBOARD_VALIDATION_PLAN.md` | Defines sample selection, validation questions, evidence, gap classification, and sign-off before implementation. |
 | MVP Control Tower Specification | `docs/08_Control_Tower/MVP_CONTROL_TOWER_SPEC.md` | Defines page behavior, API contracts, data views, scope, and acceptance criteria. |
 | Governance and Versioning | `docs/08_Control_Tower/GOVERNANCE_AND_VERSIONING.md` | Controls synchronized SOP, dashboard, rule, ticket, and AI-assisted change releases. |
-| Phase 0 Decision Register | `docs/08_Control_Tower/PHASE_0_DECISION_REGISTER.md` | Tracks provisional decisions and questions requiring human confirmation. |
+| Phase 0 Decision Register | `docs/08_Control_Tower/PHASE_0_DECISION_REGISTER.md` | Tracks confirmed decisions and questions requiring human validation. |
 | Machine-readable Contract | `config/control_tower.yaml` | Initial configuration for nodes, statuses, roots, versions, and API contracts. |
 
 ## 99 Unsorted
