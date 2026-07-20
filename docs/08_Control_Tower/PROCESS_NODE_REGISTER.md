@@ -1,173 +1,184 @@
 # Process Node Register — Odoo Protocol Control Tower
 
-Status: Phase 0 Draft v2 — clarified with VP Operations review follow-up  
-Business authority: Odoo Protocol  
-Technical implementation: Dashboard Odoo
+**Status:** Phase 0 Draft v3 — aligned with final Odoo 18 validation  
+**Business authority:** `docs/09_Odoo18_Validation/SOP_SYSTEM_ALIGNMENT_MATRIX_FINAL.md`  
+**Technical implementation:** Dashboard Odoo
 
-## 1. Tujuan
+## 1. Purpose
 
-Dokumen ini membekukan definisi awal setiap **tahap proses** yang akan tampil pada aplikasi Control Tower. Satu tahap proses menjadi pintu masuk untuk melihat transaksi aktif, status, aging, anomaly, owner, dan referensi SOP.
+This register defines business-facing process nodes for record counts, states, aging, anomalies, owner, evidence, and SOP references.
 
-Fokus saat ini adalah memvalidasi keterkaitan proses aktual, SOP, dan data dashboard. Ticketing dan AI-assisted SOP update tetap menjadi arah berikutnya, tetapi bukan scope implementasi sekarang.
+Nodes represent traceable process concepts. A manual milestone is not forced into an Odoo sequence when no reliable Odoo event exists.
 
-## 2. Root Flow Instance
+## 2. Root Flow Instances
 
-Perjalanan bisnis dimulai dari **Customer PO / Confirmed Quotation**. Namun root teknis awal tetap:
+1. **Customer flow root:** `sale_order.id`.
+2. **Internal production root:** `approval_request.id` for Internal Order.
+3. **Procurement root:** approval/ROP and related `purchase_order.id`.
+4. **Accounting root:** `account_move.id` and reconciliation graph.
 
-1. **Customer Flow Root**: `sale_order.id` / Nomor SO.
-2. **Internal Production Root**: `approval_request.id` / Nomor IO.
-
-Semua Quotation yang masuk ke flow operasional dianggap:
-
-- telah dikonfirmasi customer; dan
-- memiliki PO customer sebagai dasar order.
-
-Karena customer PO / confirmed quotation belum dipetakan secara konsisten sebagai object data dashboard, tahap tersebut ditampilkan sebagai milestone bisnis/manual sebelum Sales Order.
+Customer PO / confirmed quotation is the business start. Sales Order remains the technical dashboard root.
 
 ## 3. Canonical Process Nodes
 
-| Node ID | Tahap Proses | Jenis | Primary Owner | Entry Condition | Exit Condition | Sumber Utama | Readiness |
+| Node ID | Process stage | Type | Primary owner | Entry | Exit / completion | Main evidence | Coverage |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `CT-00` | Customer PO / Confirmed Quotation | Document / Milestone | Marketing | Quotation telah dikonfirmasi customer dan PO customer tersedia | Sales Order dibuat berdasarkan dokumen tersebut | Customer PO, confirmed quotation, attachment/reference | Manual / Mapping Pending |
-| `CT-01` | Sales Order & Approval | Document / Control | Marketing / Admin Sales; approver sesuai kewenangan | Dasar customer order tersedia dan SO dibuat | SO telah direview, approved/confirmed, atau Cancelled | `sale_order`, `sale_order_line`, status, Log Note | Ready / Partial |
-| `CT-02` | Distribusi JO / Operational Handover | Communication / Handover | Marketing / Admin Sales | SO sudah approved/confirmed | Informasi order telah disebarkan kepada bagian terkait dan pekerjaan dapat ditindaklanjuti | Saat ini komunikasi operasional; future Odoo Log Note/Activity/Follower perlu divalidasi | Manual / Future Odoo |
-| `CT-03` | Fulfilment Decision | Decision | Marketing / PPIC | SO Confirmed dan Distribusi JO telah dilakukan atau informasi order telah diterima bagian terkait | Source ditentukan: Stock, IO, JO/MO, atau Mixed | SO source views, IO bridge, MO context | Ready / Partial |
-| `CT-04` | Internal Order / Stock Fulfilment | Document / Process | PPIC | SO menggunakan IO atau kebutuhan stock internal dibuat | Stock hasil IO tersedia untuk fulfilment | `approval_request`, `approval_product_line`, MO bridge | Ready |
-| `CT-05` | Manufacturing Planning | Document / Process | PPIC | MO dibuat atau kebutuhan produksi teridentifikasi | MO Confirmed dan material plan tersedia | `mrp_production`, `stock_move` | Ready / Partial |
-| `CT-06` | RKB / ROP Purchase Request | Document / Approval | PPIC / Requester; approver ROP | Kebutuhan material atau jasa diajukan | ROP Approved, Cancelled, atau ditolak | `approval_request`, `approval_product_line` | Partial |
-| `CT-07` | RFQ / Purchase Order | Document / Process / Approval | Procurement; Assistant VP / VP Operations untuk review/approval | RFQ terbentuk dari ROP | PO selesai, dibatalkan, atau seluruh penerimaan selesai | `purchase_order`, `purchase_order_line`, Log Note | Ready / Partial |
-| `CT-08` | Receipt & Inspection | Document / Control | WHD / Gudang | Receipt terbentuk | Receipt Done, Backorder, Return, atau Cancelled | `stock_picking`, `stock_move`, `stock_move_line` | Ready / Partial / Manual Evidence |
-| `CT-09` | Material Transfer / Pre-Production | Process | PPIC / WHD | Material dibon dari Stock | Material tersedia di Pre-Production/WIP | stock picking / move | Partial |
-| `CT-10` | Production / Finish Good | Hybrid Process | PPIC / Produksi / WHD | Material tersedia dan produksi berjalan | Output masuk Post-Production lalu Stock | MO, component moves, finished moves, production document/manual evidence | Partial / Hybrid Odoo-Manual |
-| `CT-11` | Delivery | Document / Process | Marketing / WHD | Delivery terbentuk dari SO | Customer menerima, Delivery Done, atau Backorder | SO lines, delivery picking, signed delivery evidence | Ready / Partial Evidence |
-| `CT-12` | Invoice | Document / Process | Accounting | Invoiceable condition terpenuhi | Invoice Posted, Cancelled, Credit Note, atau fully settled sesuai hasil validasi Accounting | `account_move`, `account_move_line`, SO invoice progress | Ready / Partial |
-| `CT-13` | Payment / Collection | Document / Process | Accounting | Invoice Posted dan memiliki receivable | Payment dan saldo receivable telah konsisten serta outstanding dapat dijelaskan | payment record dan receivable reconciliation — keduanya wajib dibandingkan | Investigation Pending |
+| `CT-00` | Customer PO / Confirmed Quotation | Business evidence | Marketing | customer commitment exists | SO created with required reference/date | Customer Reference, Customer PO Date, attachment/manual evidence | Odoo reference + manual evidence |
+| `CT-01` | Sales Order & Approval | Document / Control | Marketing; VP Operations | SO created | confirmed, cancelled, or retained Draft with reason | `sale_order`, lines, Log Note | Odoo |
+| `CT-02` | Distribusi JO / Operational Handover | Manual communication milestone | Marketing / Operations | business information available | relevant internal parties receive handover | external communication/manual evidence | Manual outside Odoo |
+| `CT-03` | Fulfilment Classification | Derived decision | Marketing / PPIC | SO lines exist and source evidence is available | each line classified Stock/IO/New MO or Data Exception | SO line, SO–IO relation, MO, stock evidence | Partial / Derived |
+| `CT-04` | Internal Order | Document / Process | PPIC | IO created for stock/future demand | production and utilization status derived | approval request/line, IO–MO and SO–IO relations | Odoo + Derived |
+| `CT-05` | Manufacturing Planning | Document / Process | PPIC | production need/MO exists | MO confirmed/cancelled and material plan known | `mrp_production`, components, schedule | Odoo / Hybrid |
+| `CT-06` | RKB / ROP Purchase Request | Planning / Approval | PPIC / Requester | material/service need recorded | ROP approved/refused/cancelled; RFQ action outcome reviewed | approval request/line | Custom / Partial |
+| `CT-07` | RFQ / Purchase Order | Document / Approval | Procurement | RFQ/PO created by user-triggered action/manual procurement | PO confirmed/cancelled/closed and downstream exposure known | PO/lines, ROP links, Log Note | Odoo / Custom |
+| `CT-08` | Receipt & Inspection | Document / Control | WHD / requester | incoming picking exists | Done, Cancel, Return, Backorder, or approved exception | picking/move/move line + external inspection evidence | Odoo + Manual evidence |
+| `CT-09` | Material Transfer / Pre-Production | Process | PPIC / WHD | material is issued from Stock | material available in Pre-Production/WIP or corrective disposition complete | internal picking/moves | Odoo / Hybrid |
+| `CT-10` | Production / Finish Good | Hybrid process | PPIC / Production / WHD | production execution starts | consumption/output recorded and FG transferred to Stock | MO, component/finished moves, external production evidence | Hybrid |
+| `CT-11` | Delivery | Document / Process | WHD / Marketing | outgoing picking exists | Done, Cancel, Backorder, Return, or approved exception | delivery picking/moves + signed evidence | Odoo + Manual evidence |
+| `CT-12` | Invoice | Document / Process | Accounting | invoiceable condition exists | Posted, Cancelled/Reversed, or exception explained | invoice/move lines, SO linkage | Odoo |
+| `CT-13` | Payment / Collection | Accounting process | Accounting | posted receivable exists | residual/reconciliation/settlement basis explained | invoice residual, receivable lines, payment and reconciliation | Investigation pending taxonomy |
+| `CT-X1` | Correction / Reset / Cancellation Exposure | Cross-cutting control | respective process owner | Reset/Cancel/action attempt occurs | final state and all downstream exposure verified | chatter, states, relations, Log Note, runtime evidence if available | Partial / Manual + Odoo |
+| `CT-X2` | Exception Worklist | Cross-cutting control | Data Health Owner | a rule detects review condition | Closed, Accepted Exception, or False Positive with verifier | rule output + owner evidence | Future Control Tower |
 
-## 4. Posisi Approval dalam Control Tower
+## 4. Critical Sequencing Clarifications
 
-Approval **tidak dijadikan satu tahap umum yang menampung semua approval**. Approval tampil pada tahap dokumen yang relevan:
+### 4.1 Distribusi JO is not a mandatory Odoo sequence node
 
-- approval / Confirm Sales Order pada `CT-01`;
-- approval ROP pada `CT-06`;
-- review Log Note dan Confirm Purchase Order pada `CT-07`;
-- request dan approval `Lock` / `Unlock` sebagai overlay pada dokumen yang dikoreksi;
-- approval exception sebagai overlay pada anomaly terkait.
+Distribusi JO:
 
-Dengan model ini, user dapat melihat dokumen sedang tertahan pada approval apa tanpa memisahkannya dari konteks proses aslinya.
+- occurs outside Odoo;
+- may happen while SO is Draft;
+- may precede or follow SO Confirm depending on operational need;
+- must not be inferred from SO state, chatter, followers, activities, or MO state.
 
-## 5. Cabang Flow yang Sah
+Therefore `CT-02` is displayed as a manual milestone/coverage indicator, not a required database transition between `CT-01` and `CT-03`.
 
-Semua customer flow diawali dengan:
+### 4.2 Fulfilment is line-level
+
+Each SO line is classified separately:
+
+- `FROM_STOCK`;
+- `FROM_INTERNAL_ORDER`;
+- `MAKE_TO_ORDER`;
+- `SOURCE_DATA_EXCEPTION`.
+
+SO header becomes `MIXED_SOURCE` when multiple valid sources coexist.
+
+### 4.3 IO-based SO and MO suppression
+
+An IO-linked SO may create a new MO that is immediately cancelled by automation. The node output is `MO_SUPPRESSED_BY_IO`; it is not a failed production node.
+
+### 4.4 Reset to Draft and Cancel are cross-cutting controls
+
+Reset/Cancel is not treated as a simple terminal state. `CT-X1` checks:
+
+- final root state;
+- open/reserved/partial/backorder downstream;
+- Done/Posted historical evidence;
+- deleted/unlinked relationships;
+- required Log Note and owner closure.
+
+## 5. Valid Flow Patterns
+
+### 5.1 Stock fulfilment
 
 ```text
-CT-00 Customer PO / Confirmed Quotation
-→ CT-01 Sales Order & Approval
-→ CT-02 Distribusi JO / Operational Handover
-→ CT-03 Fulfilment Decision
+CT-00 → CT-01
+CT-02 may occur independently
+CT-03 = FROM_STOCK
+→ CT-11 → CT-12 → CT-13
 ```
 
-### 5.1 Trading dari Stock
+### 5.2 Internal Order production before customer demand
 
 ```text
-CT-03 Fulfilment Decision = FROM_STOCK
-→ CT-11 Delivery
-→ CT-12 Invoice
-→ CT-13 Payment
-```
-
-### 5.2 Sales Order dari Internal Order
-
-```text
-CT-03 Fulfilment Decision = FROM_INTERNAL_ORDER
-→ CT-04 Internal Order
-→ CT-05 Manufacturing Planning
+CT-04 IO
+→ CT-05 MO
 → CT-09 Material Transfer
-→ CT-10 Production / Finish Good
-→ CT-11 Delivery
-→ CT-12 Invoice
-→ CT-13 Payment
+→ CT-10 Production / FG to Stock
 ```
 
-### 5.3 Make-to-Order / JO
+Later customer flow:
 
 ```text
-CT-03 Fulfilment Decision = MAKE_TO_ORDER
-→ CT-05 Manufacturing Planning
-→ CT-06 RKB / ROP
-→ CT-07 RFQ / PO
-→ CT-08 Receipt
-→ CT-09 Material Transfer
-→ CT-10 Production / Finish Good
-→ CT-11 Delivery
-→ CT-12 Invoice
-→ CT-13 Payment
+CT-00 → CT-01
+CT-02 may occur independently
+CT-03 = FROM_INTERNAL_ORDER
+→ optional MO_SUPPRESSED_BY_IO evidence
+→ CT-11 → CT-12 → CT-13
 ```
 
-### 5.4 Mixed Source
+Do not represent a cancelled suppressed SO-based MO as new required production.
 
-Satu SO dapat memiliki line dari Stock, IO, dan MO. Status node dihitung per line terlebih dahulu lalu diringkas pada level SO. SO diberi label `MIXED_SOURCE` dan detail line wajib tersedia pada drill-down.
+### 5.3 Make to Order
 
-## 6. Odoo Coverage versus Proses Aktual
+```text
+CT-00 → CT-01
+CT-02 may occur independently
+CT-03 = MAKE_TO_ORDER
+→ CT-05
+→ CT-06 when material/service purchase is required
+→ CT-07 → CT-08
+→ CT-09 → CT-10
+→ CT-11 → CT-12 → CT-13
+```
 
-Belum seluruh user dan kegiatan operasional berjalan di Odoo. Produksi adalah contoh utama.
+### 5.4 Mixed source
 
-Dashboard wajib membedakan:
+One SO may branch across Stock, IO, and new MO by line. Node summaries must preserve line detail and show `MIXED_SOURCE`.
 
-- **ERP Status**: status yang dapat dibuktikan dari Odoo;
-- **Operational Status**: kondisi aktual berdasarkan user atau dokumen eksternal;
-- **Data Confidence**: High, Medium, Low, atau Manual;
-- **Coverage Mode**: Odoo, Hybrid, atau Manual.
+## 6. Status Dimensions
 
-Status Odoo tidak boleh langsung dianggap membuktikan pekerjaan fisik selesai apabila proses tersebut masih memakai dokumen atau komunikasi di luar Odoo.
+Every node should preserve separate dimensions:
 
-## 7. Elemen Cross-Cutting
+- **Native Odoo status**;
+- **Canonical operational status**;
+- **Manual/evidence status**;
+- **Coverage mode:** Odoo, Hybrid, Manual, Derived;
+- **Data confidence:** High, Medium, Low, Manual;
+- **Exception overlays**;
+- **Rule and SOP version**.
 
-Elemen berikut menjadi overlay pada tahap proses, bukan alur terpisah:
+Odoo Done does not automatically prove every physical/QC/manual activity is complete.
 
-- approval yang relevan dengan dokumen;
-- anomaly aktif;
-- request `Lock` / `Unlock`;
-- Log Note terakhir;
-- Rule ID dan SOP section terkait;
-- owner dan target tindak lanjut;
-- data confidence dan coverage mode.
+## 7. Click Contract
 
-Formal ticketing ditunda sampai validasi proses dan rule SOP-dashboard selesai.
+Clicking a node should show:
 
-## 8. Aturan Klik Tahap Proses
+1. active and total record count;
+2. native and canonical state;
+3. line/source detail where relevant;
+4. aging and commitment date;
+5. blocked, partial, reserved, backorder, Done/Posted, and Cancel exposure;
+6. upstream/downstream native IDs and business references;
+7. evidence and confidence;
+8. process owner/approver;
+9. Rule ID and SOP section;
+10. source timestamp and rule version.
 
-Saat user mengklik satu tahap proses, aplikasi minimal menampilkan:
+## 8. Confirmed Decisions Used
 
-1. jumlah record aktif;
-2. native status dan canonical status;
-3. operational/manual status bila tersedia;
-4. aging;
-5. record blocked atau partial;
-6. anomaly dan severity;
-7. process owner dan approver terkait;
-8. dokumen upstream dan downstream;
-9. link ke detail record atau dashboard existing;
-10. SOP section dan Rule ID;
-11. data confidence, coverage mode, dan source timestamp.
+- Customer PO/confirmed quotation is the business start.
+- Sales Order is the technical customer root.
+- Customer Reference and PO Date are mandatory controls for confirmed SOs from 2026.
+- Distribusi JO is manual outside Odoo and may occur while SO is Draft.
+- source is line-level; header can be `MIXED_SOURCE`.
+- IO-linked MO cancellation may be valid suppression.
+- ROP→RFQ/PO is custom and user-triggered.
+- PO Confirmed is operational approval.
+- Reset to Draft is correction and may leave downstream active.
+- Cancel success is determined from final state.
+- native IDs and relation tables are primary.
+- production is Hybrid.
+- payment needs residual/reconciliation and Accounting taxonomy.
 
-## 9. Keputusan yang Sudah Dipakai
+## 9. Open Decisions
 
-- Business journey dimulai dari Customer PO / Confirmed Quotation.
-- Semua Quotation dalam scope dianggap sudah dikonfirmasi customer dan memiliki PO customer.
-- Sales Order tetap menjadi root teknis awal customer journey.
-- Distribusi JO adalah tahap handover setelah SO approved/confirmed.
-- Distribusi JO masih manual/non-Odoo, tetapi diarahkan agar ke depan tercatat di Odoo.
-- Approval menempel pada tahap dokumen terkait, bukan satu node approval umum.
-- Nomor IO menjadi root untuk internal production journey.
-- Produksi diperlakukan sebagai proses hybrid Odoo-manual sampai coverage aktual tervalidasi.
-- Payment belum boleh disimpulkan hanya dari satu indikator; payment record dan receivable reconciliation harus diuji konsistensinya.
-- Formal ticketing ditunda; fokus saat ini adalah validasi proses, SOP, source data, dan dashboard.
-- Status asli Odoo tetap disimpan; canonical status hanya interpretasi business-facing.
+1. Accounting payment labels and settlement treatment.
+2. IO product/UoM matching and multi-IO allocation.
+3. persistent Parent–Child MO relation.
+4. Data Health Owner, review cadence, and escalation.
+5. structured Log Note reason codes and enforcement.
+6. manual evidence design for Distribusi JO and physical/QC activities.
 
-## 10. Open Validation Items
-
-1. Bukti minimum bahwa Customer PO / confirmed quotation telah menjadi dasar SO.
-2. Bentuk bukti Distribusi JO saat ini dan rancangan pencatatannya di Odoo ke depan.
-3. Bagian proses Produksi mana yang sudah dilakukan di Odoo dan mana yang masih manual.
-4. Validasi Accounting terhadap payment record, partial payment, residual receivable, dan reconciliation.
-5. Apakah satu layar hanya menampilkan PT Nobi Putra Angkasa atau disiapkan multi-company sejak awal.
+These open decisions do not change the confirmed node sequencing rules above.
