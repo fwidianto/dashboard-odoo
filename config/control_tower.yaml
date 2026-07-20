@@ -1,0 +1,159 @@
+version: "phase0-v1"
+company_scope:
+  display_name: "Nobi Putra Angkasa, PT"
+  business_name: "PT Nobi Putra Angkasa"
+
+protocol:
+  sop_version: "draft-v4"
+  rule_registry_version: "v1"
+
+root_types:
+  - code: "SALES_ORDER"
+    model: "sale.order"
+    table: "sale_order"
+    primary_key: "id"
+    business_key: "name"
+  - code: "INTERNAL_ORDER"
+    model: "approval.request"
+    table: "approval_request"
+    primary_key: "id"
+    business_key: "name"
+
+canonical_statuses:
+  - "NOT_STARTED"
+  - "WAITING"
+  - "IN_PROGRESS"
+  - "BLOCKED"
+  - "PARTIAL"
+  - "COMPLETED"
+  - "EXCEPTION"
+  - "NOT_APPLICABLE"
+  - "CANCELLED"
+  - "UNKNOWN"
+
+status_precedence:
+  - "EXCEPTION"
+  - "BLOCKED"
+  - "CANCELLED"
+  - "PARTIAL"
+  - "IN_PROGRESS"
+  - "WAITING"
+  - "NOT_STARTED"
+  - "COMPLETED"
+  - "NOT_APPLICABLE"
+  - "UNKNOWN"
+
+nodes:
+  - id: "CT-00"
+    name: "Quotation / Customer Order"
+    owner: "Marketing"
+    readiness: "MISSING"
+    root_applicability: ["SALES_ORDER"]
+    sop_reference: "Pre-Sales / Pending"
+  - id: "CT-01"
+    name: "Sales Order"
+    owner: "Marketing / Admin Sales"
+    readiness: "READY"
+    root_applicability: ["SALES_ORDER"]
+    sop_reference: "SOP 3.1"
+  - id: "CT-02"
+    name: "Approval / Operational Review"
+    owner: "Assistant VP / VP Operations"
+    readiness: "PARTIAL"
+    root_applicability: ["SALES_ORDER", "INTERNAL_ORDER"]
+    sop_reference: "Governance 5.13"
+    overlay: true
+  - id: "CT-03"
+    name: "Fulfilment Decision"
+    owner: "Marketing / PPIC"
+    readiness: "PARTIAL"
+    root_applicability: ["SALES_ORDER"]
+    sop_reference: "SOP 3.1-3.2"
+  - id: "CT-04"
+    name: "Internal Order / Stock Fulfilment"
+    owner: "PPIC"
+    readiness: "READY"
+    root_applicability: ["SALES_ORDER", "INTERNAL_ORDER"]
+    sop_reference: "SOP 3.1-3.2"
+  - id: "CT-05"
+    name: "Manufacturing Planning"
+    owner: "PPIC"
+    readiness: "PARTIAL"
+    root_applicability: ["SALES_ORDER", "INTERNAL_ORDER"]
+    sop_reference: "SOP 3.2"
+  - id: "CT-06"
+    name: "RKB / ROP Purchase Request"
+    owner: "PPIC / Requester"
+    readiness: "PARTIAL"
+    root_applicability: ["SALES_ORDER", "INTERNAL_ORDER"]
+    sop_reference: "SOP 3.3"
+  - id: "CT-07"
+    name: "RFQ / Purchase Order"
+    owner: "Procurement"
+    readiness: "PARTIAL"
+    root_applicability: ["SALES_ORDER", "INTERNAL_ORDER"]
+    sop_reference: "SOP 3.4"
+  - id: "CT-08"
+    name: "Receipt & Inspection"
+    owner: "WHD / Gudang"
+    readiness: "PARTIAL"
+    root_applicability: ["SALES_ORDER", "INTERNAL_ORDER"]
+    sop_reference: "SOP 3.5"
+  - id: "CT-09"
+    name: "Material Transfer / Pre-Production"
+    owner: "PPIC / WHD"
+    readiness: "PARTIAL"
+    root_applicability: ["SALES_ORDER", "INTERNAL_ORDER"]
+    sop_reference: "SOP 3.6"
+  - id: "CT-10"
+    name: "Production / Finish Good"
+    owner: "PPIC / Produksi / WHD"
+    readiness: "PARTIAL"
+    root_applicability: ["SALES_ORDER", "INTERNAL_ORDER"]
+    sop_reference: "SOP 3.6"
+  - id: "CT-11"
+    name: "Delivery"
+    owner: "Marketing / WHD"
+    readiness: "READY"
+    root_applicability: ["SALES_ORDER"]
+    sop_reference: "SOP 3.7"
+  - id: "CT-12"
+    name: "Invoice"
+    owner: "Accounting"
+    readiness: "PARTIAL"
+    root_applicability: ["SALES_ORDER"]
+    sop_reference: "Case 4.5"
+  - id: "CT-13"
+    name: "Payment / Collection"
+    owner: "Accounting"
+    readiness: "MISSING"
+    root_applicability: ["SALES_ORDER"]
+    sop_reference: "Accounting SOP Pending"
+
+source_classifications:
+  - "FROM_STOCK"
+  - "FROM_INTERNAL_ORDER"
+  - "MAKE_TO_ORDER"
+  - "MIXED_SOURCE"
+  - "UNKNOWN_SOURCE"
+
+api_contracts:
+  process_map: "/api/control-tower/process-map"
+  node_records: "/api/control-tower/nodes/{node_id}/records"
+  journey: "/api/control-tower/journey/{root_type}/{root_id}"
+  rule: "/api/control-tower/rules/{rule_id}"
+
+required_output_fields:
+  - "root_type"
+  - "root_id"
+  - "node_id"
+  - "native_status"
+  - "canonical_status"
+  - "status_reason"
+  - "owner"
+  - "age_days"
+  - "open_exception_count"
+  - "highest_severity"
+  - "last_activity_at"
+  - "source_updated_at"
+  - "rule_version"
