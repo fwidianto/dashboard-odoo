@@ -52,6 +52,7 @@ This index lists the documentation cleanup locations created for the Odoo Analyt
 | Internal Order Dashboard Page Design | `docs/05_Dashboards/DASHBOARD_PAGE_1_INTERNAL_ORDER_TRACEABILITY.md` |
 | Sales Order Dashboard Concept | `docs/05_Dashboards/SALES_ORDER_DASHBOARD_CONCEPT.md` |
 | Sales Order Traceability Architecture | `docs/05_Dashboards/SALES_ORDER_TRACEABILITY_ARCHITECTURE.md` |
+| Odoo Protocol Control Tower Concept | `docs/05_Dashboards/ODOO_PROTOCOL_CONTROL_TOWER_CONCEPT.md` |
 
 ## 06 Investigations
 
