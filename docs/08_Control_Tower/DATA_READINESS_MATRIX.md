@@ -1,135 +1,146 @@
 # Data Readiness Matrix — Odoo Protocol Control Tower
 
-Status: Phase 0 Draft v2 — process validation focus
+**Status:** Phase 0 Draft v3 — post-validation readiness  
+**Authority:** `docs/09_Odoo18_Validation/`
 
 ## 1. Readiness Scale
 
-- `READY`: dapat digunakan untuk MVP setelah business rule dan sample record disetujui.
-- `PARTIAL`: data ada tetapi linkage, evidence, atau business rule belum lengkap.
-- `MISSING`: source of truth belum tersedia atau belum disinkron.
-- `MANUAL`: proses/bukti berada di luar Odoo dan memerlukan human verification.
-- `HYBRID`: sebagian status tersedia di Odoo, tetapi kondisi aktual masih memerlukan bukti manual.
-- `INVESTIGATION`: beberapa kandidat source tersedia tetapi belum ditentukan mana yang valid.
+- `READY_FOR_DESIGN`: business meaning and direct data path are sufficiently proven for data-contract design.
+- `PARTIAL`: data exists but relation, exclusion, evidence, or business rule remains incomplete.
+- `PROVISIONAL`: calculation can be drafted but owner decisions are still required.
+- `MANUAL`: current process/evidence is outside Odoo.
+- `HYBRID`: Odoo proves recorded execution while actual completion needs external evidence.
+- `RUNTIME_ONLY`: static data cannot prove action attempt/result behavior.
+- `BLOCKED`: trusted source/relation/decision is unavailable.
+- `DEFERRED`: future workflow scope.
 
 ## 2. Stage Readiness
 
-| Node | Tahap | Data Utama | Existing Asset | Readiness | Gap Utama | Treatment Saat Validasi |
-| --- | --- | --- | --- | --- | --- | --- |
-| CT-00 | Customer PO / Confirmed Quotation | customer PO, confirmed quotation, attachment/reference | Belum dipetakan pada traceability V1 | Manual / Missing Mapping | Link ke SO dan evidence minimum | Tampilkan sebagai milestone bisnis; jangan tampilkan angka nol sebagai data valid |
-| CT-01 | Sales Order & Approval | `sale_order`, `sale_order_line`, state, Log Note | Sales Order Traceability view, API, dashboard | Ready / Partial | Bukti basis customer PO, approval/confirm event, mandatory-field final rules | Live setelah direkonsiliasi ke sample SO |
-| CT-02 | Distribusi JO / Operational Handover | penerima informasi, waktu distribusi, referensi SO/quotation | Belum ada object formal pada dashboard | Manual / Future Odoo | Bukti distribusi saat ini dan rancangan Log Note/Activity/Follower | Milestone manual dengan status `Mapping Pending`; tidak dianggap gagal otomatis |
-| CT-03 | Fulfilment Decision | SO source summary, IO bridge, MO context | Source classification dan traceability views | Ready / Partial | Mixed-source edge cases dan unknown-source review | Live source badges setelah sample validation |
-| CT-04 | Internal Order | `approval_request`, `approval_product_line`, MO bridge | Internal Order Traceability dashboard/API | Ready | Status naming dan ownership refinement | Live dan link ke existing IO dashboard |
-| CT-05 | Manufacturing Planning | `mrp_production`, `stock_move` | Manufacturing traceability context | Ready / Partial | Parent/child link, component completeness, actual planning practice | Live summary; compare against PPIC sample |
-| CT-06 | RKB / ROP | approval request/product line | Data procurement request tersedia | Partial | RKB–ROP relation, approval timestamps, cancellation sync | Worklist berdasarkan status yang telah divalidasi |
-| CT-07 | RFQ / Purchase Order | `purchase_order`, `purchase_order_line`, Log Note | Procurement receipt/billing tracking | Ready / Partial | Review Log Note, RFQ grouping, quantity change history | Live PO worklist; approval shown inside node |
-| CT-08 | Receipt & Inspection | picking/move/move line, evidence | Receipt progress tersedia | Ready / Partial / Manual | Inspection evidence, BAP, overreceipt decision | ERP status live; evidence diberi confidence/manual flag |
-| CT-09 | Material Transfer / WIP | stock picking/move/location | Stock movement diagnostics tersedia | Partial | Bon identifier, operation type, site mapping, aging | Diagnostic only until location/movement mapping validated |
-| CT-10 | Production / Finish Good | MO component/finished moves + production document | Manufacturing traceability tersedia | Hybrid | Tidak semua user/proses Produksi memakai Odoo; actual production/QC evidence eksternal | Tampilkan ERP Status dan Operational Status terpisah; jangan menyimpulkan fisik hanya dari Odoo |
-| CT-11 | Delivery | delivered qty, picking, signed evidence | Delivery Progress Tracking dan SO dashboard | Ready / Partial Evidence | Signed document dan actual shipment comparison | Live ERP progress dengan evidence confidence |
-| CT-12 | Invoice | SO line invoiced qty, account move/line | Invoice Progress Tracking dan accounting linkage | Ready / Partial | DP/final invoice mapping dan definisi settlement | Live traceability; belum menyimpulkan pembayaran |
-| CT-13 | Payment / Collection | payment record, residual receivable, reconciliation | Belum termasuk V1 | Investigation | Konsistensi payment record vs AR reconciliation, partial payment, reversals | Node visible sebagai `Validation Pending`; tidak memilih satu source secara prematur |
-| Overlay | Approval | status dokumen, approval record, Log Note | Tersedia berbeda per dokumen | Partial / Manual | Event dan authority per SO, ROP, PO, Unlock | Ditampilkan pada node dokumen terkait, bukan satu node umum |
-| Overlay | Log Note | mail message / chatter | Business use confirmed | Partial / Manual | Message model sync, prefix parsing, mentions, attachments | Link/reference dahulu; parsing setelah format dan access divalidasi |
-| Overlay | SOP Rule | Markdown/registry | SOP mapping documents tersedia | Ready as documentation | Machine-readable registry dan published version | Rule ID dan SOP reference wajib pada exception |
-| Future | Formal Ticketing | helpdesk/custom model/register | Belum dipilih | Deferred | Tool, owner, SLA, evidence | Tidak dikerjakan pada fase validasi proses |
+| Node | Stage | Primary data | Readiness | Confirmed position | Main remaining gap |
+| --- | --- | --- | --- | --- | --- |
+| `CT-00` | Customer PO / Confirmed Quotation | SO reference/date + manual evidence | READY_FOR_DESIGN / MANUAL | 357 confirmed SOs in 2026 had both fields | attachment/evidence policy |
+| `CT-01` | Sales Order & Approval | SO/lines/state/chatter | READY_FOR_DESIGN | confirmed `sale` state is system approval | detailed reset action and cancellation owner policy |
+| `CT-02` | Distribusi JO | external communication | MANUAL | outside Odoo; may occur while SO Draft | future evidence/recording design |
+| `CT-03` | Fulfilment Classification | SO lines, SO–IO relation, MO, stock | PARTIAL | line-level source; header may `MIXED_SOURCE` | extraction currently loses/flatttens some relations |
+| `CT-04` | Internal Order | approval request/line, IO–MO, SO–IO | PROVISIONAL | administrative state is not production progress | product/UoM and multi-IO allocation |
+| `CT-05` | Manufacturing Planning | MO, components, schedule, source | PARTIAL / HYBRID | MO suppression by IO is known | component completeness and source contract |
+| `CT-06` | RKB / ROP | approval header/line, PO-line links | PARTIAL | ROP→RFQ/PO is custom user-triggered action | exact header states, thresholds, cancel/refuse action |
+| `CT-07` | RFQ / Purchase Order | PO/lines/state/ROP links | READY_FOR_DESIGN / PARTIAL | PO Confirmed is approval; Reset may leave downstream | quantity/UoM mismatch exclusions; review governance |
+| `CT-08` | Receipt & Inspection | picking/move/move line + evidence | READY_FOR_DESIGN / HYBRID | Cancel Receipt does not cancel PO | inspection/BAP evidence contract |
+| `CT-09` | Material Transfer / WIP | picking/move/location | PARTIAL / HYBRID | Bon is separate from consumption | operation/site mapping and WIP disposition |
+| `CT-10` | Production / FG | MO raw/finished moves + external docs | HYBRID | movement path and legacy locations confirmed | shop-floor coverage and Parent–Child relation |
+| `CT-11` | Delivery | outgoing picking/moves + signed evidence | READY_FOR_DESIGN / HYBRID | Cancel Delivery does not cancel SO | signed evidence and replacement-delivery policy |
+| `CT-12` | Invoice | account move/lines, SO linkage | READY_FOR_DESIGN | Draft Cancel final state must be verified after errors | DP/final business rules |
+| `CT-13` | Payment / Collection | residual, AR lines, reconciliation, payments | PROVISIONAL | technical truth basis confirmed | Accounting taxonomy and accepted adjustments |
+| `CT-X1` | Reset / Cancellation Exposure | parent/child states, chatter, action logs | PARTIAL / RUNTIME_ONLY | final-state and downstream review required | persistent action/result observability and Log Note enforcement |
+| `CT-X2` | Exception Worklist | rule outputs | READY_FOR_DESIGN | validated exception vocabulary available | owner/cadence/status workflow |
 
-## 3. Existing Assets to Reuse
+## 3. Confirmed Data Assets
 
-Project saat ini sudah memiliki:
+Reusable assets include:
 
 - Internal Order Traceability;
 - Manufacturing Traceability;
 - Sales Order Traceability;
-- Delivery Progress Tracking;
-- Invoice Progress Tracking;
-- Procurement Receipt Tracking;
-- Procurement Billing Tracking;
-- JSON APIs dan existing dashboard pages.
+- Delivery and Invoice Progress Tracking;
+- Procurement Receipt/Billing Tracking;
+- JSON APIs and dashboard pages;
+- Odoo 18 validation scripts and reports.
 
-Control Tower menyusun dan memvalidasi ulang asset tersebut terhadap SOP. Control Tower tidak menggantikan dashboard existing.
+These assets require v2 relation and rule corrections before production Control Tower use.
 
-## 4. Data Confidence dan Coverage Mode
+## 4. Highest-Priority Data Gaps
 
-Setiap tahap atau rule harus menampilkan keduanya.
+1. direct SO–IO many-to-many extraction;
+2. line-level fulfilment source rather than header IO precedence;
+3. stable company ID rather than display-name filter;
+4. stock reservation/backorder and parent/downstream exposure;
+5. accounting residual/reconciliation truth layer;
+6. product/UoM and multi-IO allocation contract;
+7. Parent–Child MO persistent relation;
+8. manual evidence contract for Distribusi JO, inspection, production, and signed Delivery;
+9. action/result observability for blocked/error actions.
 
-### Data Confidence
+## 5. Confidence and Coverage
 
-| Confidence | Meaning |
+### Confidence
+
+| Value | Meaning |
 | --- | --- |
-| `HIGH` | Direct field/link dan business rule telah dikonfirmasi |
-| `MEDIUM` | Derived linkage dengan asumsi yang terdokumentasi |
-| `LOW` | Inference memerlukan human review |
-| `MANUAL` | Tidak dapat diputuskan dari ERP data saja |
+| `HIGH` | direct relation and confirmed rule |
+| `MEDIUM` | derived but approved logic |
+| `LOW` | unresolved inference; human review required |
+| `MANUAL` | cannot be determined from ERP alone |
 
-### Coverage Mode
+### Coverage
 
-| Mode | Meaning |
+| Value | Meaning |
 | --- | --- |
-| `ODOO` | Proses dan status utama dapat dibuktikan dari Odoo |
-| `HYBRID` | Odoo memberi sebagian bukti; kondisi aktual membutuhkan evidence eksternal |
-| `MANUAL` | Tahap berjalan di luar Odoo |
-| `PENDING_MAPPING` | Business stage dikonfirmasi tetapi source data belum dipetakan |
+| `ODOO` | main state/evidence is in Odoo |
+| `DERIVED` | calculated from trusted Odoo relationships |
+| `HYBRID` | Odoo plus external evidence |
+| `MANUAL` | outside Odoo |
+| `RUNTIME_ONLY` | requires action/log instrumentation |
 
-Low/manual-confidence records tidak boleh ditampilkan sebagai confirmed error. Gunakan `Needs Review`.
+Low/manual/provisional records must be displayed as `Needs Review` or `DATA_EXCEPTION`, not confirmed faults.
 
-## 5. Prioritas Kerja Saat Ini
+## 6. Current Priority Sequence
 
-### Priority A — Klarifikasi dan Validasi Proses
+### Priority A — Stakeholder gate
 
-1. customer PO / confirmed quotation sebagai business start;
-2. Sales Order approval/Confirm dan bukti handover Distribusi JO;
-3. cabang Stock, IO, JO/MO, dan Mixed Source;
-4. ownership, entry condition, dan exit condition per tahap;
-5. bagian Produksi yang Odoo, hybrid, dan manual;
-6. alur invoice DP/final invoice;
-7. payment record versus receivable reconciliation.
+- Data Health Owner/cadence;
+- Log Note/reason-code governance;
+- Accounting taxonomy;
+- IO product/UoM/allocation;
+- cancellation/replacement procedure by owner.
 
-### Priority B — Validasi SOP terhadap Data Dashboard
+### Priority B — Extraction integrity
 
-1. pilih sample transaksi nyata untuk setiap cabang;
-2. telusuri setiap dokumen upstream/downstream;
-3. cocokkan status Odoo, kondisi aktual, dan SOP;
-4. dokumentasikan field/model dan confidence;
-5. identifikasi false positive, missing link, atau SOP gap;
-6. approve mapping bersama process owner.
+- native IDs;
+- relation tables;
+- SO line source;
+- stock lifecycle;
+- accounting reconciliation;
+- stable company scope.
 
-### Priority C — Read Model Control Tower
+### Priority C — Canonical and exception views
 
-1. stable Sales Order dan Internal Order root;
-2. standard stage-status output;
-3. document link graph;
-4. data confidence dan coverage mode;
-5. related SOP/Rule ID;
-6. company filter PT Nobi Putra Angkasa;
-7. source refresh timestamp.
+- canonical state groups;
+- reset/cancel exposure;
+- `MO_SUPPRESSED_BY_IO`;
+- `MIXED_SOURCE`;
+- IO provisional statuses and data exceptions.
 
-Formal ticketing dan AI proposal tetap ditunda sampai Priority A dan B cukup stabil.
+### Priority D — API/UI
 
-## 6. Sample Validation Minimum
+- server-side exception API;
+- end-to-end trace;
+- parent/downstream exposure;
+- Exception Worklist;
+- IO and Accounting panels after gates.
 
-Setiap flow perlu minimal:
+## 7. Validation Evidence Completed
 
-- satu Trading dari Stock normal;
-- satu SO dari Internal Order;
-- satu Make-to-Order / JO;
-- satu Mixed Source;
-- satu partial/backorder;
-- satu cancellation/change case;
-- satu anomaly yang sudah diketahui;
-- satu production case yang memerlukan evidence manual;
-- satu invoice dengan DP/pelunasan bila tersedia;
-- satu payment penuh dan satu partial payment untuk investigasi Accounting.
+Completed technical validation includes:
 
-## 7. Data Validation Gate
+- 12-model dataset identity gate;
+- 1,236 SO, 6,087 PO, 11,330 MO, and 39,490 picking scope;
+- 34 active automation/runtime configuration review;
+- controlled cancellation/reset runtime scenarios;
+- 348 cancelled-PO closure audit with zero open Receipt anomaly;
+- 357 confirmed-SO evidence audit with zero missing reference/date;
+- 39 IO production/utilization classifications with explicit Data Exceptions.
 
-Tahap tidak dapat ditandai production-ready sampai:
+## 8. Production Readiness Gate
 
-- proses aktual dikonfirmasi oleh owner;
-- model dan field source terdokumentasi;
-- company dan state filters eksplisit;
-- null, duplicate, cancellation, dan partial behavior diuji;
-- entry/exit logic disetujui;
-- coverage mode dan confidence ditentukan;
-- valid, invalid, partial, cancelled, manual, dan accepted-exception case diuji sesuai relevansi;
-- hasil dashboard direkonsiliasi ke sample Odoo dan evidence operasional.
+A node/rule is not production-ready until:
+
+1. process owner approves business meaning;
+2. direct models/fields/relations are documented;
+3. company/state/date filters are explicit;
+4. null, duplicate, mixed, partial, reset, cancel, done/posted, and manual cases are tested;
+5. exclusion and accepted-exception logic is approved;
+6. severity and owner are assigned;
+7. results reconcile to sampled Odoo records and operational evidence;
+8. rule and SOP versions are linked;
+9. no unresolved allocation is inferred.
