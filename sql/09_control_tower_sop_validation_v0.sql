@@ -14,15 +14,8 @@
 --   - draft PO dengan downstream open adalah review signal, bukan bukti pasti reset.
 -- =============================================================================
 
-DROP VIEW IF EXISTS vw_ct_exception_worklist CASCADE;
-DROP VIEW IF EXISTS vw_ct_sop_validation_summary CASCADE;
-DROP VIEW IF EXISTS vw_ct_rule_results CASCADE;
-DROP VIEW IF EXISTS vw_ct_rule_catalog CASCADE;
-DROP VIEW IF EXISTS vw_ct_io_health CASCADE;
-DROP VIEW IF EXISTS vw_ct_document_paths CASCADE;
-DROP VIEW IF EXISTS vw_ct_document_links CASCADE;
-DROP VIEW IF EXISTS vw_ct_native_record_snapshot_current CASCADE;
-DROP VIEW IF EXISTS vw_ct_current_run CASCADE;
+-- Keep dependent materialized views intact. These base views are replaced in
+-- place below; dropping them with CASCADE made a partial SQL reapply unusable.
 
 CREATE OR REPLACE VIEW vw_ct_current_run AS
 SELECT
@@ -346,19 +339,25 @@ source_context AS (
       AND LOWER(COALESCE(so.state, '')) NOT IN ('cancel', 'cancelled')
 ),
 descendants AS (
-    SELECT DISTINCT
+    SELECT
         path.root_model,
         path.root_id,
         path.child_model,
         path.child_id,
         child.state AS child_state,
         child.document_number AS child_number,
-        path.confidence,
-        path.link_path
+        JSONB_AGG(DISTINCT TO_JSONB(path.link_path)) AS link_paths
     FROM vw_ct_document_paths path
     JOIN vw_ct_native_record_snapshot_current child
       ON child.model = path.child_model
      AND child.record_id = path.child_id
+    GROUP BY
+        path.root_model,
+        path.root_id,
+        path.child_model,
+        path.child_id,
+        child.state,
+        child.document_number
 ),
 open_descendant AS (
     SELECT
@@ -376,7 +375,7 @@ open_descendant AS (
                 'id', child_id,
                 'number', child_number,
                 'state', child_state,
-                'link_path', link_path
+                'link_paths', link_paths
             )
         ) FILTER (
             WHERE LOWER(COALESCE(child_state, '')) NOT IN ('done', 'cancel', 'cancelled', 'posted')
@@ -475,7 +474,16 @@ SELECT
     CASE WHEN source.source_type IN ('FROM_STOCK', 'FROM_INTERNAL_ORDER', 'MAKE_TO_ORDER', 'MIXED_SOURCE') THEN 'LOW' ELSE 'HIGH' END,
     CASE WHEN source.source_type IS NULL THEN 'LOW' ELSE 'MEDIUM' END,
     'Marketing / PPIC',
-    JSONB_BUILD_OBJECT('dashboard_view', 'vw_dashboard_sales_order_traceability'),
+    JSONB_BUILD_OBJECT(
+        'dashboard_view', 'vw_dashboard_sales_order_traceability',
+        'source_gap_reason', CASE
+            WHEN source.source_type IS NULL THEN 'NULL_SOURCE_DATA'
+            WHEN source.source_type NOT IN (
+                'FROM_STOCK', 'FROM_INTERNAL_ORDER', 'MAKE_TO_ORDER', 'MIXED_SOURCE'
+            ) THEN 'UNSUPPORTED_SOURCE_CLASSIFICATION'
+            ELSE NULL
+        END
+    ),
     NOW()
 FROM source_context source
 
@@ -616,7 +624,12 @@ SELECT
     CASE WHEN io.production_status = 'DATA_EXCEPTION' THEN 'HIGH' ELSE 'LOW' END,
     io.confidence,
     'PPIC',
-    io.evidence,
+    CASE
+        WHEN io.production_status = 'DATA_EXCEPTION' THEN io.evidence || JSONB_BUILD_OBJECT(
+            'data_linkage_gap_reason', io.evidence ->> 'production_gap_reason'
+        )
+        ELSE io.evidence
+    END,
     NOW()
 FROM vw_ct_io_health io
 
@@ -640,7 +653,12 @@ SELECT
     CASE WHEN io.utilization_status = 'DATA_EXCEPTION' THEN 'HIGH' ELSE 'LOW' END,
     io.confidence,
     'PPIC / Marketing',
-    io.evidence,
+    CASE
+        WHEN io.utilization_status = 'DATA_EXCEPTION' THEN io.evidence || JSONB_BUILD_OBJECT(
+            'data_linkage_gap_reason', io.evidence ->> 'utilization_gap_reason'
+        )
+        ELSE io.evidence
+    END,
     NOW()
 FROM vw_ct_io_health io;
 

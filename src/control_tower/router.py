@@ -39,7 +39,7 @@ def sop_validation_summary(service: ControlTowerService = Depends(service_depend
     return {
         "rows": service.validation_summary(),
         "meta": {
-            "version": "v0.1",
+            "version": "v0.1.2",
             "meaning": "Data menguji konsistensi SOP; mismatch tidak otomatis membuktikan kesalahan user atau SOP.",
         },
     }

@@ -239,6 +239,21 @@ SELECT
         'mo_product_uom_mismatch_count', COALESCE(mo_quality.unmatched_mo_count, 0),
         'so_product_uom_mismatch_count', 0,
         'multi_io_so_count', COALESCE(usage.ambiguous_so_line_count, 0),
+        'production_gap_reason', CASE
+            WHEN req.product_id IS NULL OR req.uom_id IS NULL
+                THEN 'MISSING_REQUEST_PRODUCT_OR_UOM'
+            WHEN COALESCE(mo.mo_count, 0) = 0
+             AND COALESCE(mo_quality.unmatched_mo_count, 0) > 0
+                THEN 'NO_EXACT_MO_MATCH_WITH_UNMATCHED_IO_MO'
+            ELSE NULL
+        END,
+        'utilization_gap_reason', CASE
+            WHEN req.product_id IS NULL OR req.uom_id IS NULL
+                THEN 'MISSING_REQUEST_PRODUCT_OR_UOM'
+            WHEN COALESCE(usage.ambiguous_so_line_count, 0) > 0
+                THEN 'AMBIGUOUS_SO_LINE_MATCHES_MULTIPLE_IO'
+            ELSE NULL
+        END,
         'total_io_mo_count', COALESCE(mo_quality.total_mo_count, 0),
         'matched_so_line_count', COALESCE(usage.matched_so_line_count, 0),
         'unique_allocated_so_line_count', COALESCE(usage.unique_allocated_so_line_count, 0),

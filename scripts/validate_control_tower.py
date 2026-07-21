@@ -66,31 +66,29 @@ CHECKS = (
         """,
     ),
     (
-        "io_production_gap_has_line_local_reason",
+        "io_production_gap_has_explicit_line_local_reason",
         """
         SELECT COUNT(*) = 0 AS passed
-        FROM vw_ct_io_health
-        WHERE production_status = 'DATA_EXCEPTION'
-          AND product_id IS NOT NULL
-          AND uom_id IS NOT NULL
-          AND NOT (
-              mo_count = 0
-              AND COALESCE(
-                  NULLIF(evidence ->> 'mo_product_uom_mismatch_count', '')::bigint,
-                  0
-              ) > 0
+        FROM mv_ct_rule_results
+        WHERE rule_id = 'IO-PROD-001'
+          AND validation_status = 'DATA_LINKAGE_GAP'
+          AND COALESCE(evidence ->> 'data_linkage_gap_reason', '') NOT IN (
+              'MISSING_REQUEST_PRODUCT_OR_UOM',
+              'NO_EXACT_MO_MATCH_WITH_UNMATCHED_IO_MO'
           )
         """,
     ),
     (
-        "io_utilization_gap_has_line_level_ambiguity",
+        "io_utilization_gap_has_explicit_line_level_ambiguity",
         """
         SELECT COUNT(*) = 0 AS passed
-        FROM vw_ct_io_health
-        WHERE utilization_status = 'DATA_EXCEPTION'
-          AND product_id IS NOT NULL
-          AND uom_id IS NOT NULL
-          AND multi_io_so_count = 0
+        FROM mv_ct_rule_results
+        WHERE rule_id = 'IO-UTIL-001'
+          AND validation_status = 'DATA_LINKAGE_GAP'
+          AND COALESCE(evidence ->> 'data_linkage_gap_reason', '') NOT IN (
+              'MISSING_REQUEST_PRODUCT_OR_UOM',
+              'AMBIGUOUS_SO_LINE_MATCHES_MULTIPLE_IO'
+          )
         """,
     ),
     (
@@ -124,6 +122,41 @@ CHECKS = (
         WHERE result.rule_id = 'SO-CANCEL-001'
           AND document ->> 'model' NOT IN (
               'mrp.production', 'stock.picking', 'purchase.order', 'account.move'
+          )
+        """,
+    ),
+    (
+        "so_cancel_open_documents_are_unique",
+        """
+        SELECT COUNT(*) = 0 AS passed
+        FROM (
+            SELECT
+                result.document_id,
+                document ->> 'model' AS model,
+                document ->> 'id' AS id
+            FROM mv_ct_rule_results result
+            CROSS JOIN LATERAL JSONB_ARRAY_ELEMENTS(
+                COALESCE(result.actual_condition -> 'open_documents', '[]'::jsonb)
+            ) document
+            WHERE result.rule_id = 'SO-CANCEL-001'
+            GROUP BY result.document_id, document ->> 'model', document ->> 'id'
+            HAVING COUNT(*) > 1
+        ) duplicates
+        """,
+    ),
+    (
+        "so_source_gap_reason_is_explicit",
+        """
+        SELECT COUNT(*) = 0 AS passed
+        FROM mv_ct_rule_results
+        WHERE rule_id = 'SO-SOURCE-001'
+          AND validation_status = 'DATA_LINKAGE_GAP'
+          AND NOT (
+              (actual_condition ->> 'source_type' IS NULL
+               AND evidence ->> 'source_gap_reason' = 'NULL_SOURCE_DATA')
+              OR
+              (actual_condition ->> 'source_type' IS NOT NULL
+               AND evidence ->> 'source_gap_reason' = 'UNSUPPORTED_SOURCE_CLASSIFICATION')
           )
         """,
     ),

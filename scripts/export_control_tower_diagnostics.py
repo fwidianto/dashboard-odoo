@@ -107,7 +107,7 @@ def main() -> int:
         save_json("ct_document_link_counts_v011.json", link_counts)
         save_json("ct_io_status_counts_v011.json", status_counts)
 
-        print("\n=== CONTROL TOWER v0.1.1 ===")
+        print("\n=== CONTROL TOWER v0.1.2 ===")
         print(f"Status         : {health.get('status')}")
         print(f"Snapshots      : {health.get('snapshot_count')}")
         print(f"Document links : {health.get('link_count')}")

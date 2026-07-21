@@ -52,17 +52,10 @@ def main() -> int:
                     SELECT
                         'IO-PROD-001'::text AS rule_id,
                         internal_order_id,
-                        CASE
-                            WHEN product_id IS NULL OR uom_id IS NULL
-                                THEN 'MISSING_REQUEST_PRODUCT_OR_UOM'
-                            WHEN mo_count = 0
-                             AND COALESCE(
-                                 NULLIF(evidence ->> 'mo_product_uom_mismatch_count', '')::bigint,
-                                 0
-                             ) > 0
-                                THEN 'NO_EXACT_MO_MATCH_WITH_UNMATCHED_IO_MO'
-                            ELSE 'UNCLASSIFIED'
-                        END AS cause
+                        COALESCE(
+                            NULLIF(evidence ->> 'production_gap_reason', ''),
+                            'UNCLASSIFIED'
+                        ) AS cause
                     FROM vw_ct_io_health
                     WHERE production_status = 'DATA_EXCEPTION'
 
@@ -71,13 +64,10 @@ def main() -> int:
                     SELECT
                         'IO-UTIL-001'::text AS rule_id,
                         internal_order_id,
-                        CASE
-                            WHEN product_id IS NULL OR uom_id IS NULL
-                                THEN 'MISSING_REQUEST_PRODUCT_OR_UOM'
-                            WHEN multi_io_so_count > 0
-                                THEN 'AMBIGUOUS_SO_LINE_MATCHES_MULTIPLE_IO'
-                            ELSE 'UNCLASSIFIED'
-                        END AS cause
+                        COALESCE(
+                            NULLIF(evidence ->> 'utilization_gap_reason', ''),
+                            'UNCLASSIFIED'
+                        ) AS cause
                     FROM vw_ct_io_health
                     WHERE utilization_status = 'DATA_EXCEPTION'
                 )
@@ -169,6 +159,26 @@ def main() -> int:
             """),
         )
 
+        source_gap_causes = stage(
+            "SO source gap cause buckets",
+            lambda: service._rows("""
+                SELECT
+                    COALESCE(
+                        NULLIF(evidence ->> 'source_gap_reason', ''),
+                        'UNCLASSIFIED'
+                    ) AS cause,
+                    actual_condition ->> 'source_type' AS source_type,
+                    confidence,
+                    COUNT(*) AS record_count,
+                    COUNT(DISTINCT document_id) AS document_count
+                FROM mv_ct_rule_results
+                WHERE rule_id = 'SO-SOURCE-001'
+                  AND validation_status = 'DATA_LINKAGE_GAP'
+                GROUP BY 1, 2, 3
+                ORDER BY record_count DESC, cause, source_type NULLS FIRST
+            """),
+        )
+
         exception_counts = stage(
             "Exception counts by rule and state",
             lambda: service._rows("""
@@ -230,6 +240,7 @@ def main() -> int:
         save_json("ct_io_gap_samples_v012.json", io_gap_samples)
         save_json("ct_io_status_distribution_v012.json", io_status_distribution)
         save_json("ct_operational_exception_samples_v012.json", operational_exceptions)
+        save_json("ct_so_source_gap_cause_counts_v012.json", source_gap_causes)
         save_json("ct_exception_counts_v012.json", exception_counts)
         save_json("ct_io_scope_v012.json", io_scope)
         save_json("ct_relevant_link_quality_v012.json", link_quality)
@@ -253,6 +264,13 @@ def main() -> int:
             print(
                 f"{row['rule_id']:<16} {row['validation_status']:<18} "
                 f"severity={row['severity']:<7} confidence={row['confidence']:<6} "
+                f"rows={row['record_count']:<5} documents={row['document_count']}"
+            )
+
+        print("\n=== SO SOURCE GAP CAUSES ===")
+        for row in source_gap_causes:
+            print(
+                f"{row['cause']:<38} source={str(row['source_type']):<18} "
                 f"rows={row['record_count']:<5} documents={row['document_count']}"
             )
 
