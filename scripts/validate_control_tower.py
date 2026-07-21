@@ -1,4 +1,4 @@
-"""Database regression checks untuk Control Tower Health v0.1.
+"""Database regression checks untuk Control Tower Health v0.1.3.
 
 Script ini hanya membaca PostgreSQL dan keluar non-zero bila invariant utama
 rusak. Jalankan setelah ``run_control_tower_refresh.py``.
@@ -170,6 +170,85 @@ CHECKS = (
         """,
     ),
     (
+        "po_cancellation_scope_has_one_row_per_cancelled_root",
+        """
+        SELECT
+            (SELECT COUNT(*) FROM vw_ct_po_cancellation_scope)
+            =
+            (SELECT COUNT(*)
+             FROM mv_ct_rule_results
+             WHERE rule_id = 'PO-CANCEL-001'
+               AND document_model = 'purchase.order') AS passed
+        """,
+    ),
+    (
+        "po_cancellation_scope_vocabulary_is_controlled",
+        """
+        SELECT COUNT(*) = 0 AS passed
+        FROM vw_ct_po_cancellation_scope
+        WHERE date_scope NOT IN (
+            'ACTIVE_2026_PLUS', 'HISTORICAL_PRE_2026', 'DATE_SCOPE_UNKNOWN'
+        )
+           OR operational_exposure NOT IN (
+            'ACTIVE_ISSUE', 'HISTORICAL_EXPOSURE',
+            'DATE_REVIEW_REQUIRED', 'NO_OPEN_RECEIPT'
+        )
+        """,
+    ),
+    (
+        "po_cancellation_open_receipts_use_operational_state_vocabulary",
+        """
+        SELECT COUNT(*) = 0 AS passed
+        FROM vw_ct_po_cancellation_scope scope
+        CROSS JOIN LATERAL JSONB_ARRAY_ELEMENTS(scope.open_receipts) receipt
+        WHERE receipt ->> 'state' NOT IN (
+            'draft', 'waiting', 'confirmed', 'assigned', 'partially_available'
+        )
+        """,
+    ),
+    (
+        "po_cancellation_mismatch_is_active_2026_plus_only",
+        """
+        SELECT COUNT(*) = 0 AS passed
+        FROM mv_ct_rule_results
+        WHERE rule_id = 'PO-CANCEL-001'
+          AND validation_status = 'MISMATCH'
+          AND actual_condition ->> 'date_scope' <> 'ACTIVE_2026_PLUS'
+        """,
+    ),
+    (
+        "po_cancellation_summary_uses_active_scope_only",
+        """
+        SELECT
+            summary.tested_records = active.cancelled_po_roots
+            AND summary.mismatch_records = active.active_issues
+            AS passed
+        FROM mv_ct_sop_validation_summary summary
+        CROSS JOIN (
+            SELECT
+                COUNT(*) AS cancelled_po_roots,
+                COUNT(*) FILTER (WHERE operational_exposure = 'ACTIVE_ISSUE') AS active_issues
+            FROM vw_ct_po_cancellation_scope
+            WHERE date_scope = 'ACTIVE_2026_PLUS'
+        ) active
+        WHERE summary.rule_id = 'PO-CANCEL-001'
+        """,
+    ),
+    (
+        "po_cancellation_historical_and_unknown_are_not_active_worklist",
+        """
+        SELECT COUNT(*) = 0 AS passed
+        FROM mv_ct_exception_worklist
+        WHERE rule_id = 'PO-CANCEL-001'
+          AND COALESCE(actual_condition ->> 'date_scope', 'DATE_SCOPE_UNKNOWN')
+              <> 'ACTIVE_2026_PLUS'
+        """,
+    ),
+    (
+        "po_cancellation_historical_view_remains_available",
+        "SELECT COUNT(*) > 0 AS passed FROM vw_ct_po_cancellation_historical",
+    ),
+    (
         "exception_worklist_excludes_validated",
         "SELECT COUNT(*) = 0 AS passed FROM mv_ct_exception_worklist WHERE validation_status = 'VALIDATED'",
     ),
@@ -198,7 +277,7 @@ def main() -> int:
     if failures:
         print("Failed checks: " + ", ".join(failures))
         return 1
-    print("All Control Tower v0.1.2 database checks passed.")
+    print("All Control Tower v0.1.3 database checks passed.")
     return 0
 
 

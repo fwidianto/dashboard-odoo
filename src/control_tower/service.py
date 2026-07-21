@@ -121,6 +121,75 @@ class ControlTowerService:
         """, params) or {"total": 0}
         return {"rows": rows, "total": total["total"], "limit": limit, "offset": offset}
 
+    def po_cancellation_scope(
+        self,
+        *,
+        date_scope: Optional[str] = None,
+        operational_exposure: Optional[str] = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Return active, historical, and date-review PO cancellation records.
+
+        This remains a PostgreSQL-only read model. ``date_order`` scope is
+        calculated in SQL from targeted enrichment, never from ``write_date``.
+        """
+        allowed_scopes = {
+            "ACTIVE_2026_PLUS",
+            "HISTORICAL_PRE_2026",
+            "DATE_SCOPE_UNKNOWN",
+        }
+        allowed_exposures = {
+            "ACTIVE_ISSUE",
+            "HISTORICAL_EXPOSURE",
+            "DATE_REVIEW_REQUIRED",
+            "NO_OPEN_RECEIPT",
+        }
+        if date_scope and date_scope not in allowed_scopes:
+            raise ValueError("Unsupported PO cancellation date scope.")
+        if operational_exposure and operational_exposure not in allowed_exposures:
+            raise ValueError("Unsupported PO cancellation exposure.")
+
+        conditions: list[str] = []
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        if date_scope:
+            conditions.append("date_scope = :date_scope")
+            params["date_scope"] = date_scope
+        if operational_exposure:
+            conditions.append("operational_exposure = :operational_exposure")
+            params["operational_exposure"] = operational_exposure
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+        rows = self._rows(f"""
+            SELECT *
+            FROM vw_ct_po_cancellation_scope
+            {where}
+            ORDER BY date_scope, operational_exposure, purchase_order_id
+            LIMIT :limit OFFSET :offset
+        """, params)
+        total = self._row(
+            f"SELECT COUNT(*) AS total FROM vw_ct_po_cancellation_scope {where}", params
+        ) or {"total": 0}
+        summary = self._rows("""
+            SELECT
+                date_scope,
+                COUNT(*) AS cancelled_po_roots,
+                COUNT(*) FILTER (WHERE operational_exposure = 'ACTIVE_ISSUE') AS masalah_aktif_2026_plus,
+                COUNT(*) FILTER (WHERE operational_exposure = 'HISTORICAL_EXPOSURE') AS catatan_historis,
+                COUNT(*) FILTER (WHERE operational_exposure = 'DATE_REVIEW_REQUIRED') AS tanggal_po_belum_tersedia,
+                COUNT(*) FILTER (WHERE open_backorder_count > 0) AS open_backorders
+            FROM vw_ct_po_cancellation_scope
+            GROUP BY date_scope
+            ORDER BY date_scope
+        """)
+        return {
+            "summary": summary,
+            "rows": rows,
+            "total": total["total"],
+            "limit": limit,
+            "offset": offset,
+        }
+
     def journey(self, root_model: str, root_id: int) -> dict[str, Any]:
         root = self._row("""
             SELECT model, record_id, document_number, state, company_id, company_name,

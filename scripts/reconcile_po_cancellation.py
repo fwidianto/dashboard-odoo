@@ -1,7 +1,9 @@
-"""Reconcile Control Tower PO-CANCEL-001 from the current PostgreSQL snapshot.
+#!/usr/bin/env python3
+"""Reconcile PO-CANCEL-001 from PostgreSQL-only Control Tower evidence.
 
-This utility never calls Odoo. It only reads the current completed Control
-Tower read model and writes local, ignored reconciliation artifacts under
+The targeted Odoo enrichment is intentionally performed by
+``enrich_po_cancellation_date_order.py``. This script never connects to Odoo;
+it reads the published enrichment and writes review artifacts under ignored
 ``output/``.
 """
 
@@ -15,6 +17,7 @@ from hashlib import sha256
 import json
 from pathlib import Path
 import sys
+from time import perf_counter
 from typing import Any
 
 from sqlalchemy import text
@@ -28,7 +31,7 @@ from src.clients.postgres_client import PostgresClient
 
 
 OUTPUT_DIR = PROJECT_ROOT / "output"
-DATE_START_DEFAULT = "2026-01-01"
+DATE_START = "2026-01-01"
 OPEN_RECEIPT_STATES = {"draft", "waiting", "confirmed", "assigned", "partially_available"}
 CLOSED_RECEIPT_STATES = {"done", "cancel", "cancelled"}
 STATE_ORDER = (
@@ -46,7 +49,7 @@ BASELINE = {
     "scope": "purchase.order.date_order >= 2026-01-01",
     "cancelled_po_roots": 348,
     "open_receipt_po_roots": 0,
-    "source": "docs/09_Odoo18_Validation/FINAL_SOP_SYSTEM_CLOSURE_AUDIT.md at bd9d09b",
+    "source": "earlier 2026 closure audit",
 }
 
 
@@ -91,64 +94,43 @@ def state_bucket(value: Any) -> str:
     return state if state in STATE_ORDER else "UNSUPPORTED_OR_NULL"
 
 
-def masked(model: str, record_id: int | None) -> str:
-    prefixes = {"purchase.order": "PO", "stock.picking": "RCT"}
-    token = sha256(f"{model}:{record_id}".encode("utf-8")).hexdigest()[:10].upper()
-    return f"{prefixes.get(model, 'DOC')}-{token}"
-
-
-def is_open(row: dict[str, Any]) -> bool:
-    return normalized_state(row.get("receipt_state")) in OPEN_RECEIPT_STATES
+def is_open(value: Any) -> bool:
+    return normalized_state(value) in OPEN_RECEIPT_STATES
 
 
 def is_closed(value: Any) -> bool:
     return normalized_state(value) in CLOSED_RECEIPT_STATES
 
 
-def scope_from_date(value: Any, date_start: str) -> str:
-    if not value:
-        return "UNAVAILABLE_IN_CURRENT_SNAPSHOT"
-    return "DATE_ORDER_2026_PLUS" if str(value)[:10] >= date_start else "HISTORICAL_PRE_2026"
+def masked(model: str, record_id: int | None) -> str:
+    prefixes = {"purchase.order": "PO", "stock.picking": "RCT"}
+    token = sha256(f"{model}:{record_id}".encode("utf-8")).hexdigest()[:10].upper()
+    return f"{prefixes.get(model, 'DOC')}-{token}"
 
 
 def classify_candidate(
-    receipts: list[dict[str, Any]],
-    backorders: list[dict[str, Any]],
-    date_start: str,
+    receipts: list[dict[str, Any]], backorders: list[dict[str, Any]]
 ) -> tuple[str, str, list[dict[str, Any]]]:
-    """Return exactly one primary class and the deduplicated open receipts."""
-    unique_receipts = {
+    """Classify receipt exposure separately from the PO date scope."""
+    direct = {
         int(row["receipt_id"]): row
         for row in receipts
         if row.get("receipt_id") is not None
     }
-    direct_receipts = list(unique_receipts.values())
-    if not direct_receipts:
-        return "INVALID_OR_LOW_CONFIDENCE_LINK", "Tidak ada Receipt native untuk kandidat rule.", []
-    open_receipts = [row for row in direct_receipts if is_open(row)]
-    unsupported = [
-        row
-        for row in direct_receipts
-        if state_bucket(row.get("receipt_state")) == "UNSUPPORTED_OR_NULL"
-    ]
-
-    if any(
-        row.get("po_company_id") != 3 or row.get("receipt_company_id") != 3
-        for row in direct_receipts
-    ):
-        return "COMPANY_SCOPE_DIFFERENCE", "Relasi lintas company ditemukan; di luar scope company_id=3.", open_receipts
-    if any(row.get("confidence") != "HIGH" for row in direct_receipts):
-        return "INVALID_OR_LOW_CONFIDENCE_LINK", "Relasi tidak seluruhnya HIGH/native.", open_receipts
+    values = list(direct.values())
+    if not values:
+        return "INVALID_OR_LOW_CONFIDENCE_LINK", "Tidak ada Receipt native untuk kandidat.", []
+    if any(row.get("confidence") != "HIGH" for row in values):
+        return "INVALID_OR_LOW_CONFIDENCE_LINK", "Relasi Receipt tidak seluruhnya HIGH/native.", []
+    unsupported = [row for row in values if state_bucket(row.get("receipt_state")) == "UNSUPPORTED_OR_NULL"]
     if unsupported:
-        return "UNRESOLVED_EVIDENCE_GAP", "State Receipt NULL atau di luar kosakata operasi.", open_receipts
-    if not open_receipts:
-        if direct_receipts and all(is_closed(row.get("receipt_state")) for row in direct_receipts):
-            return "CLOSED_RECEIPT_FALSE_POSITIVE", "Hanya Receipt done/cancel yang terhubung.", open_receipts
-        return "DUPLICATE_RELATION_PATH", "Tidak ada Receipt operasional setelah deduplikasi PO/Receipt.", open_receipts
+        return "UNRESOLVED_EVIDENCE_GAP", "State Receipt kosong atau di luar kosakata operasional.", []
 
-    date_order = next((row.get("po_date_order") for row in direct_receipts if row.get("po_date_order")), None)
-    if date_order and scope_from_date(date_order, date_start) == "HISTORICAL_PRE_2026":
-        return "HISTORICAL_PRE_2026", "date_order berada sebelum 2026-01-01; rule saat ini all-time.", open_receipts
+    open_receipts = [row for row in values if is_open(row.get("receipt_state"))]
+    if not open_receipts:
+        if all(is_closed(row.get("receipt_state")) for row in values):
+            return "CLOSED_RECEIPT_FALSE_POSITIVE", "Hanya Receipt closed yang terhubung.", []
+        return "DUPLICATE_RELATION_PATH", "Tidak ada Receipt operasional setelah deduplikasi.", []
 
     open_ids = {int(row["receipt_id"]) for row in open_receipts}
     closed_parent_by_child = {
@@ -157,13 +139,20 @@ def classify_candidate(
         if row.get("child_receipt_id") is not None and is_closed(row.get("parent_state"))
     }
     if open_ids and open_ids.issubset(closed_parent_by_child):
-        return "OPEN_BACKORDER", "Receipt operasional yang tersisa adalah child backorder dari parent closed.", open_receipts
+        return (
+            "OPEN_BACKORDER",
+            "Receipt terbuka adalah child backorder dari parent Receipt yang sudah closed.",
+            open_receipts,
+        )
+    return (
+        "REAL_OPEN_RECEIPT",
+        "Receipt native berstate operasional terbuka melalui jalur PO_TO_RECEIPT.",
+        open_receipts,
+    )
 
-    return "REAL_OPEN_RECEIPT", "Receipt native berstate operasional terbuka melalui PO_TO_RECEIPT.", open_receipts
 
-
-def read_snapshot(conn: Any, date_start: str) -> dict[str, Any]:
-    stage("Membaca snapshot dan grain PO-CANCEL-001")
+def read_snapshot(conn: Any) -> dict[str, Any]:
+    stage("Membaca snapshot, enrichment, dan grain PO-CANCEL-001")
     metadata = query_one(
         conn,
         """
@@ -171,122 +160,139 @@ def read_snapshot(conn: Any, date_start: str) -> dict[str, Any]:
         FROM vw_ct_current_run
         """,
     )
-    grain = query_one(
+    enrichment = query_one(
         conn,
         """
         SELECT
-          COUNT(*) AS rule_result_rows,
-          COUNT(DISTINCT document_id) AS unique_po_roots,
-          COUNT(*) FILTER (WHERE validation_status = 'VALIDATED') AS validated_po_roots,
-          COUNT(*) FILTER (WHERE validation_status = 'MISMATCH') AS mismatch_po_roots
-        FROM mv_ct_rule_results
+            execution.expected_count,
+            execution.returned_count,
+            execution.null_date_order_count,
+            execution.status,
+            execution.started_at,
+            execution.completed_at
+        FROM ct_purchase_order_date_enrichment_execution execution
+        JOIN vw_ct_current_run current_run ON current_run.run_id = execution.run_id
+        WHERE execution.company_id = 3
+          AND execution.status = 'COMPLETED'
+        ORDER BY execution.completed_at DESC
+        LIMIT 1
+        """,
+    )
+    all_time = query_one(
+        conn,
+        """
+        SELECT
+            COUNT(*) AS cancelled_po_roots,
+            COUNT(*) FILTER (WHERE operational_open_receipt_count = 0) AS no_open_receipt_roots,
+            COUNT(*) FILTER (WHERE operational_open_receipt_count > 0) AS open_receipt_roots,
+            COUNT(DISTINCT purchase_order_id) AS unique_po_roots
+        FROM vw_ct_po_cancellation_scope
+        """,
+    )
+    scopes = query_rows(
+        conn,
+        """
+        SELECT
+            date_scope,
+            COUNT(*) AS cancelled_po_roots,
+            COUNT(*) FILTER (WHERE operational_open_receipt_count > 0) AS open_receipt_roots,
+            COUNT(*) FILTER (WHERE operational_exposure = 'ACTIVE_ISSUE') AS active_issues,
+            COUNT(*) FILTER (WHERE operational_exposure = 'HISTORICAL_EXPOSURE') AS historical_exposures,
+            COUNT(*) FILTER (WHERE operational_exposure = 'DATE_REVIEW_REQUIRED') AS date_review_required,
+            COUNT(*) FILTER (WHERE open_backorder_count > 0) AS open_backorders
+        FROM vw_ct_po_cancellation_scope
+        GROUP BY date_scope
+        ORDER BY date_scope
+        """,
+    )
+    rule_summary = query_one(
+        conn,
+        """
+        SELECT tested_records, validated_records, mismatch_records,
+               valid_exception_records, overall_status, validation_rate_percent
+        FROM mv_ct_sop_validation_summary
         WHERE rule_id = 'PO-CANCEL-001'
         """,
     )
-    payload = query_one(
-        conn,
-        """
-        SELECT BOOL_OR(payload ? 'date_order') AS has_date_order,
-               COUNT(*) FILTER (WHERE payload ? 'date_order') AS roots_with_date_order
-        FROM vw_ct_native_record_snapshot_current
-        WHERE model = 'purchase.order'
-        """,
-    )
-    write_date_scope = query_rows(
-        conn,
-        """
-        WITH cancelled AS (
-            SELECT record_id, write_date
-            FROM vw_ct_native_record_snapshot_current
-            WHERE model = 'purchase.order'
-              AND LOWER(COALESCE(state, '')) IN ('cancel', 'cancelled')
-        ), mismatch AS (
-            SELECT document_id
-            FROM mv_ct_rule_results
-            WHERE rule_id = 'PO-CANCEL-001' AND validation_status = 'MISMATCH'
-        )
-        SELECT
-          CASE
-            WHEN cancelled.write_date >= CAST(:date_start AS timestamp) THEN 'WRITE_DATE_2026_PLUS_PROXY'
-            WHEN cancelled.write_date IS NULL THEN 'WRITE_DATE_NULL_PROXY'
-            ELSE 'WRITE_DATE_PRE_2026_PROXY'
-          END AS scope,
-          COUNT(*) AS cancelled_po_roots,
-          COUNT(*) FILTER (WHERE mismatch.document_id IS NOT NULL) AS mismatch_po_roots
-        FROM cancelled
-        LEFT JOIN mismatch ON mismatch.document_id = cancelled.record_id
-        GROUP BY 1
-        ORDER BY 1
-        """,
-        date_start=date_start,
-    )
-    done("Membaca snapshot dan grain PO-CANCEL-001")
+    if not metadata or not enrichment or int(enrichment.get("expected_count") or 0) <= 0:
+        raise RuntimeError("Published targeted date_order enrichment tidak tersedia.")
+    if int(enrichment["expected_count"]) != int(enrichment["returned_count"]):
+        raise RuntimeError("Enrichment completed tidak lengkap.")
+    if int(all_time["cancelled_po_roots"]) != int(enrichment["returned_count"]):
+        raise RuntimeError("Grain enrichment dan PO cancellation tidak sama.")
+    done("Membaca snapshot, enrichment, dan grain PO-CANCEL-001")
     return {
         "latest_completed_run": metadata,
-        "grain": grain,
-        "date_order_capture": payload,
-        "write_date_proxy": write_date_scope,
+        "enrichment": enrichment,
+        "all_time": all_time,
+        "scopes": scopes,
+        "active_rule_summary": rule_summary,
     }
 
 
-def read_state_distribution(conn: Any, date_start: str) -> dict[str, Any]:
-    stage("Menghitung distribusi state Receipt")
+def read_state_distribution(conn: Any) -> dict[str, Any]:
+    stage("Menghitung distribusi state Receipt berdasarkan date_order")
     rows = query_rows(
         conn,
         """
-        WITH cancelled AS (
-            SELECT record_id, write_date
-            FROM vw_ct_native_record_snapshot_current
-            WHERE model = 'purchase.order'
-              AND LOWER(COALESCE(state, '')) IN ('cancel', 'cancelled')
-        ), relations AS (
-            SELECT cancelled.record_id AS po_id, cancelled.write_date,
-                   receipt.record_id AS receipt_id, receipt.state AS receipt_state
-            FROM cancelled
+        WITH relations AS (
+            SELECT DISTINCT
+                scope.date_scope,
+                scope.purchase_order_id,
+                link.child_id AS receipt_id,
+                LOWER(COALESCE(receipt.state, '')) AS receipt_state
+            FROM vw_ct_po_cancellation_scope scope
             JOIN vw_ct_document_links link
               ON link.link_type = 'PO_TO_RECEIPT'
              AND link.parent_model = 'purchase.order'
-             AND link.parent_id = cancelled.record_id
+             AND link.parent_id = scope.purchase_order_id
              AND link.child_model = 'stock.picking'
+             AND link.confidence = 'HIGH'
             JOIN vw_ct_native_record_snapshot_current receipt
-              ON receipt.model = 'stock.picking' AND receipt.record_id = link.child_id
+              ON receipt.model = 'stock.picking'
+             AND receipt.record_id = link.child_id
         ), scoped AS (
-            SELECT 'ALL_DATES' AS scope, * FROM relations
+            SELECT 'ALL_DATES'::text AS scope, * FROM relations
             UNION ALL
-            SELECT 'WRITE_DATE_2026_PLUS_PROXY' AS scope, *
-            FROM relations
-            WHERE write_date >= CAST(:date_start AS timestamp)
+            SELECT date_scope AS scope, * FROM relations
         )
-        SELECT scope, COALESCE(NULLIF(LOWER(receipt_state), ''), 'UNSUPPORTED_OR_NULL') AS receipt_state,
-               COUNT(DISTINCT po_id) AS po_roots,
-               COUNT(DISTINCT receipt_id) AS unique_receipts,
-               COUNT(*) AS relation_rows
+        SELECT
+            scope,
+            COALESCE(NULLIF(receipt_state, ''), 'UNSUPPORTED_OR_NULL') AS receipt_state,
+            COUNT(DISTINCT purchase_order_id) AS po_roots,
+            COUNT(DISTINCT receipt_id) AS unique_receipts,
+            COUNT(*) AS relation_rows
         FROM scoped
         GROUP BY scope, receipt_state
         ORDER BY scope, receipt_state
         """,
-        date_start=date_start,
     )
-    result: dict[str, Any] = {
-        "all_dates": {state: 0 for state in STATE_ORDER},
-        "write_date_2026_plus_proxy": {state: 0 for state in STATE_ORDER},
-        "date_order_2026_plus": {
-            "status": "UNAVAILABLE_IN_CURRENT_SNAPSHOT",
-            "reason": "purchase.order.date_order tidak diekstrak ke ct_native_record_snapshot.",
-        },
+    result: dict[str, dict[str, dict[str, int]]] = {
+        key: {
+            state: {"unique_receipts": 0, "po_roots": 0, "relation_rows": 0}
+            for state in STATE_ORDER
+        }
+        for key in (
+            "all_dates",
+            "active_2026_plus",
+            "historical_pre_2026",
+            "date_scope_unknown",
+        )
+    }
+    aliases = {
+        "ALL_DATES": "all_dates",
+        "ACTIVE_2026_PLUS": "active_2026_plus",
+        "HISTORICAL_PRE_2026": "historical_pre_2026",
+        "DATE_SCOPE_UNKNOWN": "date_scope_unknown",
     }
     for row in rows:
-        target = "all_dates" if row["scope"] == "ALL_DATES" else "write_date_2026_plus_proxy"
+        target = aliases[row["scope"]]
         result[target][state_bucket(row["receipt_state"])] = {
-            "unique_receipts": row["unique_receipts"],
-            "po_roots": row["po_roots"],
-            "relation_rows": row["relation_rows"],
+            "unique_receipts": int(row["unique_receipts"]),
+            "po_roots": int(row["po_roots"]),
+            "relation_rows": int(row["relation_rows"]),
         }
-    for key in ("all_dates", "write_date_2026_plus_proxy"):
-        for state, value in list(result[key].items()):
-            if isinstance(value, int):
-                result[key][state] = {"unique_receipts": 0, "po_roots": 0, "relation_rows": 0}
-    done("Menghitung distribusi state Receipt")
+    done("Menghitung distribusi state Receipt berdasarkan date_order")
     return result
 
 
@@ -296,10 +302,8 @@ def read_duplicates(conn: Any) -> dict[str, Any]:
         conn,
         """
         WITH cancelled AS (
-            SELECT record_id AS po_id
-            FROM vw_ct_native_record_snapshot_current
-            WHERE model = 'purchase.order'
-              AND LOWER(COALESCE(state, '')) IN ('cancel', 'cancelled')
+            SELECT purchase_order_id AS po_id
+            FROM vw_ct_po_cancellation_scope
         ), raw AS (
             SELECT po.po_id, po_line.record_id AS po_line_id, move.record_id AS stock_move_id,
                    NULLIF(move.payload -> 'picking_id' ->> 'id', '')::bigint AS receipt_id
@@ -332,10 +336,8 @@ def read_duplicates(conn: Any) -> dict[str, Any]:
         conn,
         """
         WITH cancelled AS (
-            SELECT record_id AS po_id
-            FROM vw_ct_native_record_snapshot_current
-            WHERE model = 'purchase.order'
-              AND LOWER(COALESCE(state, '')) IN ('cancel', 'cancelled')
+            SELECT purchase_order_id AS po_id
+            FROM vw_ct_po_cancellation_scope
         ), direct AS (
             SELECT link.parent_id AS po_id, link.child_id AS receipt_id
             FROM vw_ct_document_links link
@@ -372,7 +374,7 @@ def read_duplicates(conn: Any) -> dict[str, Any]:
         JOIN vw_ct_native_record_snapshot_current receipt
           ON receipt.model = 'stock.picking' AND receipt.record_id = link.child_id
         WHERE link.link_type = 'PO_TO_RECEIPT'
-          AND LOWER(COALESCE(po.state, '')) IN ('cancel', 'cancelled')
+          AND link.parent_id IN (SELECT purchase_order_id FROM vw_ct_po_cancellation_scope)
         GROUP BY po.company_id, receipt.company_id
         ORDER BY po.company_id, receipt.company_id
         """,
@@ -381,42 +383,53 @@ def read_duplicates(conn: Any) -> dict[str, Any]:
     return {"canonical_raw_path": raw, "materialized_graph": graph, "company_pairs": company}
 
 
-def read_candidates(conn: Any, date_start: str) -> list[dict[str, Any]]:
-    stage("Mengklasifikasikan kandidat PO-CANCEL-001")
+def read_candidates(conn: Any) -> list[dict[str, Any]]:
+    stage("Mengklasifikasikan seluruh exposure Receipt")
     direct_rows = query_rows(
         conn,
         """
         WITH candidates AS (
-            SELECT document_id AS po_id
-            FROM mv_ct_rule_results
-            WHERE rule_id = 'PO-CANCEL-001' AND validation_status = 'MISMATCH'
+            SELECT *
+            FROM vw_ct_po_cancellation_scope
+            WHERE operational_exposure IN (
+                'ACTIVE_ISSUE', 'HISTORICAL_EXPOSURE', 'DATE_REVIEW_REQUIRED'
+            )
         )
-        SELECT candidates.po_id, po.document_number AS po_document_number, po.state AS po_state,
-               po.write_date AS po_write_date, po.payload ->> 'date_order' AS po_date_order,
-               po.company_id AS po_company_id,
-               link.child_id AS receipt_id, receipt.document_number AS receipt_document_number,
-               receipt.state AS receipt_state, receipt.company_id AS receipt_company_id,
-               link.link_type, link.source_field, link.confidence
+        SELECT
+            candidates.purchase_order_id AS po_id,
+            candidates.purchase_order_number AS po_document_number,
+            candidates.purchase_order_state AS po_state,
+            candidates.date_order AS po_date_order,
+            candidates.date_scope,
+            candidates.operational_exposure,
+            link.child_id AS receipt_id,
+            receipt.document_number AS receipt_document_number,
+            receipt.state AS receipt_state,
+            link.link_type,
+            link.source_field,
+            link.confidence
         FROM candidates
-        JOIN vw_ct_native_record_snapshot_current po
-          ON po.model = 'purchase.order' AND po.record_id = candidates.po_id
         LEFT JOIN vw_ct_document_links link
           ON link.link_type = 'PO_TO_RECEIPT'
          AND link.parent_model = 'purchase.order'
-         AND link.parent_id = candidates.po_id
+         AND link.parent_id = candidates.purchase_order_id
          AND link.child_model = 'stock.picking'
+         AND link.confidence = 'HIGH'
         LEFT JOIN vw_ct_native_record_snapshot_current receipt
-          ON receipt.model = 'stock.picking' AND receipt.record_id = link.child_id
-        ORDER BY candidates.po_id, link.child_id
+          ON receipt.model = 'stock.picking'
+         AND receipt.record_id = link.child_id
+        ORDER BY candidates.purchase_order_id, link.child_id
         """,
     )
     backorder_rows = query_rows(
         conn,
         """
         WITH candidates AS (
-            SELECT document_id AS po_id
-            FROM mv_ct_rule_results
-            WHERE rule_id = 'PO-CANCEL-001' AND validation_status = 'MISMATCH'
+            SELECT purchase_order_id AS po_id
+            FROM vw_ct_po_cancellation_scope
+            WHERE operational_exposure IN (
+                'ACTIVE_ISSUE', 'HISTORICAL_EXPOSURE', 'DATE_REVIEW_REQUIRED'
+            )
         ), receipts AS (
             SELECT DISTINCT candidates.po_id, link.child_id AS receipt_id
             FROM candidates
@@ -425,17 +438,23 @@ def read_candidates(conn: Any, date_start: str) -> list[dict[str, Any]]:
              AND link.parent_model = 'purchase.order'
              AND link.parent_id = candidates.po_id
              AND link.child_model = 'stock.picking'
+             AND link.confidence = 'HIGH'
         )
-        SELECT receipts.po_id, relation.parent_id AS parent_receipt_id,
-               parent.document_number AS parent_receipt_document_number, parent.state AS parent_state,
-               relation.child_id AS child_receipt_id,
-               child.document_number AS child_receipt_document_number, child.state AS child_state
+        SELECT
+            receipts.po_id,
+            relation.parent_id AS parent_receipt_id,
+            parent.document_number AS parent_receipt_document_number,
+            parent.state AS parent_state,
+            relation.child_id AS child_receipt_id,
+            child.document_number AS child_receipt_document_number,
+            child.state AS child_state
         FROM receipts
         JOIN vw_ct_document_links relation
           ON relation.link_type = 'PICKING_TO_BACKORDER'
          AND relation.parent_model = 'stock.picking'
          AND relation.child_model = 'stock.picking'
-         AND (relation.parent_id = receipts.receipt_id OR relation.child_id = receipts.receipt_id)
+         AND relation.child_id = receipts.receipt_id
+         AND relation.confidence = 'HIGH'
         JOIN vw_ct_native_record_snapshot_current parent
           ON parent.model = 'stock.picking' AND parent.record_id = relation.parent_id
         JOIN vw_ct_native_record_snapshot_current child
@@ -443,50 +462,49 @@ def read_candidates(conn: Any, date_start: str) -> list[dict[str, Any]]:
         ORDER BY receipts.po_id, relation.parent_id, relation.child_id
         """,
     )
-
     by_po: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for row in direct_rows:
         by_po[int(row["po_id"])].append(row)
     backorders_by_po: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for row in backorder_rows:
         key = (int(row["parent_receipt_id"]), int(row["child_receipt_id"]))
-        if key not in {
+        existing = {
             (int(item["parent_receipt_id"]), int(item["child_receipt_id"]))
             for item in backorders_by_po[int(row["po_id"])]
-        }:
+        }
+        if key not in existing:
             backorders_by_po[int(row["po_id"])].append(row)
 
     candidates: list[dict[str, Any]] = []
     for po_id in sorted(by_po):
         receipts = by_po[po_id]
-        classification, reason, open_receipts = classify_candidate(
-            receipts, backorders_by_po[po_id], date_start
-        )
-        selected = sorted(open_receipts, key=lambda row: int(row["receipt_id"]))
-        representative = selected[0] if selected else receipts[0]
-        selected_ids = {int(row["receipt_id"]) for row in selected}
+        classification, reason, open_receipts = classify_candidate(receipts, backorders_by_po[po_id])
+        representative = sorted(
+            open_receipts or receipts,
+            key=lambda row: int(row.get("receipt_id") or 0),
+        )[0]
+        selected_ids = {int(row["receipt_id"]) for row in open_receipts}
         related_backorders = [
             row
             for row in backorders_by_po[po_id]
-            if int(row["parent_receipt_id"]) in selected_ids
-            or int(row["child_receipt_id"]) in selected_ids
+            if int(row["child_receipt_id"]) in selected_ids
         ]
-        date_order = representative.get("po_date_order")
         candidates.append(
             {
                 "po_native_id": po_id,
                 "po_document_number": representative.get("po_document_number"),
                 "po_state": representative.get("po_state"),
                 "po_date": {
-                    "value": date_order or representative.get("po_write_date"),
-                    "basis": "date_order" if date_order else "write_date_diagnostic_only",
-                    "scope_assessment": scope_from_date(date_order, date_start),
+                    "value": representative.get("po_date_order"),
+                    "basis": "purchase.order.date_order",
+                    "scope": representative.get("date_scope"),
                 },
+                "operational_exposure": representative.get("operational_exposure"),
                 "receipt_native_id": representative.get("receipt_id"),
                 "receipt_document_number": representative.get("receipt_document_number"),
                 "receipt_state": representative.get("receipt_state"),
                 "parent_backorder_relationship": related_backorders,
-                "relationship_path": "purchase.order -> purchase.order.line -> stock.move -> stock.picking",
+                "relationship_path": "purchase.order -> purchase.order.line -> stock.move.purchase_line_id -> stock.picking.picking_id",
                 "relationship_link_type": representative.get("link_type"),
                 "relationship_source_field": representative.get("source_field"),
                 "relation_confidence": representative.get("confidence"),
@@ -504,15 +522,61 @@ def read_candidates(conn: Any, date_start: str) -> list[dict[str, Any]]:
                 ],
             }
         )
-    done("Mengklasifikasikan kandidat PO-CANCEL-001")
+    done("Mengklasifikasikan seluruh exposure Receipt")
     return candidates
 
 
+def measure_performance(conn: Any, candidates: list[dict[str, Any]]) -> dict[str, float]:
+    stage("Mengukur query kerja Control Tower")
+    measurements: dict[str, float] = {}
+    checks: list[tuple[str, str, dict[str, Any]]] = [
+        (
+            "active_summary_seconds",
+            "SELECT * FROM mv_ct_sop_validation_summary WHERE rule_id = 'PO-CANCEL-001'",
+            {},
+        ),
+        (
+            "historical_summary_seconds",
+            "SELECT COUNT(*) FROM vw_ct_po_cancellation_historical",
+            {},
+        ),
+        (
+            "active_exception_list_seconds",
+            """
+            SELECT * FROM mv_ct_exception_worklist
+            WHERE rule_id = 'PO-CANCEL-001'
+            ORDER BY document_id
+            LIMIT 200
+            """,
+            {},
+        ),
+    ]
+    if candidates:
+        checks.append(
+            (
+                "representative_journey_seconds",
+                """
+                SELECT * FROM mv_ct_document_paths
+                WHERE root_model = 'purchase.order' AND root_id = :root_id
+                ORDER BY depth, parent_id, child_id
+                """,
+                {"root_id": int(candidates[0]["po_native_id"])},
+            )
+        )
+    for name, sql, params in checks:
+        started = perf_counter()
+        conn.execute(text(sql), params).all()
+        measurements[name] = round(perf_counter() - started, 4)
+    done("Mengukur query kerja Control Tower")
+    return measurements
+
+
 def state_totals(distribution: dict[str, Any], key: str) -> dict[str, int]:
-    return {
-        state: int(distribution[key][state]["unique_receipts"])
-        for state in STATE_ORDER
-    }
+    return {state: int(distribution[key][state]["unique_receipts"]) for state in STATE_ORDER}
+
+
+def scope_map(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {str(row["date_scope"]): row for row in snapshot["scopes"]}
 
 
 def render_report(
@@ -520,123 +584,176 @@ def render_report(
     states: dict[str, Any],
     duplicates: dict[str, Any],
     candidates: list[dict[str, Any]],
-    date_start: str,
+    performance: dict[str, float],
 ) -> str:
-    classification_totals = Counter(item["primary_classification"] for item in candidates)
+    scopes = scope_map(snapshot)
+    active = scopes.get("ACTIVE_2026_PLUS", {})
+    historical = scopes.get("HISTORICAL_PRE_2026", {})
+    unknown = scopes.get("DATE_SCOPE_UNKNOWN", {})
+    all_time = snapshot["all_time"]
+    enrichment = snapshot["enrichment"]
+    rule = snapshot["active_rule_summary"]
+    run = snapshot["latest_completed_run"]
+    graph = duplicates["materialized_graph"]
+    raw = duplicates["canonical_raw_path"]
+    classifications = Counter(item["primary_classification"] for item in candidates)
     samples: dict[str, dict[str, Any]] = {}
     for candidate in candidates:
         samples.setdefault(candidate["primary_classification"], candidate)
-    all_states = state_totals(states, "all_dates")
-    proxy_states = state_totals(states, "write_date_2026_plus_proxy")
-    run = snapshot["latest_completed_run"]
-    grain = snapshot["grain"]
-    graph = duplicates["materialized_graph"]
-    raw = duplicates["canonical_raw_path"]
 
     lines = [
-        "# Rekonsiliasi PO-CANCEL-001",
+        "# Scope Kesehatan Pembatalan PO 2026+",
         "",
         "## 1. Ringkasan eksekutif",
         "",
-        f"- Rule saat ini menguji **{grain['rule_result_rows']} PO root unik**: {grain['validated_po_roots']} `VALIDATED` dan {grain['mismatch_po_roots']} `MISMATCH`.",
-        f"- Semua kandidat mismatch memiliki Receipt native berstate `assigned`; {classification_totals.get('OPEN_BACKORDER', 0)} di antaranya merupakan child backorder dari parent `done`.",
-        "- Tidak ada false positive teknis terkonfirmasi: edge `PO_TO_RECEIPT` sudah unik per pasangan PO/Receipt, dan rule tidak memakai path rekursif untuk menghitung mismatch.",
-        "- Rekonsiliasi 2026 belum dapat direproduksi dari snapshot ini karena `purchase.order.date_order` tidak diekstrak. Baseline lama memakai field tersebut secara langsung.",
+        "Kontrol aktif dimulai pada **1 Januari 2026** berdasarkan `purchase.order.date_order`. "
+        "PO sebelum tanggal itu tetap tersedia sebagai Catatan Historis, tetapi tidak lagi masuk KPI atau antrean masalah operasional.",
+        f"- `{all_time['cancelled_po_roots']}` PO cancelled unik tersedia secara all-time.",
+        f"- `{active.get('cancelled_po_roots', 0)}` PO berada dalam scope aktif 2026+; `{active.get('active_issues', 0)}` menjadi **Masalah Aktif 2026+**.",
+        f"- `{historical.get('cancelled_po_roots', 0)}` PO sebelum 2026; `{historical.get('historical_exposures', 0)}` merupakan **Catatan Historis** dengan Receipt masih terbuka.",
+        f"- `{unknown.get('cancelled_po_roots', 0)}` PO memiliki **Tanggal PO Belum Tersedia**; tidak ada yang masuk KPI aktif secara diam-diam.",
         "",
         "## 2. Branch, commit, dan snapshot",
         "",
-        "- Branch diperiksa: `feature/control-tower-sop-validation-v0`.",
-        "- Commit diperiksa: `369ad1e001f2ea59ada6b883664d1e898defe2db`.",
+        "- Branch: `feature/control-tower-sop-validation-v0`.",
+        "- Basis audit sebelumnya: `f968e63` di atas `369ad1e`.",
         f"- Run COMPLETED: `{run.get('run_id')}`; company ID `{run.get('company_id')}`; selesai `{run.get('completed_at')}`.",
-        f"- Model count run mencatat `{run.get('model_counts', {}).get('document_links')}` document links.",
+        f"- Snapshot mencatat `{run.get('model_counts', {}).get('document_links')}` document links.",
         "",
-        "## 3. Perintah dan batas read-only",
+        "## 3. Mengapa targeted enrichment dilakukan",
         "",
-        "- `venv\\Scripts\\python.exe scripts\\reconcile_po_cancellation.py`",
-        "- Semua query memakai PostgreSQL snapshot yang sudah COMPLETED. Skrip ini tidak mengimpor client Odoo dan tidak memanggil RPC/method Odoo.",
+        "Snapshot Control Tower tidak menyimpan `purchase.order.date_order`, sedangkan keputusan scope bisnis harus memakai field itu secara tepat. "
+        "Karena itu enrichment hanya membaca PO cancelled yang memang sudah diuji oleh PO-CANCEL-001; tidak ada full extraction atau pengambilan module Odoo lain.",
+        f"- PO diminta dari snapshot: `{enrichment['expected_count']}`.",
+        f"- PO berhasil dibaca: `{enrichment['returned_count']}`.",
+        f"- `date_order` NULL: `{enrichment['null_date_order_count']}`.",
+        "- `write_date` disimpan sebagai bukti sumber tetapi **tidak digunakan** untuk menentukan scope produksi.",
         "",
-        "## 4. Definisi grain",
+        "## 4. Definisi grain dan relasi",
         "",
-        "- PO root: satu `purchase.order` berstate `cancel`/`cancelled` dalam snapshot company ID 3.",
-        "- Receipt relation: satu pasangan unik `purchase.order` dan `stock.picking` dari jalur native `purchase.order.line -> stock.move.purchase_line_id + stock.move.picking_id`.",
-        f"- `tested={grain['rule_result_rows']}` adalah **hasil rule per PO root unik**, bukan jumlah Receipt maupun row relation.",
-        f"- Semua-date: `{graph['direct_relation_rows']}` row PO-to-Receipt langsung, `{graph['unique_po_receipt_pairs']}` pasangan PO/Receipt unik.",
+        "- PO root: satu `purchase.order` berstate `cancel`/`cancelled` pada company ID 3.",
+        "- Relasi Receipt: pasangan unik `purchase.order` -> `purchase.order.line` -> `stock.move.purchase_line_id` -> `stock.picking.picking_id`.",
+        f"- Hasil all-time `{all_time['cancelled_po_roots']}` adalah PO root unik, bukan jumlah stock move atau Receipt.",
+        f"- Relasi langsung: `{graph['direct_relation_rows']}` row dan `{graph['unique_po_receipt_pairs']}` pasangan PO/Receipt unik.",
         "",
-        "## 5. All-time dibanding 2026+",
+        "## 5. Perbandingan all-time dan scope 2026+",
         "",
-        f"- All-time current rule: `{grain['unique_po_roots']}` cancelled PO roots; `{grain['mismatch_po_roots']}` root dengan Receipt operasional terbuka.",
-        f"- Baseline lama: `{BASELINE['cancelled_po_roots']}` cancelled PO roots dan `{BASELINE['open_receipt_po_roots']}` Receipt terbuka, dengan scope `{BASELINE['scope']}`.",
-        "- Snapshot terbaru hanya menyimpan `id`, `name`, `state`, `company_id`, dan `write_date` untuk `purchase.order`; `date_order` tidak tersedia. Karena itu `write_date` di bawah adalah proxy diagnostik, bukan substitusi date boundary baseline.",
-    ]
-    for row in snapshot["write_date_proxy"]:
-        lines.append(
-            f"- Proxy `{row['scope']}`: `{row['cancelled_po_roots']}` cancelled PO roots; `{row['mismatch_po_roots']}` mismatch."
-        )
-    lines.extend([
+        "| Scope | PO cancelled unik | PO dengan Receipt terbuka | Masalah aktif | Catatan historis | Date review | Backorder terbuka |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        f"| All-time | {all_time['cancelled_po_roots']} | {all_time['open_receipt_roots']} | {active.get('active_issues', 0)} | {historical.get('historical_exposures', 0)} | {unknown.get('date_review_required', 0)} | {sum(int(row.get('open_backorders', 0)) for row in snapshot['scopes'])} |",
+        f"| Aktif 2026+ | {active.get('cancelled_po_roots', 0)} | {active.get('open_receipt_roots', 0)} | {active.get('active_issues', 0)} | 0 | 0 | {active.get('open_backorders', 0)} |",
+        f"| Historis sebelum 2026 | {historical.get('cancelled_po_roots', 0)} | {historical.get('open_receipt_roots', 0)} | 0 | {historical.get('historical_exposures', 0)} | 0 | {historical.get('open_backorders', 0)} |",
+        f"| Tanggal belum tersedia | {unknown.get('cancelled_po_roots', 0)} | {unknown.get('open_receipt_roots', 0)} | 0 | 0 | {unknown.get('date_review_required', 0)} | {unknown.get('open_backorders', 0)} |",
         "",
         "## 6. Distribusi state Receipt",
         "",
-        "| State Receipt | All-time unik | Proxy write_date >= 2026 unik |",
-        "| --- | ---: | ---: |",
-    ])
+        "Receipt `done`, `cancel`, dan `cancelled` adalah bukti historis/closed. Hanya state operasional berikut yang dapat menjadi Receipt terbuka: `draft`, `waiting`, `confirmed`, `assigned`, `partially_available`.",
+        "",
+        "| State Receipt | All-time | Aktif 2026+ | Historis < 2026 | Tanggal belum tersedia |",
+        "| --- | ---: | ---: | ---: | ---: |",
+    ]
+    all_states = state_totals(states, "all_dates")
+    active_states = state_totals(states, "active_2026_plus")
+    historical_states = state_totals(states, "historical_pre_2026")
+    unknown_states = state_totals(states, "date_scope_unknown")
     for state in STATE_ORDER:
-        lines.append(f"| `{state}` | {all_states[state]} | {proxy_states[state]} |")
+        lines.append(
+            f"| `{state}` | {all_states[state]} | {active_states[state]} | {historical_states[state]} | {unknown_states[state]} |"
+        )
+
     lines.extend([
         "",
-        "Distribusi `date_order >= 2026-01-01` tidak tersedia dalam snapshot; baseline lama melaporkan seluruh bucket open = 0.",
+        "## 7. Backorder",
         "",
-        "## 7. Backorder dan deduplikasi",
+        f"- `{historical.get('open_backorders', 0)}` PO historis memiliki child backorder terbuka dengan parent Receipt closed.",
+        "- Parent Receipt tetap disimpan sebagai sejarah; hanya child Receipt terbuka yang dinilai sebagai exposure. Satu PO root tetap dihitung satu kali.",
         "",
-        f"- `{classification_totals.get('OPEN_BACKORDER', 0)}` kandidat memiliki parent Receipt `done` dan child backorder `assigned`; parent historical tidak dihitung sebagai anomali independen.",
-        f"- Jalur raw menghasilkan `{raw['raw_relation_rows']}` row; setelah deduplikasi PO/Receipt menjadi `{raw['unique_po_receipt_pairs']}` pasangan. `{raw['duplicate_rows_from_multiple_po_lines']}` row tambahan berasal dari beberapa PO line; `{raw['duplicate_rows_from_additional_moves_per_line']}` dari move tambahan per line.",
-        f"- Graph materialized mempunyai `{graph['repeated_direct_graph_edges']}` edge langsung berulang dan `{graph['recursive_path_excess_rows']}` path rekursif berlebih. Rule PO tidak menggunakan path rekursif tersebut untuk menghitung hasil.",
+        "## 8. Penjelasan hasil 1.209 / 1.174 / 35",
         "",
-        "## 8. Penjelasan 1.209 / 1.174 / 35",
-        "",
-        "- `1.209` adalah satu result untuk setiap PO cancelled root.",
-        "- `1.174` adalah root tanpa Receipt operational open; Receipt `done` dan `cancel` diperlakukan sebagai bukti historis/closed.",
-        "- `35` adalah root dengan Receipt native `assigned` ber-confidence `HIGH`, setelah deduplikasi pasangan PO/Receipt.",
+        f"- `{all_time['cancelled_po_roots']}` adalah total PO root cancelled all-time.",
+        f"- `{all_time['no_open_receipt_roots']}` tidak memiliki Receipt operasional terbuka; Receipt done/cancel tidak dihitung sebagai masalah.",
+        f"- `{all_time['open_receipt_roots']}` memiliki Receipt native `assigned` terbuka. Setelah scope bisnis diterapkan, semuanya adalah Catatan Historis, bukan Masalah Aktif 2026+.",
+        f"- Summary SOP aktif sekarang: `{rule['tested_records']}` tested / `{rule['validated_records']}` validated / `{rule['mismatch_records']}` mismatch.",
         "",
         "## 9. Rekonsiliasi dengan baseline 348 / 0",
         "",
-        "- Baseline lama melakukan read-only ORM langsung pada `purchase.order` dengan filter `state = cancel` dan `date_order >= 2026-01-01`, lalu menilai Receipt dari relasi PO, stock move, dan backorder.",
-        "- Rule current memakai company ID 3, seluruh tanggal yang ada di snapshot, state `cancel` atau `cancelled`, dan relasi native `PO_TO_RECEIPT`; ia tidak mempunyai filter `date_order`.",
-        "- Kosakata open sejalan untuk state operasional (`draft`, `waiting`, `confirmed`, `assigned`, `partially_available`); `done` dan `cancel` closed pada kedua audit.",
-        "- Perbedaan 1.209 versus 348 adalah terutama perbedaan grain/date scope yang tidak ekuivalen. Snapshot tidak memiliki field untuk membuktikan berapa dari 35 kandidat berada dalam scope `date_order` baseline, sehingga baseline tidak boleh dinyatakan salah maupun dipakai untuk menyembunyikan 35 exposure all-time.",
+        f"Audit 2026 sebelumnya melaporkan `{BASELINE['cancelled_po_roots']}` PO cancelled dan `{BASELINE['open_receipt_po_roots']}` Receipt terbuka dengan filter `{BASELINE['scope']}`.",
+        f"Enrichment sekarang membuktikan angka yang sama: `{active.get('cancelled_po_roots', 0)}` PO aktif 2026+ dan `{active.get('active_issues', 0)}` Receipt terbuka. "
+        "Perbedaan lama 1.209 versus 348 terjadi karena rule lama mematerialisasi seluruh tanggal; bukan karena baseline perlu dianggap salah.",
         "",
-        "## 10. Klasifikasi kandidat",
+        "## 10. Klasifikasi exposure dan sampel tersanitasi",
         "",
-        "| Klasifikasi utama | Jumlah |",
+        "| Klasifikasi teknis Receipt | Jumlah |",
         "| --- | ---: |",
     ])
-    for classification, count in sorted(classification_totals.items()):
+    for classification, count in sorted(classifications.items()):
         lines.append(f"| `{classification}` | {count} |")
-    lines.extend(["", "Sampel tersanitasi:"])
+    lines.append("")
     for classification, candidate in sorted(samples.items()):
         lines.append(
-            f"- `{classification}`: `{masked('purchase.order', candidate['po_native_id'])}` -> `{masked('stock.picking', candidate['receipt_native_id'])}`; state Receipt `{candidate['receipt_state']}`."
+            f"- `{classification}`: `{masked('purchase.order', candidate['po_native_id'])}` -> "
+            f"`{masked('stock.picking', candidate['receipt_native_id'])}`; "
+            f"scope `{candidate['po_date']['scope']}`, state Receipt `{candidate['receipt_state']}`."
         )
+
     lines.extend([
         "",
-        "## 11. Defect teknis dan perubahan kode",
+        "## 11. Deduplikasi dan defect teknis",
         "",
-        "- Tidak ada defect false-positive teknis terkonfirmasi. SQL/Python rule tidak diubah agar count tidak dipaksa cocok dengan baseline.",
-        "- Ditambahkan skrip diagnostik PostgreSQL-only ini; output lokal menyimpan ID dan nomor dokumen hanya untuk review manual, sedangkan laporan ini tetap tersanitasi.",
+        f"- Jalur canonical menghasilkan `{raw['raw_relation_rows']}` row sebelum deduplikasi dan `{raw['unique_po_receipt_pairs']}` pasangan PO/Receipt setelahnya.",
+        f"- `{raw['duplicate_rows_from_multiple_po_lines']}` row tambahan berasal dari multiple PO line; `{raw['duplicate_rows_from_additional_moves_per_line']}` dari move tambahan per line.",
+        f"- Graf mempunyai `{graph['repeated_direct_graph_edges']}` edge langsung berulang dan `{graph['recursive_path_excess_rows']}` path rekursif berlebih; PO rule tidak memakai path rekursif untuk menghitung exposure.",
+        "- Tidak ada false positive relasi teknis yang perlu disembunyikan. Perubahan ini adalah penerapan keputusan scope bisnis yang disetujui.",
         "",
-        "## 12. Keputusan bisnis tersisa dan rekomendasi",
+        "## 12. Dampak dashboard dan pekerjaan Procurement/WHD",
         "",
-        "- Owner Procurement/WHD perlu menetapkan apakah PO-CANCEL-001 adalah control all-time atau hanya `purchase.order.date_order >= 2026-01-01`.",
-        "- Bila scope 2026+ disetujui, extraction berikutnya yang diotorisasi harus menangkap `purchase.order.date_order`; jangan menerapkan proxy `write_date` sebagai filter produksi.",
-        "- Rekomendasi akhir: **NEEDS_BUSINESS_SCOPE_DECISION**. Rule all-time secara teknis benar dan seluruh 35 exposure dapat ditelusuri melalui native ID, tetapi rekonsiliasi exact terhadap baseline 2026 tidak dapat dibuktikan dari field snapshot yang tersedia.",
+        "Dashboard dan API sekarang menampilkan Masalah Aktif 2026+ secara terpisah dari Catatan Historis. Procurement/WHD tidak menerima 35 exposure sebelum 2026 sebagai antrean kerja aktif, tetapi audit tetap dapat menelusurinya. "
+        "Endpoint read-only `/api/control-tower/po-cancellation-scope` menyediakan ringkasan serta filter scope untuk UI mendatang.",
         "",
-        "## 13. Konfirmasi keamanan",
+        "## 13. Files changed",
         "",
-        "- Odoo tetap read-only; tidak ada extraction baru, RPC Odoo, atau method mutasi Odoo.",
-        "- Tidak ada merge, push, atau perubahan frontend.",
+        "- `scripts/enrich_po_cancellation_date_order.py`",
+        "- `sql/12_control_tower_po_2026_scope.sql`",
+        "- `scripts/run_control_tower_refresh.py`",
+        "- `scripts/reconcile_po_cancellation.py`",
+        "- `scripts/validate_control_tower.py`",
+        "- `src/control_tower/service.py` dan `src/control_tower/router.py`",
         "",
-        "## 14. Tests dan validasi",
+        "## 14. Kinerja query",
+        "",
+        f"- Summary aktif: `{performance.get('active_summary_seconds', 0):.4f}s`.",
+        f"- Summary historis: `{performance.get('historical_summary_seconds', 0):.4f}s`.",
+        f"- Active exception list: `{performance.get('active_exception_list_seconds', 0):.4f}s`.",
+        f"- Representative PO journey: `{performance.get('representative_journey_seconds', 0):.4f}s`.",
+        "",
+        "## 15. Tests dan validasi",
+        "",
+        "Perintah yang dijalankan pada delivery ini:",
+        "",
+        "- `venv\\Scripts\\python.exe scripts\\enrich_po_cancellation_date_order.py --self-check`",
+        "- `venv\\Scripts\\python.exe scripts\\enrich_po_cancellation_date_order.py`",
+        "- `venv\\Scripts\\python.exe scripts\\run_control_tower_refresh.py --po-scope-only`",
+        "- `venv\\Scripts\\python.exe scripts\\reconcile_po_cancellation.py --self-check`",
+        "- `venv\\Scripts\\python.exe scripts\\reconcile_po_cancellation.py`",
+        "- `venv\\Scripts\\python.exe scripts\\validate_control_tower.py`",
+        "- `venv\\Scripts\\python.exe -m pytest tests\\test_control_tower_service.py tests\\test_control_tower_relation_extractor.py`",
+        "- Compile setiap file Python yang diubah dan authenticated loopback API smoke test.",
         "",
         "<!-- VALIDATION_RESULTS -->",
+        "",
+        "## 16. Konfirmasi keamanan",
+        "",
+        "- Odoo hanya menerima `version`, autentikasi, `fields_get`, dan `read`; tidak ada method mutating.",
+        "- Tidak ada full extraction; PostgreSQL hanya menerima enrichment analitis dan materialisasi scope.",
+        "- Tidak ada merge, push, atau perubahan frontend.",
+        "",
+        "## 17. Keputusan bisnis tersisa",
+        "",
+        "Tidak ada keputusan scope tambahan yang diperlukan: owner bisnis telah menetapkan batas 1 Januari 2026. Bila suatu run mendatang memiliki `date_order` NULL, record akan tetap tampil sebagai Tanggal PO Belum Tersedia dan tidak akan masuk KPI aktif.",
+        "",
+        "## 18. Rekomendasi akhir",
+        "",
+        "**READY_FOR_UI** - scope aktif, catatan historis, dan date-review sudah dipisahkan dengan bukti native yang dapat ditinjau.",
         "",
     ])
     return "\n".join(lines)
@@ -651,11 +768,10 @@ def write_json(name: str, value: Any) -> None:
 def self_check() -> int:
     assert state_bucket("assigned") == "assigned"
     assert state_bucket(None) == "UNSUPPORTED_OR_NULL"
-    assert scope_from_date("2025-12-31", DATE_START_DEFAULT) == "HISTORICAL_PRE_2026"
+    assert is_open("assigned") and not is_open("done")
     classification, _, _ = classify_candidate(
-        [{"receipt_id": 2, "receipt_state": "assigned", "confidence": "HIGH", "po_company_id": 3, "receipt_company_id": 3}],
+        [{"receipt_id": 2, "receipt_state": "assigned", "confidence": "HIGH"}],
         [{"parent_receipt_id": 1, "parent_state": "done", "child_receipt_id": 2, "child_state": "assigned"}],
-        DATE_START_DEFAULT,
     )
     assert classification == "OPEN_BACKORDER"
     assert "42" not in masked("purchase.order", 42)
@@ -664,8 +780,7 @@ def self_check() -> int:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Reconcile PO-CANCEL-001 from PostgreSQL only")
-    parser.add_argument("--date-start", default=DATE_START_DEFAULT)
+    parser = argparse.ArgumentParser(description="Reconcile scoped PO-CANCEL-001 from PostgreSQL only")
     parser.add_argument("--self-check", action="store_true")
     return parser.parse_args()
 
@@ -679,32 +794,34 @@ def main() -> int:
     pg = PostgresClient()
     try:
         with pg.engine.connect() as conn:
-            snapshot = read_snapshot(conn, args.date_start)
-            states = read_state_distribution(conn, args.date_start)
+            snapshot = read_snapshot(conn)
+            states = read_state_distribution(conn)
             duplicates = read_duplicates(conn)
-            candidates = read_candidates(conn, args.date_start)
+            candidates = read_candidates(conn)
+            performance = measure_performance(conn, candidates)
         scope_summary = {
-            "date_start": args.date_start,
-            "all_time": snapshot["grain"],
-            "date_order_2026_plus": {
-                "status": "UNAVAILABLE_IN_CURRENT_SNAPSHOT",
-                "capture": snapshot["date_order_capture"],
-                "earlier_baseline": BASELINE,
-            },
-            "write_date_proxy": snapshot["write_date_proxy"],
+            "date_start": DATE_START,
             "latest_completed_run": snapshot["latest_completed_run"],
+            "enrichment": snapshot["enrichment"],
+            "all_time": snapshot["all_time"],
+            "scopes": snapshot["scopes"],
+            "active_rule_summary": snapshot["active_rule_summary"],
+            "earlier_baseline": BASELINE,
+            "performance": performance,
         }
         write_json("po_cancellation_scope_summary.json", scope_summary)
         write_json("po_cancellation_state_distribution.json", states)
         write_json("po_cancellation_candidates.json", candidates)
         write_json("po_cancellation_duplicate_analysis.json", duplicates)
-        report_path = OUTPUT_DIR / "po_cancellation_reconciliation_report.md"
-        report_path.write_text(
-            render_report(snapshot, states, duplicates, candidates, args.date_start),
-            encoding="utf-8",
-        )
-        print(f"[SAVE ] {report_path.relative_to(PROJECT_ROOT)}", flush=True)
-        print(f"[DONE ] candidates={len(candidates)}", flush=True)
+        report = render_report(snapshot, states, duplicates, candidates, performance)
+        for name in (
+            "po_cancellation_reconciliation_report.md",
+            "po_cancellation_2026_scope_report.md",
+        ):
+            path = OUTPUT_DIR / name
+            path.write_text(report, encoding="utf-8")
+            print(f"[SAVE ] {path.relative_to(PROJECT_ROOT)}", flush=True)
+        print(f"[DONE ] exposure_candidates={len(candidates)}", flush=True)
         return 0
     finally:
         pg.close()

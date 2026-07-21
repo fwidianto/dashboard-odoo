@@ -39,8 +39,9 @@ def sop_validation_summary(service: ControlTowerService = Depends(service_depend
     return {
         "rows": service.validation_summary(),
         "meta": {
-            "version": "v0.1.2",
+            "version": "v0.1.3",
             "meaning": "Data menguji konsistensi SOP; mismatch tidak otomatis membuktikan kesalahan user atau SOP.",
+            "po_cancellation_scope": "Masalah Aktif 2026+ memakai purchase.order.date_order. Catatan Historis dan Tanggal PO Belum Tersedia tersedia terpisah.",
         },
     }
 
@@ -63,6 +64,33 @@ def exception_worklist(
         limit=limit,
         offset=offset,
     )
+
+
+@router.get("/po-cancellation-scope", dependencies=[Depends(require_dashboard_auth)])
+def po_cancellation_scope(
+    date_scope: Optional[str] = Query(default=None),
+    operational_exposure: Optional[str] = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    service: ControlTowerService = Depends(service_dependency),
+):
+    try:
+        result = service.po_cancellation_scope(
+            date_scope=date_scope,
+            operational_exposure=operational_exposure,
+            limit=limit,
+            offset=offset,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        **result,
+        "meta": {
+            "meaning": "PO Sudah Dibatalkan, tetapi Penerimaan Barang Masih Terbuka. Hanya Masalah Aktif 2026+ masuk antrean operasional; Catatan Historis tetap tersedia untuk audit.",
+            "date_scope_field": "purchase.order.date_order",
+            "date_scope_boundary": "2026-01-01",
+        },
+    }
 
 
 @router.get("/journey/{root_model}/{root_id}", dependencies=[Depends(require_dashboard_auth)])

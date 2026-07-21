@@ -5,6 +5,7 @@ Contoh:
     python scripts/run_control_tower_refresh.py --extract-only
     python scripts/run_control_tower_refresh.py --sql-only
     python scripts/run_control_tower_refresh.py --io-hardening-only
+    python scripts/run_control_tower_refresh.py --po-scope-only
 """
 
 from __future__ import annotations
@@ -32,7 +33,8 @@ BASE_SQL_PATHS = (
 IO_HARDENING_SQL_PATH = (
     PROJECT_ROOT / "sql" / "11_control_tower_io_lineage_hardening_v012.sql"
 )
-SQL_PATHS = (*BASE_SQL_PATHS, IO_HARDENING_SQL_PATH)
+PO_SCOPE_SQL_PATH = PROJECT_ROOT / "sql" / "12_control_tower_po_2026_scope.sql"
+SQL_PATHS = (*BASE_SQL_PATHS, IO_HARDENING_SQL_PATH, PO_SCOPE_SQL_PATH)
 
 
 def apply_sql(pg: PostgresClient, sql_path: Path) -> None:
@@ -78,18 +80,30 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Apply only v0.1.2 IO lineage SQL to the existing completed snapshot.",
     )
+    mode.add_argument(
+        "--po-scope-only",
+        action="store_true",
+        help="Apply only the PO 2026+ scope SQL to the existing completed snapshot.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     pg = PostgresClient()
-    extractor = ControlTowerRelationExtractor(
-        postgres_client=pg,
-        company_id=args.company_id,
-        batch_size=args.batch_size,
-    )
+    extractor: ControlTowerRelationExtractor | None = None
     try:
+        if args.po_scope_only:
+            print("[INFO ] Reusing latest COMPLETED extraction; Odoo will not be fetched.", flush=True)
+            apply_sql(pg, PO_SCOPE_SQL_PATH)
+            print("Control Tower PO scope refresh completed. Odoo was not contacted.")
+            return 0
+
+        extractor = ControlTowerRelationExtractor(
+            postgres_client=pg,
+            company_id=args.company_id,
+            batch_size=args.batch_size,
+        )
         if not args.sql_only and not args.io_hardening_only:
             result = extractor.run()
             print(json.dumps(result, indent=2, default=str))
@@ -106,7 +120,10 @@ def main() -> int:
         print("Control Tower refresh completed. Odoo remained read-only.")
         return 0
     finally:
-        extractor.close()
+        if extractor is not None:
+            extractor.close()
+        else:
+            pg.close()
 
 
 if __name__ == "__main__":
