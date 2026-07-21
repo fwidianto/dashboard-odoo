@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Optional
+from uuid import UUID
 
 from sqlalchemy import text
 
@@ -16,6 +17,8 @@ def json_safe(value: Any) -> Any:
         return float(value)
     if isinstance(value, (datetime, date)):
         return value.isoformat()
+    if isinstance(value, UUID):
+        return str(value)
     if isinstance(value, list):
         return [json_safe(item) for item in value]
     if isinstance(value, dict):
@@ -50,8 +53,8 @@ class ControlTowerService:
             SELECT
                 (SELECT COUNT(*) FROM vw_ct_native_record_snapshot_current) AS snapshot_count,
                 (SELECT COUNT(*) FROM vw_ct_document_links) AS link_count,
-                (SELECT COUNT(*) FROM vw_ct_rule_results) AS rule_result_count,
-                (SELECT COUNT(*) FROM vw_ct_exception_worklist) AS exception_count
+                (SELECT COUNT(*) FROM mv_ct_rule_results) AS rule_result_count,
+                (SELECT COUNT(*) FROM mv_ct_exception_worklist) AS exception_count
         """) or {}
         return {
             "status": "READY" if run else "NO_COMPLETED_EXTRACTION",
@@ -59,12 +62,13 @@ class ControlTowerService:
             **counts,
             "read_only": True,
             "payment_kpi_published": False,
+            "runtime_materialized": True,
         }
 
     def validation_summary(self) -> list[dict[str, Any]]:
         return self._rows("""
             SELECT *
-            FROM vw_ct_sop_validation_summary
+            FROM mv_ct_sop_validation_summary
             ORDER BY
                 CASE overall_status
                     WHEN 'MISMATCH' THEN 1
@@ -105,14 +109,14 @@ class ControlTowerService:
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         rows = self._rows(f"""
             SELECT *
-            FROM vw_ct_exception_worklist
+            FROM mv_ct_exception_worklist
             {where}
             ORDER BY severity_priority, rule_id, document_number NULLS LAST, document_id
             LIMIT :limit OFFSET :offset
         """, params)
         total = self._row(f"""
             SELECT COUNT(*) AS total
-            FROM vw_ct_exception_worklist
+            FROM mv_ct_exception_worklist
             {where}
         """, params) or {"total": 0}
         return {"rows": rows, "total": total["total"], "limit": limit, "offset": offset}
@@ -133,13 +137,13 @@ class ControlTowerService:
                 parent_model, parent_id, parent_number,
                 child_model, child_id, child_number,
                 link_type, confidence, link_path
-            FROM vw_ct_document_paths
+            FROM mv_ct_document_paths
             WHERE root_model = :root_model AND root_id = :root_id
             ORDER BY depth, parent_model, parent_id, child_model, child_id
         """, {"root_model": root_model, "root_id": root_id})
         validations = self._rows("""
             SELECT *
-            FROM vw_ct_rule_results
+            FROM mv_ct_rule_results
             WHERE document_model = :root_model AND document_id = :root_id
             ORDER BY rule_id
         """, {"root_model": root_model, "root_id": root_id})
