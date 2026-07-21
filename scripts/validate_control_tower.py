@@ -69,24 +69,28 @@ CHECKS = (
         "io_production_gap_has_line_local_reason",
         """
         SELECT COUNT(*) = 0 AS passed
-        FROM mv_ct_rule_results
-        WHERE rule_id = 'IO-PROD-001'
-          AND validation_status = 'DATA_LINKAGE_GAP'
-          AND COALESCE(NULLIF(evidence ->> 'mo_product_uom_mismatch_count', '')::bigint, 0) = 0
-          AND actual_condition ->> 'product_id' IS NOT NULL
-          AND actual_condition ->> 'uom_id' IS NOT NULL
+        FROM vw_ct_io_health
+        WHERE production_status = 'DATA_EXCEPTION'
+          AND product_id IS NOT NULL
+          AND uom_id IS NOT NULL
+          AND NOT (
+              mo_count = 0
+              AND COALESCE(
+                  NULLIF(evidence ->> 'mo_product_uom_mismatch_count', '')::bigint,
+                  0
+              ) > 0
+          )
         """,
     ),
     (
         "io_utilization_gap_has_line_level_ambiguity",
         """
         SELECT COUNT(*) = 0 AS passed
-        FROM mv_ct_rule_results
-        WHERE rule_id = 'IO-UTIL-001'
-          AND validation_status = 'DATA_LINKAGE_GAP'
-          AND COALESCE(NULLIF(evidence ->> 'ambiguous_so_line_count', '')::bigint, 0) = 0
-          AND actual_condition ->> 'product_id' IS NOT NULL
-          AND actual_condition ->> 'uom_id' IS NOT NULL
+        FROM vw_ct_io_health
+        WHERE utilization_status = 'DATA_EXCEPTION'
+          AND product_id IS NOT NULL
+          AND uom_id IS NOT NULL
+          AND multi_io_so_count = 0
         """,
     ),
     (
