@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import sys
+from time import perf_counter
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -23,12 +24,18 @@ from src.clients.postgres_client import PostgresClient
 from src.control_tower.relation_extractor import ControlTowerRelationExtractor
 
 
-SQL_PATH = PROJECT_ROOT / "sql" / "09_control_tower_sop_validation_v0.sql"
+SQL_PATHS = (
+    PROJECT_ROOT / "sql" / "09_control_tower_sop_validation_v0.sql",
+    PROJECT_ROOT / "sql" / "10_control_tower_runtime_hardening_v01.sql",
+)
 
 
-def apply_sql(pg: PostgresClient, sql_path: Path = SQL_PATH) -> None:
+def apply_sql(pg: PostgresClient, sql_path: Path) -> None:
     if not sql_path.exists():
         raise FileNotFoundError(f"SQL file not found: {sql_path}")
+
+    print(f"[START] Applying SQL: {sql_path.name}", flush=True)
+    started = perf_counter()
     sql = sql_path.read_text(encoding="utf-8")
     raw = pg.engine.raw_connection()
     try:
@@ -40,6 +47,9 @@ def apply_sql(pg: PostgresClient, sql_path: Path = SQL_PATH) -> None:
         raise
     finally:
         raw.close()
+
+    duration = perf_counter() - started
+    print(f"[DONE ] Applied SQL: {sql_path.name} ({duration:.2f} seconds)", flush=True)
 
 
 def parse_args() -> argparse.Namespace:
@@ -75,10 +85,11 @@ def main() -> int:
             print(json.dumps(result, indent=2, default=str))
         else:
             extractor.ensure_schema()
+            print("[INFO ] Reusing latest COMPLETED extraction; Odoo will not be fetched.", flush=True)
 
         if not args.extract_only:
-            apply_sql(pg)
-            print(f"Applied SQL read model: {SQL_PATH}")
+            for sql_path in SQL_PATHS:
+                apply_sql(pg, sql_path)
 
         print("Control Tower refresh completed. Odoo remained read-only.")
         return 0
