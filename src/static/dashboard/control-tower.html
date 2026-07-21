@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Control Tower Operasional</title>
+  <link rel="stylesheet" href="/static/dashboard/control-tower.css?v=20260721-v01">
+</head>
+<body>
+  <a class="skip-link" href="#controlTowerContent">Lewati ke konten utama</a>
+  <main class="page-shell control-tower-dashboard" id="controlTowerContent" tabindex="-1">
+    <header class="page-header">
+      <div>
+        <h1>Control Tower Operasional</h1>
+        <p>Kesehatan proses dan hubungan dokumen berdasarkan snapshot terbaru yang sudah selesai.</p>
+      </div>
+      <div class="header-actions" aria-label="Navigasi dashboard">
+        <a class="secondary-button is-current" href="/dashboard/control-tower" aria-current="page">Control Tower</a>
+        <a class="secondary-button" href="/dashboard/internal-orders">Internal Orders</a>
+        <a class="secondary-button" href="/dashboard/sales-orders">Sales Orders</a>
+        <a class="secondary-button" href="/dashboard/internal-order-rekap">Order Material Tracking</a>
+        <a class="secondary-button" href="/logout">Keluar</a>
+        <button class="secondary-button" id="refreshButton" type="button">Muat ulang</button>
+      </div>
+    </header>
+
+    <section class="notice-banner" id="freshnessBanner" aria-live="polite" hidden></section>
+
+    <nav class="view-navigation" aria-label="Bagian Control Tower">
+      <a href="?view=overview" data-view-link="overview">Ringkasan</a>
+      <a href="?view=validation" data-view-link="validation">Matriks Validasi SOP</a>
+      <a href="?view=exceptions" data-view-link="exceptions">Daftar Pengecualian</a>
+      <a href="?view=journey" data-view-link="journey">Perjalanan Dokumen</a>
+    </nav>
+
+    <details class="context-help">
+      <summary>Bantuan membaca status</summary>
+      <p><strong>Masalah Aktif</strong> memerlukan perhatian operasional saat ini. <strong>Catatan Historis</strong> tetap tersedia untuk audit, tetapi tidak masuk KPI aktif.</p>
+      <p><strong>Bukti Sistem Belum Lengkap</strong> dan <strong>Memerlukan Bukti Manual</strong> bukan otomatis kesalahan proses. Referensi teknis hanya ditampilkan sebagai informasi sekunder.</p>
+    </details>
+
+    <section class="page-state" id="pageState" aria-live="polite"></section>
+    <section id="viewContainer" aria-busy="true"></section>
+
+    <noscript>
+      <section class="state-panel tone-warning">JavaScript diperlukan untuk memuat Control Tower.</section>
+    </noscript>
+  </main>
+
+  <script src="/static/dashboard/control-tower-adapter.js?v=20260721-v01"></script>
+  <script src="/static/dashboard/control-tower.js?v=20260721-v01"></script>
+</body>
+</html>

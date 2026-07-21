@@ -45,7 +45,13 @@ if not APP_SETTINGS.session_secret:
     logger.warning("SESSION_SECRET missing; using local development fallback secret for demo auth.")
 
 DEFAULT_DASHBOARD_PATH = "/dashboard/internal-order-rekap"
-PROTECTED_PAGE_PATHS = {"/", "/dashboard/internal-orders", "/dashboard/sales-orders", "/dashboard/internal-order-rekap"}
+PROTECTED_PAGE_PATHS = {
+    "/",
+    "/dashboard/internal-orders",
+    "/dashboard/sales-orders",
+    "/dashboard/internal-order-rekap",
+    "/dashboard/control-tower",
+}
 PROTECTED_API_PREFIX = "/api/dashboard/"
 DASHBOARD_SESSION_COOKIE = "dashboard_session"
 DASHBOARD_SESSION_TTL_SECONDS = 60 * 60 * 24 * 7
@@ -591,6 +597,12 @@ async def sales_order_dashboard_page():
 async def internal_order_rekap_dashboard_page():
     """Serve the Internal Order Rekap Dashboard page."""
     return FileResponse(STATIC_DIR / "dashboard" / "internal-order-rekap.html")
+
+
+@app.get("/dashboard/control-tower", include_in_schema=False)
+async def control_tower_dashboard_page():
+    """Serve the read-only Control Tower dashboard."""
+    return FileResponse(STATIC_DIR / "dashboard" / "control-tower.html")
 
 
 class DashboardExportColumn(BaseModel):
@@ -2175,6 +2187,13 @@ async def validate_configuration():
     except Exception as e:
         logger.error("Validation failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Import after auth helpers are defined so the Control Tower router can reuse
+# the existing signed dashboard session without a second authentication layer.
+from src.control_tower.router import router as control_tower_router  # noqa: E402
+
+app.include_router(control_tower_router)
 
 
 if __name__ == "__main__":

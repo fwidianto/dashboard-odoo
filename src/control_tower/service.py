@@ -88,6 +88,10 @@ class ControlTowerService:
         status: Optional[str] = None,
         severity: Optional[str] = None,
         owner: Optional[str] = None,
+        process: Optional[str] = None,
+        document: Optional[str] = None,
+        date_from: Optional[date] = None,
+        date_to: Optional[date] = None,
         limit: int = 200,
         offset: int = 0,
     ) -> dict[str, Any]:
@@ -105,20 +109,44 @@ class ControlTowerService:
         if owner:
             conditions.append("owner = :owner")
             params["owner"] = owner
+        if process:
+            conditions.append("sop_section = :process")
+            params["process"] = process
+        normalized_document = (document or "").strip()
+        if normalized_document:
+            conditions.append(
+                "POSITION(LOWER(:document) IN LOWER(COALESCE(document_number, ''))) > 0"
+            )
+            params["document"] = normalized_document
+        if date_from:
+            conditions.append("detected_at::date >= :date_from")
+            params["date_from"] = date_from
+        if date_to:
+            conditions.append("detected_at::date <= :date_to")
+            params["date_to"] = date_to
 
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        rows = self._rows(f"""
+        rows = self._rows(
+            f"""
             SELECT *
             FROM mv_ct_exception_worklist
             {where}
             ORDER BY severity_priority, rule_id, document_number NULLS LAST, document_id
             LIMIT :limit OFFSET :offset
-        """, params)
-        total = self._row(f"""
+        """,
+            params,
+        )
+        total = (
+            self._row(
+                f"""
             SELECT COUNT(*) AS total
             FROM mv_ct_exception_worklist
             {where}
-        """, params) or {"total": 0}
+        """,
+                params,
+            )
+            or {"total": 0}
+        )
         return {"rows": rows, "total": total["total"], "limit": limit, "offset": offset}
 
     def po_cancellation_scope(
@@ -160,13 +188,16 @@ class ControlTowerService:
             params["operational_exposure"] = operational_exposure
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
-        rows = self._rows(f"""
+        rows = self._rows(
+            f"""
             SELECT *
             FROM vw_ct_po_cancellation_scope
             {where}
             ORDER BY date_scope, operational_exposure, purchase_order_id
             LIMIT :limit OFFSET :offset
-        """, params)
+        """,
+            params,
+        )
         total = self._row(
             f"SELECT COUNT(*) AS total FROM vw_ct_po_cancellation_scope {where}", params
         ) or {"total": 0}
@@ -191,31 +222,53 @@ class ControlTowerService:
         }
 
     def journey(self, root_model: str, root_id: int) -> dict[str, Any]:
-        root = self._row("""
+        root = self._row(
+            """
             SELECT model, record_id, document_number, state, company_id, company_name,
-                   write_date, payload, extracted_at
+                   write_date, extracted_at
             FROM vw_ct_native_record_snapshot_current
             WHERE model = :root_model AND record_id = :root_id
-        """, {"root_model": root_model, "root_id": root_id})
+        """,
+            {"root_model": root_model, "root_id": root_id},
+        )
         if root is None:
             return {"root": None, "links": [], "validations": []}
 
-        links = self._rows("""
+        links = self._rows(
+            """
             SELECT
-                depth, root_model, root_id, root_number,
-                parent_model, parent_id, parent_number,
-                child_model, child_id, child_number,
-                link_type, confidence, link_path
-            FROM mv_ct_document_paths
-            WHERE root_model = :root_model AND root_id = :root_id
-            ORDER BY depth, parent_model, parent_id, child_model, child_id
-        """, {"root_model": root_model, "root_id": root_id})
-        validations = self._rows("""
+                path.depth, path.root_model, path.root_id, path.root_number,
+                path.parent_model, path.parent_id, path.parent_number,
+                parent_snapshot.state AS parent_state,
+                path.child_model, path.child_id, path.child_number,
+                child_snapshot.state AS child_state,
+                path.link_type, path.confidence, path.link_path,
+                CASE
+                    WHEN path.depth = 1 THEN 'DIRECT_RELATION'
+                    ELSE 'DERIVED_PATH'
+                END AS relation_evidence
+            FROM mv_ct_document_paths AS path
+            LEFT JOIN vw_ct_native_record_snapshot_current AS parent_snapshot
+              ON parent_snapshot.model = path.parent_model
+             AND parent_snapshot.record_id = path.parent_id
+            LEFT JOIN vw_ct_native_record_snapshot_current AS child_snapshot
+              ON child_snapshot.model = path.child_model
+             AND child_snapshot.record_id = path.child_id
+            WHERE path.root_model = :root_model AND path.root_id = :root_id
+            ORDER BY path.depth, path.parent_model, path.parent_id,
+                     path.child_model, path.child_id
+        """,
+            {"root_model": root_model, "root_id": root_id},
+        )
+        validations = self._rows(
+            """
             SELECT *
             FROM mv_ct_rule_results
             WHERE document_model = :root_model AND document_id = :root_id
             ORDER BY rule_id
-        """, {"root_model": root_model, "root_id": root_id})
+        """,
+            {"root_model": root_model, "root_id": root_id},
+        )
         return {"root": root, "links": links, "validations": validations}
 
     def io_health(
@@ -239,7 +292,8 @@ class ControlTowerService:
             conditions.append("confidence = :confidence")
             params["confidence"] = confidence
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        rows = self._rows(f"""
+        rows = self._rows(
+            f"""
             SELECT *
             FROM vw_ct_io_health
             {where}
@@ -248,9 +302,37 @@ class ControlTowerService:
                 internal_order_number,
                 product_name
             LIMIT :limit OFFSET :offset
-        """, params)
-        total = self._row(f"SELECT COUNT(*) AS total FROM vw_ct_io_health {where}", params) or {"total": 0}
-        return {"rows": rows, "total": total["total"], "limit": limit, "offset": offset}
+        """,
+            params,
+        )
+        total = self._row(f"SELECT COUNT(*) AS total FROM vw_ct_io_health {where}", params) or {
+            "total": 0
+        }
+        summary = (
+            self._row("""
+            SELECT
+                COUNT(DISTINCT internal_order_id) AS internal_order_roots,
+                COUNT(*) AS product_uom_rows,
+                COUNT(*) FILTER (WHERE production_status = 'DATA_EXCEPTION')
+                    AS production_evidence_gaps,
+                COUNT(*) FILTER (WHERE utilization_status = 'DATA_EXCEPTION')
+                    AS utilization_evidence_gaps
+            FROM vw_ct_io_health
+        """)
+            or {
+                "internal_order_roots": 0,
+                "product_uom_rows": 0,
+                "production_evidence_gaps": 0,
+                "utilization_evidence_gaps": 0,
+            }
+        )
+        return {
+            "rows": rows,
+            "summary": summary,
+            "total": total["total"],
+            "limit": limit,
+            "offset": offset,
+        }
 
     def close(self) -> None:
         self.pg.close()

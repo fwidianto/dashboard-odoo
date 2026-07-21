@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
-from src.api import is_authenticated
 from src.control_tower.service import ControlTowerService
-
 
 router = APIRouter(prefix="/api/control-tower", tags=["Control Tower"])
 
 
 def require_dashboard_auth(request: Request) -> None:
+    from src.api import is_authenticated
+
     if not is_authenticated(request):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -52,15 +53,25 @@ def exception_worklist(
     validation_status: Optional[str] = Query(default=None),
     severity: Optional[str] = Query(default=None),
     owner: Optional[str] = Query(default=None),
+    process: Optional[str] = Query(default=None),
+    document: Optional[str] = Query(default=None, max_length=100),
+    date_from: Optional[date] = Query(default=None),
+    date_to: Optional[date] = Query(default=None),
     limit: int = Query(default=200, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
     service: ControlTowerService = Depends(service_dependency),
 ):
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(status_code=422, detail="date_from must not be after date_to.")
     return service.exceptions(
         rule_id=rule_id,
         status=validation_status,
         severity=severity,
         owner=owner,
+        process=process,
+        document=document,
+        date_from=date_from,
+        date_to=date_to,
         limit=limit,
         offset=offset,
     )
@@ -101,7 +112,9 @@ def record_journey(
 ):
     result = service.journey(root_model, root_id)
     if result["root"] is None:
-        raise HTTPException(status_code=404, detail="Record not found in latest completed extraction.")
+        raise HTTPException(
+            status_code=404, detail="Record not found in latest completed extraction."
+        )
     return result
 
 
