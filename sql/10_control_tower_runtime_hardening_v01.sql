@@ -60,9 +60,68 @@ DROP MATERIALIZED VIEW IF EXISTS mv_ct_sop_validation_summary CASCADE;
 DROP MATERIALIZED VIEW IF EXISTS mv_ct_rule_results CASCADE;
 DROP MATERIALIZED VIEW IF EXISTS mv_ct_document_paths CASCADE;
 
+-- Hanya business-root documents yang dipersistenkan. Technical records tetap
+-- dapat menjadi child, tetapi tidak memulai jutaan recursive paths sendiri.
 CREATE MATERIALIZED VIEW mv_ct_document_paths AS
-SELECT *
-FROM vw_ct_document_paths
+WITH RECURSIVE walk AS (
+    SELECT
+        link.parent_model AS root_model,
+        link.parent_id AS root_id,
+        link.parent_number AS root_number,
+        link.parent_model,
+        link.parent_id,
+        link.parent_number,
+        link.child_model,
+        link.child_id,
+        link.child_number,
+        link.link_type,
+        link.confidence,
+        1 AS depth,
+        ARRAY[
+            link.parent_model || ':' || link.parent_id::text,
+            link.child_model || ':' || link.child_id::text
+        ]::text[] AS visited,
+        ARRAY[link.link_type]::text[] AS link_path
+    FROM vw_ct_document_links link
+    WHERE link.parent_model IN (
+        'sale.order',
+        'approval.request',
+        'mrp.production',
+        'purchase.order',
+        'stock.picking',
+        'account.move'
+    )
+
+    UNION ALL
+
+    SELECT
+        walk.root_model,
+        walk.root_id,
+        walk.root_number,
+        next_link.parent_model,
+        next_link.parent_id,
+        next_link.parent_number,
+        next_link.child_model,
+        next_link.child_id,
+        next_link.child_number,
+        next_link.link_type,
+        CASE
+            WHEN walk.confidence = 'MEDIUM' OR next_link.confidence = 'MEDIUM' THEN 'MEDIUM'
+            ELSE 'HIGH'
+        END AS confidence,
+        walk.depth + 1,
+        walk.visited || (next_link.child_model || ':' || next_link.child_id::text),
+        walk.link_path || next_link.link_type
+    FROM walk
+    JOIN vw_ct_document_links next_link
+      ON next_link.parent_model = walk.child_model
+     AND next_link.parent_id = walk.child_id
+    WHERE walk.depth < 5
+      AND NOT (
+          next_link.child_model || ':' || next_link.child_id::text = ANY(walk.visited)
+      )
+)
+SELECT * FROM walk
 WITH DATA;
 
 CREATE INDEX idx_mv_ct_paths_root
@@ -278,7 +337,7 @@ CREATE INDEX idx_mv_ct_exception_filter
     );
 
 COMMENT ON MATERIALIZED VIEW mv_ct_document_paths IS
-    'Precomputed document paths for fast journey queries. Rebuilt after each extraction.';
+    'Precomputed business-root document paths for fast journey queries. Rebuilt after each extraction.';
 COMMENT ON MATERIALIZED VIEW mv_ct_rule_results IS
     'Runtime-adjusted SOP validation results after first live reconciliation.';
 COMMENT ON MATERIALIZED VIEW mv_ct_exception_worklist IS
