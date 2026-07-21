@@ -14,7 +14,7 @@ from decimal import Decimal
 from html import escape
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -45,12 +45,33 @@ if not APP_SETTINGS.session_secret:
     logger.warning("SESSION_SECRET missing; using local development fallback secret for demo auth.")
 
 DEFAULT_DASHBOARD_PATH = "/dashboard/internal-order-rekap"
+CONTROL_TOWER_PATH = "/control-tower"
+CONTROL_TOWER_COMPATIBILITY_PATH = "/dashboard/control-tower"
+CONTROL_TOWER_QUERY_PARAMETERS = frozenset(
+    {
+        "view",
+        "process",
+        "rule",
+        "classification",
+        "owner",
+        "reviewer",
+        "severity",
+        "document",
+        "model",
+        "id",
+        "offset",
+        "journey_page",
+        "date_from",
+        "date_to",
+    }
+)
 PROTECTED_PAGE_PATHS = {
     "/",
     "/dashboard/internal-orders",
     "/dashboard/sales-orders",
     "/dashboard/internal-order-rekap",
-    "/dashboard/control-tower",
+    CONTROL_TOWER_PATH,
+    CONTROL_TOWER_COMPATIBILITY_PATH,
 }
 PROTECTED_API_PREFIX = "/api/dashboard/"
 DASHBOARD_SESSION_COOKIE = "dashboard_session"
@@ -103,8 +124,32 @@ def is_authenticated(request: Request) -> bool:
     return read_dashboard_session(request.cookies.get(DASHBOARD_SESSION_COOKIE)) is not None
 
 
+def safe_control_tower_path(value: Optional[str]) -> Optional[str]:
+    """Return a canonical, local Control Tower URL with supported query state."""
+    candidate = (value or "").strip()
+    parsed = urlsplit(candidate)
+    if (
+        parsed.scheme
+        or parsed.netloc
+        or parsed.fragment
+        or parsed.path not in {CONTROL_TOWER_PATH, CONTROL_TOWER_COMPATIBILITY_PATH}
+    ):
+        return None
+
+    query: list[tuple[str, str]] = []
+    for key, raw_value in parse_qsl(parsed.query, keep_blank_values=False):
+        if key in CONTROL_TOWER_QUERY_PARAMETERS and len(raw_value) <= 200:
+            query.append((key, raw_value))
+        if len(query) >= 30:
+            break
+    return CONTROL_TOWER_PATH + (f"?{urlencode(query)}" if query else "")
+
+
 def safe_next_path(value: Optional[str]) -> str:
     candidate = (value or "").strip()
+    control_tower_path = safe_control_tower_path(candidate)
+    if control_tower_path:
+        return control_tower_path
     if candidate in PROTECTED_PAGE_PATHS and candidate != "/":
         return candidate
     return DEFAULT_DASHBOARD_PATH
@@ -291,7 +336,10 @@ async def dashboard_auth_middleware(request: Request, call_next):
 
     if path in PROTECTED_PAGE_PATHS:
         if not is_authenticated(request):
-            return redirect_to_login(path)
+            requested_path = path
+            if request.url.query:
+                requested_path = f"{path}?{request.url.query}"
+            return redirect_to_login(safe_next_path(requested_path))
 
     if path.startswith(PROTECTED_API_PREFIX):
         if not is_authenticated(request):
@@ -309,7 +357,7 @@ async def favicon():
 async def login_page(request: Request, next: Optional[str] = None):
     """Render the local dashboard login page."""
     if is_authenticated(request):
-        return RedirectResponse(url=DEFAULT_DASHBOARD_PATH, status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(url=safe_next_path(next), status_code=status.HTTP_303_SEE_OTHER)
     return HTMLResponse(render_login_page(next_path=safe_next_path(next)))
 
 
@@ -599,10 +647,53 @@ async def internal_order_rekap_dashboard_page():
     return FileResponse(STATIC_DIR / "dashboard" / "internal-order-rekap.html")
 
 
-@app.get("/dashboard/control-tower", include_in_schema=False)
-async def control_tower_dashboard_page():
-    """Serve the read-only Control Tower dashboard."""
-    return FileResponse(STATIC_DIR / "dashboard" / "control-tower.html")
+@app.get(CONTROL_TOWER_PATH, include_in_schema=False)
+async def control_tower_page():
+    """Serve the standalone read-only Control Tower application."""
+    return FileResponse(STATIC_DIR / "control-tower" / "index.html")
+
+
+@app.get(CONTROL_TOWER_COMPATIBILITY_PATH, include_in_schema=False)
+async def control_tower_compatibility_redirect(request: Request):
+    """Redirect the former dashboard route while retaining supported state."""
+    requested_path = CONTROL_TOWER_COMPATIBILITY_PATH
+    if request.url.query:
+        requested_path = f"{requested_path}?{request.url.query}"
+    return RedirectResponse(
+        url=safe_control_tower_path(requested_path) or CONTROL_TOWER_PATH,
+        status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+    )
+
+
+@app.get("/control-tower/health", include_in_schema=False)
+async def control_tower_launcher_health():
+    """Minimal PostgreSQL-backed probe for the local Windows launcher."""
+    from src.control_tower.service import ControlTowerService
+
+    service = ControlTowerService()
+    try:
+        health = service.health()
+    except Exception:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"application": "control-tower", "status": "UNAVAILABLE", "read_only": True},
+        )
+    finally:
+        service.close()
+
+    response_status = (
+        status.HTTP_200_OK
+        if health.get("status") == "READY"
+        else status.HTTP_503_SERVICE_UNAVAILABLE
+    )
+    return JSONResponse(
+        status_code=response_status,
+        content={
+            "application": "control-tower",
+            "status": health.get("status", "UNAVAILABLE"),
+            "read_only": True,
+        },
+    )
 
 
 class DashboardExportColumn(BaseModel):

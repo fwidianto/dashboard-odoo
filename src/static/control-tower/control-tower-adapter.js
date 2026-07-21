@@ -149,6 +149,43 @@
     "Marketing / PPIC",
   ]);
 
+  const PROCESS_DEFINITIONS = Object.freeze([
+    { id: "quotation", label: "Quotation", owner: "Marketing", reviewer: "Marketing / Admin Sales", ruleIds: ["SO-PO-001"], x: 10, y: 16 },
+    { id: "sales-order", label: "Sales Order", owner: "Marketing", reviewer: "Marketing / Admin Sales", ruleIds: ["SO-PO-001", "SO-SOURCE-001", "SO-CANCEL-001"], x: 28, y: 16 },
+    { id: "source-decision", label: "Keputusan Sumber", owner: "Marketing / PPIC", reviewer: "Marketing / PPIC", ruleIds: ["SO-SOURCE-001"], x: 48, y: 16 },
+    { id: "jo-distribution", label: "Distribusi JO", owner: "Marketing / Operations", reviewer: "Marketing / Operations", ruleIds: ["JO-DIST-001"], x: 27, y: 35, specialStatus: "MANUAL_EVIDENCE_REQUIRED" },
+    { id: "stock", label: "Stock", owner: "WHD", reviewer: "WHD / PPIC", ruleIds: [], x: 38, y: 42 },
+    { id: "internal-order", label: "Internal Order", owner: "PPIC", reviewer: "PPIC / Marketing", ruleIds: ["SO-IO-MO-001", "IO-PROD-001", "IO-UTIL-001"], x: 55, y: 42 },
+    { id: "manufacturing", label: "Manufacturing Order", owner: "PPIC", reviewer: "PPIC", ruleIds: ["SO-IO-MO-001", "IO-PROD-001"], x: 73, y: 42 },
+    { id: "purchase-order", label: "Purchase Order", owner: "Procurement", reviewer: "Procurement / WHD", ruleIds: ["PO-CANCEL-001", "PO-DRAFT-001"], x: 12, y: 62 },
+    { id: "receipt", label: "Receipt", owner: "WHD", reviewer: "Procurement / WHD", ruleIds: ["PO-CANCEL-001", "PO-DRAFT-001"], x: 31, y: 69 },
+    { id: "production", label: "Production", owner: "PPIC", reviewer: "PPIC", ruleIds: ["IO-PROD-001"], x: 59, y: 66 },
+    { id: "delivery", label: "Delivery", owner: "WHD", reviewer: "WHD / Marketing", ruleIds: ["SO-CANCEL-001"], x: 79, y: 65 },
+    { id: "invoice", label: "Invoice", owner: "Accounting", reviewer: "Accounting / Marketing", ruleIds: ["SO-CANCEL-001"], x: 90, y: 82 },
+    { id: "payment", label: "Payment", owner: "Accounting", reviewer: "Accounting", ruleIds: ["PAY-001"], x: 75, y: 88, specialStatus: "MAPPING_PENDING" },
+  ]);
+
+  const PROCESS_RELATIONSHIPS = Object.freeze([
+    ["quotation", "sales-order", "primary"],
+    ["sales-order", "source-decision", "primary"],
+    ["sales-order", "jo-distribution", "manual"],
+    ["source-decision", "stock", "primary"],
+    ["source-decision", "internal-order", "primary"],
+    ["source-decision", "manufacturing", "primary"],
+    ["purchase-order", "receipt", "support"],
+    ["purchase-order", "internal-order", "support"],
+    ["purchase-order", "manufacturing", "support"],
+    ["receipt", "stock", "support"],
+    ["receipt", "internal-order", "support"],
+    ["receipt", "manufacturing", "support"],
+    ["stock", "delivery", "primary"],
+    ["internal-order", "production", "primary"],
+    ["manufacturing", "production", "primary"],
+    ["production", "delivery", "primary"],
+    ["delivery", "invoice", "primary"],
+    ["invoice", "payment", "manual"],
+  ]);
+
   function asNumber(value) {
     const number = Number(value);
     return Number.isFinite(number) ? number : 0;
@@ -278,12 +315,88 @@
       incompleteEvidence: asNumber(row.linkage_gap_records),
       evidenceStrength: ruleEvidencePresentation(row.implementation_class),
       latestEvaluation: context.completedAt || null,
+      processOwner: row.owner || presentation.reviewer || "Pemilik proses terkait",
+      reviewer: presentation.reviewer || row.owner || "Pemilik proses terkait",
       owner: presentation.reviewer || row.owner,
       validationRate: row.validation_rate_percent,
       currentSummary: isPoCancellation
         ? `${formatNumber(po.active)} masalah aktif mulai tahun 2026; ${formatNumber(po.historical)} catatan historis sebelum tahun 2026.`
         : null,
     };
+  }
+
+  function ruleClassification(rule) {
+    if (rule.activeIssues > 0) return { key: "active", count: rule.activeIssues, status: statusPresentation("MISMATCH"), priority: 1 };
+    if (rule.reviewRequired > 0) return { key: "review", count: rule.reviewRequired, status: statusPresentation("PARTIAL_MATCH"), priority: 2 };
+    if (rule.incompleteEvidence > 0) return { key: "incomplete", count: rule.incompleteEvidence, status: statusPresentation("DATA_EXCEPTION"), priority: 3 };
+    if (rule.historicalCount > 0) return { key: "historical", count: rule.historicalCount, status: statusPresentation("HISTORICAL_EXPOSURE"), priority: 4 };
+    return { key: "compliant", count: rule.compliantCount, status: statusPresentation(rule.rawStatus || "VALIDATED"), priority: 5 };
+  }
+
+  function normalizeProcessMap(validationRows, context = {}) {
+    const rules = (validationRows || []).map((row) => normalizeRule(row, context));
+    const rulesById = new Map(rules.map((rule) => [rule.ruleId, rule]));
+    const nodes = PROCESS_DEFINITIONS.map((definition) => {
+      const matchedRules = definition.ruleIds.map((ruleId) => rulesById.get(ruleId)).filter(Boolean);
+      const totals = matchedRules.reduce((result, rule) => {
+        result.checked += rule.checkedCount;
+        result.compliant += rule.compliantCount;
+        result.active += rule.activeIssues;
+        result.review += rule.reviewRequired;
+        result.incomplete += rule.incompleteEvidence;
+        result.historical += rule.historicalCount;
+        return result;
+      }, { checked: 0, compliant: 0, active: 0, review: 0, incomplete: 0, historical: 0 });
+
+      let status;
+      let primaryRule = matchedRules.slice().sort((a, b) => ruleClassification(a).priority - ruleClassification(b).priority)[0] || null;
+      if (definition.specialStatus) {
+        status = statusPresentation(definition.specialStatus);
+        primaryRule = RULE_PRESENTATION[definition.ruleIds[0]] ? {
+          ...RULE_PRESENTATION[definition.ruleIds[0]],
+          ruleId: definition.ruleIds[0],
+          evidenceStrength: definition.specialStatus === "MANUAL_EVIDENCE_REQUIRED" ? "Bukti manual" : "Belum dipublikasikan",
+        } : null;
+      } else if (totals.active > 0) status = statusPresentation("MISMATCH");
+      else if (totals.review > 0) status = statusPresentation("PARTIAL_MATCH");
+      else if (totals.incomplete > 0) status = statusPresentation("DATA_EXCEPTION");
+      else if (totals.historical > 0) status = statusPresentation("HISTORICAL_EXPOSURE");
+      else if (matchedRules.length) status = statusPresentation("VALIDATED");
+      else status = { raw: "UNAVAILABLE", label: "Belum tersedia", tone: "neutral", group: "pending" };
+
+      const headline = totals.active > 0
+        ? `${formatNumber(totals.active)} masalah aktif`
+        : totals.review > 0
+          ? `${formatNumber(totals.review)} perlu ditinjau`
+          : totals.incomplete > 0
+            ? `${formatNumber(totals.incomplete)} bukti belum lengkap`
+            : totals.historical > 0
+              ? `${formatNumber(totals.historical)} catatan historis`
+              : status.label;
+      return { ...definition, rules: matchedRules, primaryRule, totals, status, headline };
+    });
+    return { nodes, rules };
+  }
+
+  function priorityFeed(rules, limit = 6) {
+    return (rules || [])
+      .map((rule, index) => ({ rule, classification: ruleClassification(rule), index }))
+      .filter((item) => item.classification.key !== "compliant" || item.rule.historicalCount > 0)
+      .sort((a, b) => a.classification.priority - b.classification.priority || a.index - b.index)
+      .slice(0, limit)
+      .map(({ rule, classification }) => {
+        const process = PROCESS_DEFINITIONS.find((item) => item.ruleIds.includes(rule.ruleId));
+        return {
+          ruleId: rule.ruleId,
+          processId: process?.id || "sales-order",
+          process: rule.process,
+          reviewer: rule.owner,
+          title: rule.title,
+          count: classification.count,
+          classification: classification.key,
+          status: classification.status,
+        };
+      });
   }
 
   function overviewMetrics(health, validationRows, poRows, ioSummary) {
@@ -307,7 +420,7 @@
   function documentLink(model, id) {
     if (!model || !Number.isFinite(Number(id))) return null;
     const params = new URLSearchParams({ view: "journey", model: String(model), id: String(id) });
-    return `/dashboard/control-tower?${params.toString()}`;
+    return `/control-tower?${params.toString()}`;
   }
 
   function relatedDocuments(row) {
@@ -337,6 +450,8 @@
       process: presentation.process || row.sop_section || "Lintas proses",
       affectedDocument: row.document_number || "Nomor dokumen tidak tersedia",
       affectedModel: MODEL_LABELS[row.document_model] || row.document_model || "Dokumen",
+      documentModel: row.document_model || null,
+      documentId: Number.isFinite(Number(row.document_id)) ? Number(row.document_id) : null,
       relatedDocuments: relatedDocuments(row),
       confidence: confidencePresentation(row.confidence),
       severity: String(row.severity || "UNKNOWN").toUpperCase(),
@@ -362,6 +477,8 @@
       process: RULE_PRESENTATION["PO-CANCEL-001"].process,
       affectedDocument: row.purchase_order_number || "Nomor PO tidak tersedia",
       affectedModel: "Purchase Order",
+      documentModel: "purchase.order",
+      documentId: Number.isFinite(Number(row.purchase_order_id)) ? Number(row.purchase_order_id) : null,
       relatedDocuments: (row.open_receipts || []).map((receipt) => ({
         number: receipt.number,
         model: "stock.picking",
@@ -391,6 +508,7 @@
       active: "MISMATCH",
       review: "PARTIAL_MATCH",
       incomplete: "DATA_LINKAGE_GAP",
+      "document-gap": "DOCUMENT_LINK_GAP",
     }[classification] || "MISMATCH";
     params.set("validation_status", technicalStatus);
     if (filters.rule) params.set("rule_id", filters.rule);
@@ -409,6 +527,7 @@
       historical: "Tidak ada catatan historis untuk filter yang dipilih.",
       review: "Tidak ada data yang perlu ditinjau untuk filter yang dipilih.",
       incomplete: "Tidak ada bukti sistem yang belum lengkap untuk filter yang dipilih.",
+      "document-gap": "Tidak ada hubungan dokumen yang belum lengkap untuk filter yang dipilih.",
     }[classification] || "Tidak ada data untuk filter yang dipilih.";
   }
 
@@ -496,6 +615,8 @@
     MODEL_LABELS,
     PROCESS_FILTERS,
     OWNER_FILTERS,
+    PROCESS_DEFINITIONS,
+    PROCESS_RELATIONSHIPS,
     escapeHtml,
     formatNumber,
     formatPercent,
@@ -505,6 +626,8 @@
     freshnessState,
     poScopeSummary,
     normalizeRule,
+    normalizeProcessMap,
+    priorityFeed,
     overviewMetrics,
     normalizeException,
     normalizeHistoricalPo,

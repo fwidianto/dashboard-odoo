@@ -3,9 +3,17 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const test = require("node:test");
-const A = require("../src/static/dashboard/control-tower-adapter.js");
+const A = require("../src/static/control-tower/control-tower-adapter.js");
 const UI_SOURCE = fs.readFileSync(
-  require.resolve("../src/static/dashboard/control-tower.js"),
+  require.resolve("../src/static/control-tower/control-tower.js"),
+  "utf8",
+);
+const HTML_SOURCE = fs.readFileSync(
+  require.resolve("../src/static/control-tower/index.html"),
+  "utf8",
+);
+const CSS_SOURCE = fs.readFileSync(
+  require.resolve("../src/static/control-tower/control-tower.css"),
   "utf8",
 );
 
@@ -202,7 +210,76 @@ test("worklist and journey deep-links load freshness evidence", () => {
     UI_SOURCE.indexOf("function loadCurrentView"),
   );
   assert.match(exceptionSource, /api\/control-tower\/health/);
-  assert.match(exceptionSource, /showFreshness\(health\)/);
+  assert.match(exceptionSource, /commitView\(html, health/);
   assert.match(journeySource, /api\/control-tower\/health/);
-  assert.match(journeySource, /showFreshness\(health\)/);
+  assert.match(journeySource, /commitView\(html, health/);
+});
+
+test("process map uses normalized backend values and honest special states", () => {
+  const map = A.normalizeProcessMap(
+    [
+      {
+        rule_id: "SO-SOURCE-001",
+        overall_status: "PARTIAL_MATCH",
+        tested_records: 12,
+        validated_records: 7,
+        partial_match_records: 5,
+        linkage_gap_records: 0,
+      },
+      {
+        rule_id: "PO-CANCEL-001",
+        overall_status: "VALIDATED",
+        implementation_class: "DETERMINISTIC",
+      },
+    ],
+    {
+      po: {
+        checked: 348,
+        active: 0,
+        historical: 35,
+        historicalRoots: 861,
+        backorders: 1,
+        unknown: 0,
+      },
+    },
+  );
+  const source = map.nodes.find((node) => node.id === "source-decision");
+  const payment = map.nodes.find((node) => node.id === "payment");
+  const distribution = map.nodes.find((node) => node.id === "jo-distribution");
+  const stock = map.nodes.find((node) => node.id === "stock");
+
+  assert.equal(source.totals.review, 5);
+  assert.equal(source.headline, "5 perlu ditinjau");
+  assert.equal(payment.status.label, "Belum Dapat Diperiksa Otomatis");
+  assert.equal(distribution.status.label, "Memerlukan Bukti Manual");
+  assert.equal(stock.status.label, "Belum tersedia");
+});
+
+test("priority feed follows classification priority instead of largest count", () => {
+  const rules = [
+    { ruleId: "SO-SOURCE-001", title: "Review", process: "Sales Order", owner: "PPIC", activeIssues: 0, reviewRequired: 900, incompleteEvidence: 0, historicalCount: 0, compliantCount: 0 },
+    { ruleId: "PO-CANCEL-001", title: "Active", process: "Purchase Order", owner: "Procurement", activeIssues: 1, reviewRequired: 0, incompleteEvidence: 0, historicalCount: 0, compliantCount: 0 },
+  ];
+
+  const priorities = A.priorityFeed(rules);
+
+  assert.equal(priorities[0].title, "Active");
+  assert.equal(priorities[0].count, 1);
+  assert.equal(priorities[1].title, "Review");
+});
+
+test("standalone URLs, refresh safety, theme, display, and reduced motion are wired", () => {
+  assert.equal(A.documentLink("purchase.order", 7), "/control-tower?view=journey&model=purchase.order&id=7");
+  assert.match(HTML_SOURCE, /\/static\/control-tower\/control-tower\.css/);
+  assert.doesNotMatch(HTML_SOURCE, /dashboard-common\.css|Internal Orders|Sales Orders/);
+  assert.match(UI_SOURCE, /if \(activeLoad\)/);
+  assert.match(UI_SOURCE, /document\.hidden/);
+  assert.match(UI_SOURCE, /visibilitychange/);
+  assert.match(UI_SOURCE, /control-tower-auto-refresh/);
+  assert.match(UI_SOURCE, /Data terbaru belum dapat dimuat/);
+  assert.doesNotMatch(UI_SOURCE, /run_control_tower_refresh|run_incremental_sync|\/sync/);
+  assert.match(CSS_SOURCE, /html\[data-theme="dark"\]/);
+  assert.match(CSS_SOURCE, /body\.display-mode/);
+  assert.match(CSS_SOURCE, /prefers-reduced-motion: reduce/);
+  assert.doesNotMatch(`${HTML_SOURCE}\n${UI_SOURCE}`, /health percentage|overall health|iHealth|89%|91%/i);
 });
