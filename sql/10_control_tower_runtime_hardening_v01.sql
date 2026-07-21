@@ -264,7 +264,9 @@ WHERE result.validation_status IN (
 )
 WITH DATA;
 
-CREATE UNIQUE INDEX idx_mv_ct_exception_issue
+-- Satu IO dapat menghasilkan lebih dari satu result per product/UoM, sehingga
+-- issue_id sengaja tidak dibuat unique pada v0.1.1.
+CREATE INDEX idx_mv_ct_exception_issue
     ON mv_ct_exception_worklist (issue_id);
 CREATE INDEX idx_mv_ct_exception_filter
     ON mv_ct_exception_worklist (
