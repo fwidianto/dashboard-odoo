@@ -27,6 +27,7 @@ from src.control_tower.relation_extractor import ControlTowerRelationExtractor
 SQL_PATHS = (
     PROJECT_ROOT / "sql" / "09_control_tower_sop_validation_v0.sql",
     PROJECT_ROOT / "sql" / "10_control_tower_runtime_hardening_v01.sql",
+    PROJECT_ROOT / "sql" / "11_control_tower_io_lineage_hardening_v012.sql",
 )
 
 
