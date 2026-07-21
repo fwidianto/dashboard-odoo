@@ -58,6 +58,46 @@ CHECKS = (
         "SELECT COUNT(*) > 0 AS passed FROM vw_ct_io_health",
     ),
     (
+        "io_lineage_version_is_current",
+        """
+        SELECT COUNT(*) = 0 AS passed
+        FROM vw_ct_io_health
+        WHERE COALESCE(evidence ->> 'lineage_version', '') <> 'v0.1.2'
+        """,
+    ),
+    (
+        "io_production_gap_has_line_local_reason",
+        """
+        SELECT COUNT(*) = 0 AS passed
+        FROM mv_ct_rule_results
+        WHERE rule_id = 'IO-PROD-001'
+          AND validation_status = 'DATA_LINKAGE_GAP'
+          AND COALESCE(NULLIF(evidence ->> 'mo_product_uom_mismatch_count', '')::bigint, 0) = 0
+          AND actual_condition ->> 'product_id' IS NOT NULL
+          AND actual_condition ->> 'uom_id' IS NOT NULL
+        """,
+    ),
+    (
+        "io_utilization_gap_has_line_level_ambiguity",
+        """
+        SELECT COUNT(*) = 0 AS passed
+        FROM mv_ct_rule_results
+        WHERE rule_id = 'IO-UTIL-001'
+          AND validation_status = 'DATA_LINKAGE_GAP'
+          AND COALESCE(NULLIF(evidence ->> 'ambiguous_so_line_count', '')::bigint, 0) = 0
+          AND actual_condition ->> 'product_id' IS NOT NULL
+          AND actual_condition ->> 'uom_id' IS NOT NULL
+        """,
+    ),
+    (
+        "mixed_source_lines_are_not_io_mismatches",
+        """
+        SELECT COUNT(*) = 0 AS passed
+        FROM vw_ct_io_health
+        WHERE COALESCE(NULLIF(evidence ->> 'so_product_uom_mismatch_count', '')::bigint, 0) <> 0
+        """,
+    ),
+    (
         "validation_status_vocabulary_is_controlled",
         """
         SELECT COUNT(*) = 0 AS passed
@@ -121,7 +161,7 @@ def main() -> int:
     if failures:
         print("Failed checks: " + ", ".join(failures))
         return 1
-    print("All Control Tower v0.1.1 database checks passed.")
+    print("All Control Tower v0.1.2 database checks passed.")
     return 0
 
 
