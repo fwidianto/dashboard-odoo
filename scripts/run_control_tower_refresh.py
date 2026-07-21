@@ -4,6 +4,7 @@ Contoh:
     python scripts/run_control_tower_refresh.py
     python scripts/run_control_tower_refresh.py --extract-only
     python scripts/run_control_tower_refresh.py --sql-only
+    python scripts/run_control_tower_refresh.py --io-hardening-only
 """
 
 from __future__ import annotations
@@ -24,11 +25,14 @@ from src.clients.postgres_client import PostgresClient
 from src.control_tower.relation_extractor import ControlTowerRelationExtractor
 
 
-SQL_PATHS = (
+BASE_SQL_PATHS = (
     PROJECT_ROOT / "sql" / "09_control_tower_sop_validation_v0.sql",
     PROJECT_ROOT / "sql" / "10_control_tower_runtime_hardening_v01.sql",
-    PROJECT_ROOT / "sql" / "11_control_tower_io_lineage_hardening_v012.sql",
 )
+IO_HARDENING_SQL_PATH = (
+    PROJECT_ROOT / "sql" / "11_control_tower_io_lineage_hardening_v012.sql"
+)
+SQL_PATHS = (*BASE_SQL_PATHS, IO_HARDENING_SQL_PATH)
 
 
 def apply_sql(pg: PostgresClient, sql_path: Path) -> None:
@@ -69,6 +73,11 @@ def parse_args() -> argparse.Namespace:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--extract-only", action="store_true")
     mode.add_argument("--sql-only", action="store_true")
+    mode.add_argument(
+        "--io-hardening-only",
+        action="store_true",
+        help="Apply only v0.1.2 IO lineage SQL to the existing completed snapshot.",
+    )
     return parser.parse_args()
 
 
@@ -81,14 +90,16 @@ def main() -> int:
         batch_size=args.batch_size,
     )
     try:
-        if not args.sql_only:
+        if not args.sql_only and not args.io_hardening_only:
             result = extractor.run()
             print(json.dumps(result, indent=2, default=str))
         else:
             extractor.ensure_schema()
             print("[INFO ] Reusing latest COMPLETED extraction; Odoo will not be fetched.", flush=True)
 
-        if not args.extract_only:
+        if args.io_hardening_only:
+            apply_sql(pg, IO_HARDENING_SQL_PATH)
+        elif not args.extract_only:
             for sql_path in SQL_PATHS:
                 apply_sql(pg, sql_path)
 
