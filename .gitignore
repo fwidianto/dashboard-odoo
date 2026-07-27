@@ -149,6 +149,11 @@ ehthumbs.db
 Thumbs.db
 
 # Project specific
+# Local runtime/sandbox evidence: may contain credentials or native document IDs.
+.env.sandbox
+local_data/
+output/
+run_incremental_sync.bat
 logs/
 private_reference/
 *.log
