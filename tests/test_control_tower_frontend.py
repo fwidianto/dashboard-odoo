@@ -1,7 +1,7 @@
 import asyncio
 from datetime import date
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException, Request, Response
@@ -20,7 +20,13 @@ from src.api import (
     safe_next_path,
     sign_dashboard_session,
 )
-from src.control_tower.router import exception_worklist, require_dashboard_auth
+from src.control_tower.router import (
+    exception_worklist,
+    incremental_refresh,
+    require_dashboard_auth,
+    retry_incremental_refresh,
+)
+from src.control_tower.relation_extractor import IncrementalRefreshError
 from src.control_tower.service import ControlTowerService
 from src.control_tower_app import app as compatibility_app
 
@@ -38,6 +44,20 @@ def test_canonical_app_exposes_protected_control_tower() -> None:
     assert safe_next_path(CONTROL_TOWER_COMPATIBILITY_PATH) == CONTROL_TOWER_PATH
     assert "/api/control-tower/health" in openapi_paths
     assert "/api/control-tower/journey/{root_model}/{root_id}" in openapi_paths
+    assert "/api/control-tower/findings" in openapi_paths
+    assert "/api/control-tower/findings/bulk-close" in openapi_paths
+    assert "/api/control-tower/findings/bulk-reopen" in openapi_paths
+    assert "/api/control-tower/search" in openapi_paths
+    assert "/api/control-tower/documents/{model}/{record_id}" in openapi_paths
+    assert "/api/control-tower/process-map" in openapi_paths
+    assert "/api/control-tower/product-cost-classifications" in openapi_paths
+    assert "put" in openapi_paths["/api/control-tower/product-cost-classifications/{product_id}"]
+    assert "/api/control-tower/cases" in openapi_paths
+    assert "/api/control-tower/cases/{case_id}" in openapi_paths
+    assert "/api/control-tower/related-data/{root_model}/{root_id}" in openapi_paths
+    assert "post" in openapi_paths["/api/control-tower/refresh"]
+    assert "/api/control-tower/refresh/{job_id}" in openapi_paths
+    assert "post" in openapi_paths["/api/control-tower/refresh/{job_id}/retry"]
 
 
 def test_control_tower_safe_return_url_preserves_supported_state_only() -> None:
@@ -212,3 +232,119 @@ def test_io_health_returns_server_aggregate() -> None:
     assert result["summary"]["internal_order_roots"] == 118
     assert result["summary"]["product_uom_rows"] == 824
     assert "COUNT(DISTINCT internal_order_id)" in service._row.call_args_list[1].args[0]
+
+
+def test_findings_summary_uses_only_three_operational_categories() -> None:
+    service = service_double()
+    service.odoo_base_url = "https://odoo.example"
+    service._rows = MagicMock(
+        side_effect=[
+            [
+            {
+                "finding_key": "a" * 32,
+                "business_title": "Dokumen induk dibatalkan",
+                "category": "Masalah Aktif",
+                "primary_document_model": "sale.order",
+                "primary_document_id": 10,
+                "primary_document_number": "SO0010",
+                "primary_document_state": "cancel",
+                "impacted_documents": [],
+                "impacted_lines": [],
+                "current_evidence": {"facts": [], "recommended_action": "Periksa"},
+                "process_owner": "PPIC",
+                "responsible_user": None,
+                "first_seen_at": "2026-07-22T00:00:00+00:00",
+                "last_detected_at": "2026-07-22T00:00:00+00:00",
+                "currently_detected": True,
+                "lifecycle_state": "ACTIVE",
+                "closed_reason": None,
+                "closed_note": None,
+                "closed_by": None,
+                "closed_at": None,
+                "auto_resolved_at": None,
+                "reopened_reason": None,
+                "reopened_by": None,
+                "reopened_at": None,
+            }
+            ],
+            [{"category": "Masalah Aktif", "count": 2}],
+        ]
+    )
+    service._row = MagicMock(return_value={"total": 1})
+
+    result = service.findings()
+
+    assert result["summary"] == {"active": 2, "review": 0, "incomplete": 0}
+    assert "historical" not in result["summary"]
+    assert result["rows"][0]["category"] == "Masalah Aktif"
+    assert "rule_id" not in result["rows"][0]
+    assert "id" not in result["rows"][0]["primary_document"]
+
+
+def test_cases_group_raw_rows_by_stable_issue_id() -> None:
+    service = service_double()
+    service._rows = MagicMock(return_value=[])
+    service._row = MagicMock(return_value={"total": 0})
+
+    service.cases(rule_id="IO-PROD-001", validation_status="DATA_LINKAGE_GAP")
+
+    query = service._rows.call_args.args[0]
+    assert "GROUP BY issue_id" in query
+    assert "COUNT(*) AS raw_record_count" in query
+    assert "ROW_NUMBER" not in query
+
+
+def test_refresh_failure_returns_safe_message_and_hides_exception() -> None:
+    service = MagicMock()
+    service.start_refresh_job.side_effect = IncrementalRefreshError("secret source detail")
+
+    with pytest.raises(HTTPException) as exc_info:
+        incremental_refresh(service=service)
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == (
+        "Pembaruan Odoo gagal. Control Tower tetap menampilkan data terakhir yang berhasil."
+    )
+    assert "secret" not in exc_info.value.detail
+
+
+def test_refresh_starts_one_background_job_and_returns_poll_contract() -> None:
+    service = MagicMock()
+    service.start_refresh_job.return_value = {
+        "job_id": "00000000-0000-0000-0000-000000000123",
+        "status": "QUEUED",
+        "phase": "QUEUED",
+        "message": "Pembaruan dijadwalkan…",
+        "changed_documents": 0,
+        "recalculated_checks": 0,
+        "already_running": False,
+    }
+
+    with patch("src.control_tower.router.refresh_executor.submit") as submit:
+        result = incremental_refresh(service=service)
+
+    submit.assert_called_once()
+    assert result["status"] == "QUEUED"
+    assert result["poll_url"].endswith(result["job_id"])
+
+
+def test_retry_refresh_uses_failed_job_checkpoint_and_one_background_worker() -> None:
+    service = MagicMock()
+    service.retry_refresh_job.return_value = {
+        "job_id": "00000000-0000-0000-0000-000000000124",
+        "status": "QUEUED",
+        "phase": "PREPARATION",
+        "already_running": False,
+    }
+
+    with patch("src.control_tower.router.refresh_executor.submit") as submit:
+        result = retry_incremental_refresh(
+            "00000000-0000-0000-0000-000000000123",
+            service=service,
+        )
+
+    service.retry_refresh_job.assert_called_once_with(
+        "00000000-0000-0000-0000-000000000123"
+    )
+    submit.assert_called_once()
+    assert result["poll_url"].endswith(result["job_id"])

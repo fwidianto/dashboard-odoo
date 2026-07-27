@@ -4,282 +4,136 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const test = require("node:test");
 const A = require("../src/static/control-tower/control-tower-adapter.js");
-const UI_SOURCE = fs.readFileSync(
-  require.resolve("../src/static/control-tower/control-tower.js"),
-  "utf8",
-);
-const HTML_SOURCE = fs.readFileSync(
-  require.resolve("../src/static/control-tower/index.html"),
-  "utf8",
-);
-const CSS_SOURCE = fs.readFileSync(
-  require.resolve("../src/static/control-tower/control-tower.css"),
-  "utf8",
-);
+const UI = require("../src/static/control-tower/control-tower.js");
+const UI_SOURCE = fs.readFileSync(require.resolve("../src/static/control-tower/control-tower.js"), "utf8");
+const HTML_SOURCE = fs.readFileSync(require.resolve("../src/static/control-tower/index.html"), "utf8");
+const CSS_SOURCE = fs.readFileSync(require.resolve("../src/static/control-tower/control-tower.css"), "utf8");
 
-test("technical statuses use centralized Indonesian language", () => {
-  const expected = {
-    VALIDATED: "Sesuai",
-    MISMATCH: "Masalah Aktif",
-    PARTIAL_MATCH: "Perlu Ditinjau",
-    DATA_EXCEPTION: "Bukti Sistem Belum Lengkap",
-    DOCUMENT_LINK_GAP: "Hubungan Dokumen Belum Lengkap",
-    MANUAL_EVIDENCE_REQUIRED: "Memerlukan Bukti Manual",
-    HISTORICAL_EXPOSURE: "Catatan Historis",
-    DATE_SCOPE_UNKNOWN: "Tanggal Dokumen Belum Tersedia",
-    MAPPING_PENDING: "Belum Dapat Diperiksa Otomatis",
-  };
+test("adapter escapes untrusted values and formats unavailable numbers honestly", () => {
+  assert.equal(A.escapeHtml('<script>"x"</script>'), "&lt;script&gt;&quot;x&quot;&lt;/script&gt;");
+  assert.equal(A.formatNumber("not-a-number"), "—");
+  assert.equal(A.formatMoney(null), "Belum tersedia");
+  assert.equal(A.categoryTone("Masalah Aktif"), "danger");
+});
 
-  for (const [raw, label] of Object.entries(expected)) {
-    assert.equal(A.statusPresentation(raw).label, label);
+test("left navigation and freshness copy match the frozen v0.3 contract", () => {
+  for (const label of ["Temuan", "Peta Proses", "Tracking", "Arsip"]) {
+    assert.match(HTML_SOURCE, new RegExp(`>${label}<`));
   }
-  assert.equal(A.statusPresentation("DATA_LINKAGE_GAP").label, "Bukti Sistem Belum Lengkap");
-  assert.notEqual(A.statusPresentation("MANUAL_EVIDENCE_REQUIRED").tone, "danger");
+  assert.match(HTML_SOURCE, /Sinkronisasi Odoo/);
+  assert.match(HTML_SOURCE, /Layar diperbarui/);
+  assert.doesNotMatch(HTML_SOURCE, /Snapshot data|Overview|Validasi SOP|Daftar Pengecualian|Perjalanan Dokumen/);
 });
 
-test("PO cancellation keeps active and historical counts separate", () => {
-  const po = A.poScopeSummary([
-    {
-      date_scope: "ACTIVE_2026_PLUS",
-      cancelled_po_roots: 348,
-      masalah_aktif_2026_plus: 0,
-    },
-    {
-      date_scope: "HISTORICAL_PRE_2026",
-      cancelled_po_roots: 861,
-      catatan_historis: 35,
-      open_backorders: 1,
-    },
+test("finding summary contains only the three active categories", () => {
+  assert.deepEqual(
+    [...UI_SOURCE.matchAll(/const CATEGORIES = \[(.*?)\]/gs)][0][1].match(/"[^"]+"/g).map((item) => item.slice(1, -1)),
+    ["Masalah Aktif", "Perlu Ditinjau", "Data Belum Lengkap"],
+  );
+  assert.match(UI_SOURCE, /data-category=/);
+  assert.doesNotMatch(UI_SOURCE.slice(UI_SOURCE.indexOf("function metricCards"), UI_SOURCE.indexOf("function findingRow")), /historis/i);
+});
+
+test("finding table uses the frozen columns and inline expansion", () => {
+  const source = UI_SOURCE.slice(UI_SOURCE.indexOf("async function renderFindings"), UI_SOURCE.indexOf("function bindFindingActions"));
+  for (const heading of ["Dokumen Utama", "Penjelasan Masalah", "Dokumen Terdampak", "Aksi"]) assert.match(source, new RegExp(heading));
+  assert.match(UI_SOURCE, /data-expand-finding/);
+  assert.match(UI_SOURCE, /Buka Dokumen/);
+  assert.doesNotMatch(UI_SOURCE, /Lihat Detail/);
+});
+
+test("manual lifecycle supports single and bulk close plus archive reopen", () => {
+  assert.match(UI_SOURCE, /\/findings\/bulk-close/);
+  assert.match(UI_SOURCE, /\/findings\/bulk-reopen/);
+  assert.match(UI_SOURCE, /Tutup Temuan/);
+  assert.match(UI_SOURCE, /Buka Kembali/);
+  assert.match(UI_SOURCE, /Temuan tetap tersimpan di Arsip/);
+  assert.match(UI_SOURCE, /Refresh berikutnya tidak akan membukanya kembali otomatis/);
+});
+
+test("normal user bundle does not expose technical rule or source field identifiers", () => {
+  assert.doesNotMatch(`${HTML_SOURCE}\n${UI_SOURCE}`, /rule_id|rule_code|fingerprint|x_studio_|database id/i);
+});
+
+test("process map contains the frozen lanes and required shared business nodes", () => {
+  assert.deepEqual(UI.MAP_LANES.map(([lane]) => lane), ["Commercial", "Production", "Procurement", "Warehouse & QC", "Non-SO / Opex", "Finance"]);
+  const labels = UI.MAP_NODES.map((node) => node.label);
+  for (const label of ["Estimasi Estimator / RKB Kasar", "Sales Order Normal", "Internal Order", "RKB Pekerjaan", "Cek Stock Material", "ROP Pekerjaan", "Purchase Order", "Receipt & QC", "Stock Material", "Manufacturing Order", "Stock Finished Goods", "Sales Order PB", "Delivery", "Invoice", "Payment", "ROP Non-SO", "Vendor Bill", "Stock atau Expense"]) {
+    assert.ok(labels.includes(label), label);
+  }
+  assert.equal(labels.filter((label) => label === "Manufacturing Order").length, 1);
+  assert.equal(labels.filter((label) => label === "Purchase Order").length, 1);
+  assert.equal(labels.filter((label) => label === "Payment").length, 1);
+  assert.ok(!labels.includes("Keputusan Sumber"));
+});
+
+test("every Process Map connector is deterministic and orthogonal", () => {
+  assert.deepEqual(UI.validateMapGeometry(), []);
+  for (const route of UI.MAP_ROUTES) {
+    assert.match(route.d, /^M\d+ \d+(?: [HV]\d+)+$/);
+    for (const segment of UI.routeSegments(route.d)) {
+      assert.ok(segment.x1 === segment.x2 || segment.y1 === segment.y2, route.d);
+    }
+  }
+});
+
+test("fixed map geometry remains stable for empty, high counts, and long labels", () => {
+  const altered = UI.MAP_NODES.map((node) => ({ ...node, label: `${node.label} ${"sangat panjang ".repeat(5)}`, count: 999999 }));
+  assert.deepEqual(UI.validateMapGeometry(altered, UI.MAP_ROUTES), []);
+  assert.match(CSS_SOURCE, /\.process-map-scroll[\s\S]*overflow: auto/);
+  assert.match(CSS_SOURCE, /width: 3620px/);
+});
+
+test("Process Map nodes and category badges navigate to the same finding source", () => {
+  assert.match(UI_SOURCE, /data-map-category/);
+  assert.match(UI_SOURCE, /url\.searchParams\.set\("process", process\)/);
+  assert.match(UI_SOURCE, /url\.searchParams\.set\("category", button\.dataset\.mapCategory\)/);
+  assert.match(UI_SOURCE, /source: "ct_finding"|\/process-map/);
+});
+
+test("document experience implements tabs, line focus, relations, tracking, and SO Gross Profit", () => {
+  for (const label of ["Ringkasan", "Line Item", "Dokumen Terkait", "Temuan Aktif", "Tracking", "Gross Profit"]) assert.match(UI_SOURCE, new RegExp(label));
+  assert.match(UI_SOURCE, /Tampilkan field lainnya/);
+  assert.match(UI_SOURCE, /Tampilkan semua line item/);
+  assert.match(UI_SOURCE, /GP Rencana/);
+  assert.match(UI_SOURCE, /GP Realisasi/);
+  assert.match(UI_SOURCE, /gp\.cogs_account\?\.code/);
+});
+
+test("integrated tracking offers one mode at a time and an evidence-limited RKB view", () => {
+  for (const label of ["Order Tracking", "RKB Tracking", "Semua Hubungan", "Timeline", "Diagram"]) assert.match(UI_SOURCE, new RegExp(label));
+  assert.match(UI_SOURCE, /mode === "Timeline" \?/);
+  assert.match(UI_SOURCE, /Tampilkan semua aktivitas/);
+  assert.match(UI_SOURCE, /Kekurangan Saat Ini/);
+  assert.match(UI_SOURCE, /Stock Awal/);
+  assert.match(UI_SOURCE, /Tidak tersedia/);
+  assert.match(UI_SOURCE, /dari \$\{branch_po_quantity:g\} sudah diterima|progress_text/);
+});
+
+test("global search is grouped and ranks server results without searching findings only", () => {
+  assert.match(HTML_SOURCE, /Cari seluruh dokumen/);
+  assert.match(UI_SOURCE, /\/search\?q=/);
+  assert.match(UI_SOURCE, /data\.groups/);
+  assert.match(UI_SOURCE, /Temuan Aktif/);
+});
+
+test("refresh exposes eight measurable phases, safe retry, and no cosmetic timer", () => {
+  assert.deepEqual(UI.PHASES.map(([, label]) => label), [
+    "Persiapan", "Pemeriksaan koneksi dan skema", "Sinkronisasi Odoo", "Update PostgreSQL",
+    "Pembentukan relasi line-to-line", "Rerun pemeriksaan terdampak",
+    "Update ringkasan, pencarian, tracking, dan Process Map", "Finalisasi dan publish",
   ]);
-  const rule = A.normalizeRule(
-    {
-      rule_id: "PO-CANCEL-001",
-      rule_name: "technical",
-      overall_status: "VALIDATED",
-      implementation_class: "DETERMINISTIC",
-      tested_records: 348,
-      validated_records: 348,
-    },
-    { po },
-  );
-
-  assert.deepEqual(po, {
-    checked: 348,
-    active: 0,
-    historicalRoots: 861,
-    historical: 35,
-    backorders: 1,
-    unknown: 0,
-  });
-  assert.equal(rule.checkedCount, 348);
-  assert.equal(rule.compliantCount, 348);
-  assert.equal(rule.activeIssues, 0);
-  assert.equal(rule.historicalCount, 35);
-  assert.equal(rule.currentSummary, "0 masalah aktif mulai tahun 2026; 35 catatan historis sebelum tahun 2026.");
+  assert.match(UI_SOURCE, /completed_work_units|processed_records|percentage/);
+  assert.match(UI_SOURCE, /Coba Lagi dari Tahap Gagal/);
+  assert.match(UI_SOURCE, /\/retry/);
+  assert.match(UI_SOURCE, /setTimeout\(\(\) => pollRefresh/);
+  assert.doesNotMatch(UI_SOURCE, /setInterval|elapsed.*percentage|percentage.*elapsed/i);
 });
 
-test("historical open backorder uses the approved explanation", () => {
-  const item = A.normalizeHistoricalPo({
-    purchase_order_id: 1,
-    purchase_order_number: "PO-TEST",
-    operational_exposure: "HISTORICAL_EXPOSURE",
-    open_backorder_count: 1,
-    open_receipts: [{ number: "WH-IN-TEST", state: "assigned" }],
-    relation_confidence: "HIGH",
-  });
-
-  assert.equal(
-    item.situation,
-    "PO sudah dibatalkan dan penerimaan utama telah selesai, tetapi dokumen penerimaan sisa atau backorder masih terbuka.",
-  );
-  assert.match(item.explanation, /sebelum tahun 2026/);
-  assert.equal(item.status.label, "Catatan Historis");
-});
-
-test("exception requests are filtered and paginated on the server", () => {
-  const active = A.exceptionRequest({
-    classification: "active",
-    rule: "SO-CANCEL-001",
-    process: "Control Point Cancellation",
-    document: "SO-TEST",
-    date_from: "2026-01-01",
-    date_to: "2026-07-21",
-    limit: 25,
-    offset: 25,
-  });
-  const historical = A.exceptionRequest({ classification: "historical", limit: 25, offset: 0 });
-
-  assert.match(active.url, /validation_status=MISMATCH/);
-  assert.match(active.url, /rule_id=SO-CANCEL-001/);
-  assert.match(active.url, /process=Control\+Point\+Cancellation/);
-  assert.match(active.url, /document=SO-TEST/);
-  assert.match(active.url, /offset=25/);
-  assert.match(historical.url, /po-cancellation-scope/);
-  assert.match(historical.url, /HISTORICAL_PRE_2026/);
-  assert.match(historical.url, /HISTORICAL_EXPOSURE/);
-});
-
-test("overview totals do not mix historical PO findings into active issues", () => {
-  const metrics = A.overviewMetrics(
-    { rule_result_count: 5207 },
-    [
-      { validated_records: 348, mismatch_records: 0, partial_match_records: 0, linkage_gap_records: 0 },
-      { validated_records: 23, mismatch_records: 1, partial_match_records: 0, linkage_gap_records: 0 },
-      { validated_records: 562, mismatch_records: 0, partial_match_records: 280, linkage_gap_records: 324 },
-    ],
-    [{ date_scope: "HISTORICAL_PRE_2026", catatan_historis: 35 }],
-    { internal_order_roots: 118, product_uom_rows: 824 },
-  );
-
-  assert.equal(metrics.active, 1);
-  assert.equal(metrics.historical, 35);
-  assert.equal(metrics.review, 280);
-  assert.equal(metrics.incomplete, 324);
-  assert.equal(metrics.ioRoots, 118);
-  assert.equal(metrics.ioRows, 824);
-});
-
-test("Payment and Distribusi JO remain neutral unpublished/manual states", () => {
-  assert.equal(A.RULE_PRESENTATION["PAY-001"].title, "Status Payment belum dipublikasikan");
-  assert.equal(A.RULE_PRESENTATION["JO-DIST-001"].title, "Distribusi JO memerlukan bukti manual");
-  assert.notEqual(A.statusPresentation("MAPPING_PENDING").tone, "danger");
-  assert.notEqual(A.statusPresentation("MANUAL_EVIDENCE_REQUIRED").tone, "danger");
-});
-
-test("journey normalization ignores raw payload and keeps relation states", () => {
-  const journey = A.normalizeJourney({
-    root: {
-      model: "purchase.order",
-      record_id: 10,
-      document_number: "PO-TEST",
-      state: "cancel",
-      payload: { private_value: "must-not-render" },
-    },
-    links: [
-      {
-        depth: 1,
-        parent_model: "purchase.order",
-        parent_id: 10,
-        parent_number: "PO-TEST",
-        parent_state: "cancel",
-        child_model: "stock.picking",
-        child_id: 20,
-        child_number: "WH-IN-TEST",
-        child_state: "assigned",
-        relation_evidence: "DIRECT_RELATION",
-        confidence: "HIGH",
-      },
-    ],
-  });
-
-  assert.equal(journey.root.payload, undefined);
-  assert.equal(journey.root.state.label, "Dibatalkan");
-  assert.equal(journey.links[0].child.state.label, "Siap Diproses");
-  assert.equal(journey.links[0].evidence.label, "Bukti langsung");
-});
-
-test("empty, failure, session, and stale states are explicit", () => {
-  assert.equal(
-    A.emptyMessage("active", "PO-CANCEL-001"),
-    "Tidak ada masalah aktif untuk PO yang dibatalkan mulai tahun 2026.",
-  );
-  assert.equal(A.classifyHttpStatus(401), "session-expired");
-  assert.equal(A.classifyHttpStatus(500), "service-error");
-  assert.equal(
-    A.freshnessState(
-      { status: "READY", latest_run: { completed_at: "2026-07-19T00:00:00+07:00" } },
-      new Date("2026-07-21T12:00:00+07:00").getTime(),
-    ).state,
-    "stale",
-  );
-});
-
-test("active PO empty state never contradicts another active issue", () => {
-  assert.equal(A.shouldShowActivePoEmptyState({ classification: "active", rule: "" }, 1), false);
-  assert.equal(A.shouldShowActivePoEmptyState({ classification: "active", rule: "PO-CANCEL-001" }, 1), false);
-  assert.equal(A.shouldShowActivePoEmptyState({ classification: "active", rule: "PO-CANCEL-001" }, 0), true);
-});
-
-test("worklist and journey deep-links load freshness evidence", () => {
-  const exceptionSource = UI_SOURCE.slice(
-    UI_SOURCE.indexOf("async function renderExceptions"),
-    UI_SOURCE.indexOf("function journeySearch"),
-  );
-  const journeySource = UI_SOURCE.slice(
-    UI_SOURCE.indexOf("async function renderJourney"),
-    UI_SOURCE.indexOf("function loadCurrentView"),
-  );
-  assert.match(exceptionSource, /api\/control-tower\/health/);
-  assert.match(exceptionSource, /commitView\(html, health/);
-  assert.match(journeySource, /api\/control-tower\/health/);
-  assert.match(journeySource, /commitView\(html, health/);
-});
-
-test("process map uses normalized backend values and honest special states", () => {
-  const map = A.normalizeProcessMap(
-    [
-      {
-        rule_id: "SO-SOURCE-001",
-        overall_status: "PARTIAL_MATCH",
-        tested_records: 12,
-        validated_records: 7,
-        partial_match_records: 5,
-        linkage_gap_records: 0,
-      },
-      {
-        rule_id: "PO-CANCEL-001",
-        overall_status: "VALIDATED",
-        implementation_class: "DETERMINISTIC",
-      },
-    ],
-    {
-      po: {
-        checked: 348,
-        active: 0,
-        historical: 35,
-        historicalRoots: 861,
-        backorders: 1,
-        unknown: 0,
-      },
-    },
-  );
-  const source = map.nodes.find((node) => node.id === "source-decision");
-  const payment = map.nodes.find((node) => node.id === "payment");
-  const distribution = map.nodes.find((node) => node.id === "jo-distribution");
-  const stock = map.nodes.find((node) => node.id === "stock");
-
-  assert.equal(source.totals.review, 5);
-  assert.equal(source.headline, "5 perlu ditinjau");
-  assert.equal(payment.status.label, "Belum Dapat Diperiksa Otomatis");
-  assert.equal(distribution.status.label, "Memerlukan Bukti Manual");
-  assert.equal(stock.status.label, "Belum tersedia");
-});
-
-test("priority feed follows classification priority instead of largest count", () => {
-  const rules = [
-    { ruleId: "SO-SOURCE-001", title: "Review", process: "Sales Order", owner: "PPIC", activeIssues: 0, reviewRequired: 900, incompleteEvidence: 0, historicalCount: 0, compliantCount: 0 },
-    { ruleId: "PO-CANCEL-001", title: "Active", process: "Purchase Order", owner: "Procurement", activeIssues: 1, reviewRequired: 0, incompleteEvidence: 0, historicalCount: 0, compliantCount: 0 },
-  ];
-
-  const priorities = A.priorityFeed(rules);
-
-  assert.equal(priorities[0].title, "Active");
-  assert.equal(priorities[0].count, 1);
-  assert.equal(priorities[1].title, "Review");
-});
-
-test("standalone URLs, refresh safety, theme, display, and reduced motion are wired", () => {
-  assert.equal(A.documentLink("purchase.order", 7), "/control-tower?view=journey&model=purchase.order&id=7");
-  assert.match(HTML_SOURCE, /\/static\/control-tower\/control-tower\.css/);
-  assert.doesNotMatch(HTML_SOURCE, /dashboard-common\.css|Internal Orders|Sales Orders/);
-  assert.match(UI_SOURCE, /if \(activeLoad\)/);
-  assert.match(UI_SOURCE, /document\.hidden/);
-  assert.match(UI_SOURCE, /visibilitychange/);
-  assert.match(UI_SOURCE, /control-tower-auto-refresh/);
-  assert.match(UI_SOURCE, /Data terbaru belum dapat dimuat/);
-  assert.doesNotMatch(UI_SOURCE, /run_control_tower_refresh|run_incremental_sync|\/sync/);
+test("native theme, focus, reduced motion, and narrow horizontal map behavior remain", () => {
   assert.match(CSS_SOURCE, /html\[data-theme="dark"\]/);
-  assert.match(CSS_SOURCE, /body\.display-mode/);
+  assert.match(CSS_SOURCE, /:focus-visible/);
   assert.match(CSS_SOURCE, /prefers-reduced-motion: reduce/);
-  assert.doesNotMatch(`${HTML_SOURCE}\n${UI_SOURCE}`, /health percentage|overall health|iHealth|89%|91%/i);
+  assert.match(CSS_SOURCE, /@media \(max-width: 760px\)/);
+  assert.doesNotMatch(`${HTML_SOURCE}\n${UI_SOURCE}`, />Reset<|>Fokus</);
 });

@@ -1,936 +1,593 @@
-(function runControlTower() {
+(function exposeControlTowerUI(root, factory) {
+  const ui = factory(root.ControlTowerAdapter || {});
+  if (typeof module === "object" && module.exports) module.exports = ui;
+  root.ControlTowerUI = ui;
+  if (root.document) ui.start();
+})(typeof globalThis !== "undefined" ? globalThis : this, function createControlTowerUI(A) {
   "use strict";
 
-  const A = window.ControlTowerAdapter;
-  const viewContainer = document.getElementById("viewContainer");
-  const pageState = document.getElementById("pageState");
-  const systemMessage = document.getElementById("systemMessage");
-  const refreshButton = document.getElementById("refreshButton");
-  const autoRefreshSelect = document.getElementById("autoRefreshSelect");
-  const themeButton = document.getElementById("themeButton");
-  const displayButton = document.getElementById("displayButton");
-  const motionButton = document.getElementById("motionButton");
-  const snapshotTime = document.getElementById("snapshotTime");
-  const screenRefreshTime = document.getElementById("screenRefreshTime");
-  const toastRegion = document.getElementById("toastRegion");
-  const mapTooltip = document.getElementById("mapTooltip");
-  const allowedViews = new Set(["overview", "validation", "exceptions", "journey"]);
-  const allowedClassifications = new Set(["active", "historical", "review", "incomplete", "document-gap"]);
-  const AUTO_REFRESH_VALUES = new Set(["off", "5", "15", "30"]);
-  const AUTO_REFRESH_KEY = "control-tower-auto-refresh";
-  const THEME_KEY = "control-tower-theme";
-  const MOTION_KEY = "control-tower-motion-paused";
-  const JOURNEY_PAGE_SIZE = 50;
-  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const API = "/api/control-tower";
+  const CATEGORIES = ["Masalah Aktif", "Perlu Ditinjau", "Data Belum Lengkap"];
+  const CATEGORY_KEYS = { "Masalah Aktif": "active", "Perlu Ditinjau": "review", "Data Belum Lengkap": "incomplete" };
+  const PHASES = [
+    ["PREPARATION", "Persiapan"],
+    ["SCHEMA_CHECK", "Pemeriksaan koneksi dan skema"],
+    ["ODOO_SYNC", "Sinkronisasi Odoo"],
+    ["POSTGRES_UPDATE", "Update PostgreSQL"],
+    ["LINEAGE", "Pembentukan relasi line-to-line"],
+    ["RULES", "Rerun pemeriksaan terdampak"],
+    ["READ_MODELS", "Update ringkasan, pencarian, tracking, dan Process Map"],
+    ["FINALIZE", "Finalisasi dan publish"],
+  ];
 
-  let activeLoad = null;
-  let queuedLoad = false;
-  let autoTimer = null;
-  let autoDueAt = null;
-  let sessionExpired = false;
-  let blockingError = false;
-  let lastSelectedProcess = "sales-order";
-  let overviewCache = null;
-  let displayMode = false;
-  let motionPaused = reducedMotion.matches || localStorage.getItem(MOTION_KEY) === "true";
-  let activeDrawerTrigger = null;
+  const MAP_LANES = [
+    ["Commercial", 0], ["Production", 150], ["Procurement", 300],
+    ["Warehouse & QC", 450], ["Non-SO / Opex", 600], ["Finance", 750],
+  ];
+  const MAP_NODES = Object.freeze([
+    { id: "estimate", label: "Estimasi Estimator / RKB Kasar", lane: "Commercial", x: 40, y: 45, w: 170, h: 76, external: true },
+    { id: "quotation", label: "Quotation", lane: "Commercial", x: 250, y: 45, w: 170, h: 76, process: "Quotation" },
+    { id: "sales-order", label: "Sales Order Normal", lane: "Commercial", x: 470, y: 45, w: 180, h: 76, process: "Sales Order" },
+    { id: "internal-order", label: "Internal Order", lane: "Production", x: 470, y: 195, w: 180, h: 76, process: "Internal Order" },
+    { id: "rkb-work", label: "RKB Pekerjaan", lane: "Procurement", x: 690, y: 345, w: 180, h: 76, process: "RKB Pekerjaan" },
+    { id: "stock-check", label: "Cek Stock Material", lane: "Procurement", x: 910, y: 345, w: 190, h: 76, process: "Cek Stock Material" },
+    { id: "rop-work", label: "ROP Pekerjaan", lane: "Procurement", x: 1130, y: 345, w: 180, h: 76, process: "ROP Pekerjaan" },
+    { id: "purchase-order", label: "Purchase Order", lane: "Procurement", x: 1350, y: 345, w: 180, h: 76, process: "Purchase Order" },
+    { id: "receipt", label: "Receipt & QC", lane: "Warehouse & QC", x: 1580, y: 495, w: 180, h: 76, process: "Receipt & QC" },
+    { id: "stock-material", label: "Stock Material", lane: "Warehouse & QC", x: 1800, y: 495, w: 180, h: 76, process: "Stock Material" },
+    { id: "manufacturing", label: "Manufacturing Order", lane: "Production", x: 1900, y: 195, w: 180, h: 76, process: "Manufacturing" },
+    { id: "production", label: "Production", lane: "Production", x: 2120, y: 195, w: 180, h: 76, process: "Manufacturing" },
+    { id: "qc", label: "QC", lane: "Warehouse & QC", x: 2340, y: 495, w: 180, h: 76, process: "QC" },
+    { id: "finished-stock", label: "Stock Finished Goods", lane: "Warehouse & QC", x: 2560, y: 495, w: 180, h: 76, process: "Stock Finished Goods" },
+    { id: "sales-order-pb", label: "Sales Order PB", lane: "Commercial", x: 2730, y: 45, w: 180, h: 76, process: "Sales Order PB" },
+    { id: "delivery", label: "Delivery", lane: "Warehouse & QC", x: 2950, y: 495, w: 180, h: 76, process: "Delivery" },
+    { id: "rop-non-so", label: "ROP Non-SO", lane: "Non-SO / Opex", x: 1130, y: 645, w: 180, h: 76, process: "ROP Non-SO" },
+    { id: "expense", label: "Stock atau Expense", lane: "Non-SO / Opex", x: 1800, y: 645, w: 180, h: 76, process: "Stock atau Expense" },
+    { id: "vendor-bill", label: "Vendor Bill", lane: "Finance", x: 1580, y: 795, w: 180, h: 76, process: "Vendor Bill" },
+    { id: "invoice", label: "Invoice", lane: "Finance", x: 3170, y: 795, w: 180, h: 76, process: "Invoice" },
+    { id: "payment", label: "Payment", lane: "Finance", x: 3390, y: 795, w: 180, h: 76, process: "Payment" },
+  ]);
+  const MAP_ROUTES = Object.freeze([
+    { from: "estimate", to: "quotation", d: "M210 83 H250" },
+    { from: "quotation", to: "sales-order", d: "M420 83 H470" },
+    { from: "sales-order", to: "manufacturing", d: "M650 83 H1850 V233 H1900" },
+    { from: "internal-order", to: "manufacturing", d: "M650 233 H1900" },
+    { from: "manufacturing", to: "production", d: "M2080 233 H2120" },
+    { from: "production", to: "qc", d: "M2300 233 H2310 V533 H2340" },
+    { from: "qc", to: "finished-stock", d: "M2520 533 H2560" },
+    { from: "finished-stock", to: "delivery", d: "M2740 533 H2950" },
+    { from: "finished-stock", to: "sales-order-pb", d: "M2740 520 H2800 V135 H2820 V121" },
+    { from: "sales-order-pb", to: "delivery", d: "M2910 83 H3040 V495" },
+    { from: "delivery", to: "invoice", d: "M3130 533 H3260 V795" },
+    { from: "invoice", to: "payment", d: "M3350 833 H3390" },
+    { from: "sales-order", to: "rkb-work", d: "M650 83 H660 V383 H690" },
+    { from: "internal-order", to: "rkb-work", d: "M650 233 H675 V383 H690" },
+    { from: "manufacturing", to: "rkb-work", d: "M1900 233 H1870 V315 H680 V383 H690" },
+    { from: "rkb-work", to: "stock-check", d: "M870 383 H910" },
+    { from: "stock-check", to: "rop-work", d: "M1100 383 H1130" },
+    { from: "rop-work", to: "purchase-order", d: "M1310 383 H1350" },
+    { from: "purchase-order", to: "receipt", d: "M1530 383 H1670 V495" },
+    { from: "receipt", to: "stock-material", d: "M1760 533 H1800" },
+    { from: "stock-check", to: "stock-material", d: "M1005 421 V465 H1890 V495" },
+    { from: "stock-material", to: "manufacturing", d: "M1890 495 V300 H1990 V271" },
+    { from: "rop-non-so", to: "purchase-order", d: "M1310 683 H1330 V430 H1440 V421" },
+    { from: "purchase-order", to: "vendor-bill", d: "M1440 421 V760 H1670 V795" },
+    { from: "vendor-bill", to: "expense", d: "M1760 833 H1780 V683 H1800" },
+  ]);
 
-  function routeState() {
-    const params = new URLSearchParams(window.location.search);
-    const requestedView = params.get("view") || "overview";
-    return {
-      params,
-      view: allowedViews.has(requestedView) ? requestedView : "overview",
-      process: params.get("process") || "",
-      rule: params.get("rule") || "",
-      classification: allowedClassifications.has(params.get("classification")) ? params.get("classification") : "active",
-      owner: params.get("owner") || params.get("reviewer") || "",
-      severity: params.get("severity") || "",
-      document: params.get("document") || "",
-      date_from: params.get("date_from") || "",
-      date_to: params.get("date_to") || "",
-      offset: Math.max(0, Number(params.get("offset")) || 0),
-      model: params.get("model") || "",
-      id: params.get("id") || "",
-      journeyPage: Math.max(1, Number(params.get("journey_page")) || 1),
-    };
-  }
+  const state = {
+    view: "findings", selected: new Set(), expanded: new Set(), currentRows: [],
+    searchTimer: null, refreshTimer: null, refreshJob: null, trackingMode: "Timeline",
+    trackingScope: "Order Tracking", showAllActivities: false, includeAllLines: false,
+    currentDocumentNumber: null,
+    collapsedBranches: new Set(),
+  };
 
-  function routeHref(view, values = {}) {
-    const params = new URLSearchParams({ view });
-    for (const [key, value] of Object.entries(values)) {
-      if (value !== undefined && value !== null && value !== "" && value !== 0) params.set(key, String(value));
-    }
-    return `/control-tower?${params.toString()}`;
-  }
+  const esc = (value) => A.escapeHtml ? A.escapeHtml(value) : String(value ?? "");
+  const number = (value, options) => A.formatNumber ? A.formatNumber(value, options) : String(value ?? "—");
+  const money = (value) => A.formatMoney ? A.formatMoney(value) : String(value ?? "Belum tersedia");
+  const percent = (value) => A.formatPercent ? A.formatPercent(value) : String(value ?? "Belum tersedia");
+  const dateTime = (value) => A.formatDateTime ? A.formatDateTime(value) : String(value ?? "Belum tersedia");
+  const tone = (category) => A.categoryTone ? A.categoryTone(category) : "neutral";
 
-  function updateNavigation(view) {
-    document.querySelectorAll("[data-view-link]").forEach((link) => {
-      if (link.dataset.viewLink === view) link.setAttribute("aria-current", "page");
-      else link.removeAttribute("aria-current");
-    });
-  }
+  function qs(selector, scope = document) { return scope.querySelector(selector); }
+  function qsa(selector, scope = document) { return Array.from(scope.querySelectorAll(selector)); }
 
-  function statusBadge(status) {
-    return `<span class="status-badge tone-${A.escapeHtml(status.tone)}">${A.escapeHtml(status.label)}</span>`;
-  }
-
-  function technicalReference(rawStatus, ruleIds) {
-    const rules = Array.isArray(ruleIds) ? ruleIds.filter(Boolean).join(", ") : ruleIds;
-    const parts = [];
-    if (rules) parts.push(`Rule: ${rules}`);
-    if (rawStatus) parts.push(`Status teknis: ${rawStatus}`);
-    return A.escapeHtml(parts.join(" · "));
-  }
-
-  function viewHeading(title, description, meta = "") {
-    return `
-      <header class="view-heading">
-        <div><h1>${A.escapeHtml(title)}</h1><p>${A.escapeHtml(description)}</p></div>
-        ${meta ? `<span class="view-meta">${A.escapeHtml(meta)}</span>` : ""}
-      </header>`;
-  }
-
-  function showSystemMessage(message, tone = "info", action = "") {
-    systemMessage.hidden = false;
-    systemMessage.className = `system-message tone-${tone}`;
-    systemMessage.innerHTML = `<span>${A.escapeHtml(message)}</span>${action}`;
-  }
-
-  function hideSystemMessage() {
-    systemMessage.hidden = true;
-    systemMessage.innerHTML = "";
-  }
-
-  function showToast(message) {
-    const toast = document.createElement("div");
-    toast.className = "toast";
-    toast.setAttribute("role", "status");
-    toast.textContent = message;
-    toastRegion.replaceChildren(toast);
-    window.setTimeout(() => toast.remove(), 4200);
-  }
-
-  function setLoading(source) {
-    viewContainer.setAttribute("aria-busy", "true");
-    refreshButton.disabled = true;
-    refreshButton.classList.add("is-loading");
-    refreshButton.setAttribute("aria-busy", "true");
-    if (!viewContainer.dataset.ready) {
-      pageState.innerHTML = `
-        <section class="state-panel tone-info" role="status">
-          <h2>Memuat Control Tower</h2>
-          <p>Membaca snapshot PostgreSQL terbaru yang sudah tersedia.</p>
-        </section>`;
-    } else if (source === "manual") {
-      showSystemMessage("Memuat ulang data Control Tower tanpa menjalankan sinkronisasi Odoo.", "info");
-    }
-  }
-
-  function finishLoading() {
-    viewContainer.setAttribute("aria-busy", "false");
-    refreshButton.disabled = false;
-    refreshButton.classList.remove("is-loading");
-    refreshButton.removeAttribute("aria-busy");
-  }
-
-  function updateRefreshTimes(health) {
-    snapshotTime.textContent = A.formatDateTime(health?.latest_run?.completed_at);
-    screenRefreshTime.textContent = A.formatDateTime(new Date().toISOString());
-  }
-
-  function showFreshnessWarning(health) {
-    const freshness = A.freshnessState(health);
-    if (freshness.state === "fresh") {
-      hideSystemMessage();
-      return;
-    }
-    showSystemMessage(`${freshness.label}. ${freshness.detail}`, freshness.tone);
-  }
-
-  function errorPanel(error, state) {
-    if (error.httpStatus === 401) {
-      const next = encodeURIComponent(`${window.location.pathname}${window.location.search}`);
-      return `
-        <section class="state-panel tone-warning" role="alert">
-          <h2>Sesi Control Tower sudah berakhir</h2>
-          <p>Auto-refresh dihentikan. Masuk kembali untuk melanjutkan dari halaman dan filter yang sama.</p>
-          <div class="state-actions"><a class="primary-button" href="/login?next=${next}">Masuk kembali</a></div>
-        </section>`;
-    }
-    if (error.httpStatus === 404 && state.view === "journey") {
-      return `
-        <section class="state-panel tone-warning" role="alert">
-          <h2>Dokumen tidak ditemukan</h2>
-          <p>Dokumen tidak tersedia pada snapshot terbaru. Model dan native ID tetap dipertahankan pada URL.</p>
-          <div class="state-actions"><button class="secondary-button" type="button" data-retry>Muat ulang</button></div>
-        </section>`;
-    }
-    return `
-      <section class="state-panel tone-danger" role="alert">
-        <h2>Data belum dapat dimuat</h2>
-        <p>Detail teknis sensitif tidak ditampilkan. Coba lagi saat layanan PostgreSQL tersedia.</p>
-        <div class="state-actions"><button class="secondary-button" type="button" data-retry>Coba lagi</button></div>
-      </section>`;
-  }
-
-  async function apiJson(url) {
-    if (!url.startsWith("/api/control-tower/")) throw new Error("Unsupported Control Tower endpoint");
-    const started = performance.now();
-    const response = await fetch(url, {
-      method: "GET",
+  async function apiJson(path, method = "GET", body) {
+    const response = await fetch(`${API}${path}`, {
+      method,
       credentials: "same-origin",
-      cache: "no-store",
-      headers: { Accept: "application/json" },
+      headers: body ? { "Content-Type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
     });
-    if (!response.ok) {
-      const error = new Error("Control Tower request failed");
-      error.httpStatus = response.status;
-      throw error;
+    if (response.status === 401) {
+      location.assign("/login");
+      throw new Error("Sesi berakhir.");
     }
-    const payload = await response.json();
-    performance.mark(`control-tower-response-${url.split("?")[0]}`);
-    payload.__clientElapsedMs = performance.now() - started;
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.detail || "Permintaan tidak dapat diproses.");
     return payload;
   }
 
-  function commitView(html, health, bind) {
-    pageState.innerHTML = "";
-    viewContainer.innerHTML = html;
-    viewContainer.dataset.ready = "true";
-    updateNavigation(routeState().view);
-    updateRefreshTimes(health);
-    showFreshnessWarning(health);
-    bind?.();
+  function setBusy(active) {
+    qs("#viewContainer")?.setAttribute("aria-busy", String(active));
   }
 
-  async function performLoad(state, source) {
-    const started = performance.now();
-    setLoading(source);
-    try {
-      const renderer = {
-        overview: renderOverview,
-        validation: renderValidation,
-        exceptions: renderExceptions,
-        journey: renderJourney,
-      }[state.view] || renderOverview;
-      await renderer(state);
-      sessionExpired = false;
-      blockingError = false;
-      if (source === "manual") showToast("Data Control Tower berhasil diperbarui.");
-      performance.measure(`control-tower-${state.view}-load`, { start: started, end: performance.now() });
-    } catch (error) {
-      if (error.httpStatus === 401) {
-        sessionExpired = true;
-        clearAutoTimer();
-      }
-      if (viewContainer.dataset.ready) {
-        showSystemMessage(
-          error.httpStatus === 401
-            ? "Sesi berakhir. Auto-refresh dihentikan; masuk kembali untuk melanjutkan."
-            : "Data terbaru belum dapat dimuat. Informasi di layar berasal dari pembaruan sebelumnya.",
-          error.httpStatus === 401 ? "warning" : "danger",
-          error.httpStatus === 401
-            ? `<a class="primary-button" href="/login?next=${encodeURIComponent(`${window.location.pathname}${window.location.search}`)}">Masuk kembali</a>`
-            : "",
-        );
-      } else {
-        blockingError = true;
-        pageState.innerHTML = errorPanel(error, state);
-        pageState.querySelector("[data-retry]")?.addEventListener("click", () => requestLoad("manual"));
-      }
-    } finally {
-      finishLoading();
-      scheduleAutoRefresh();
-    }
+  function toast(message, kind = "success") {
+    const item = document.createElement("div");
+    item.className = `toast toast--${kind}`;
+    item.textContent = message;
+    qs("#toastRegion").append(item);
+    setTimeout(() => item.remove(), 5000);
   }
 
-  function requestLoad(source = "navigation") {
-    if (activeLoad) {
-      if (source === "navigation" || source === "popstate") queuedLoad = true;
-      else if (source === "manual") showToast("Pembaruan data sedang berjalan.");
-      return activeLoad;
-    }
-    const state = routeState();
-    activeLoad = performLoad(state, source).finally(() => {
-      activeLoad = null;
-      if (queuedLoad) {
-        queuedLoad = false;
-        requestLoad("navigation");
-      }
+  function navigate(input, replace = false) {
+    const url = input instanceof URL ? input : new URL(input, location.origin);
+    const scroll = window.scrollY;
+    history.replaceState({ ...(history.state || {}), scroll }, "", location.href);
+    const previousDocument = url.searchParams.get("view") === "document" && state.view === "document"
+      ? state.currentDocumentNumber
+      : null;
+    history[replace ? "replaceState" : "pushState"]({ scroll: 0, previousDocument }, "", url);
+    loadCurrentView().then(() => window.scrollTo(0, 0));
+  }
+
+  function currentParams() { return new URL(location.href).searchParams; }
+
+  function syncNavigation(view) {
+    qsa("[data-view-link]").forEach((link) => {
+      const active = link.dataset.viewLink === view || (view === "document" && link.dataset.viewLink === "tracking");
+      link.classList.toggle("is-active", active);
+      if (active) link.setAttribute("aria-current", "page"); else link.removeAttribute("aria-current");
     });
-    return activeLoad;
   }
 
-  function classificationForRule(rule) {
-    if (rule.activeIssues > 0) return "active";
-    if (rule.reviewRequired > 0) return "review";
-    if (rule.incompleteEvidence > 0) return "incomplete";
-    if (rule.historicalCount > 0) return "historical";
-    return "active";
+  function documentLink(document, label = "Buka") {
+    if (!document?.detail_url) return "";
+    return `<a class="button-link" data-route-link href="${esc(document.detail_url)}">${esc(label)}</a>`;
   }
 
-  function processPoint(id) {
-    const process = A.PROCESS_DEFINITIONS.find((item) => item.id === id);
-    return { x: process.x * 10, y: process.y * 6.5 };
+  function nativeLink(document, label = "Buka Dokumen") {
+    if (!document?.open_url) return "";
+    return `<a class="button-link button-link--native" target="_blank" rel="noopener" href="${esc(document.open_url)}">${esc(label)}</a>`;
   }
 
-  function processEdges() {
-    return A.PROCESS_RELATIONSHIPS.map(([from, to, kind]) => {
-      const start = processPoint(from);
-      const end = processPoint(to);
-      const vertical = Math.abs(end.y - start.y) > Math.abs(end.x - start.x);
-      const distance = vertical ? Math.max(42, Math.abs(end.y - start.y) * 0.38) : Math.max(48, Math.abs(end.x - start.x) * 0.42);
-      const path = vertical
-        ? `M ${start.x} ${start.y} C ${start.x} ${start.y + distance}, ${end.x} ${end.y - distance}, ${end.x} ${end.y}`
-        : `M ${start.x} ${start.y} C ${start.x + distance} ${start.y}, ${end.x - distance} ${end.y}, ${end.x} ${end.y}`;
-      return `<path class="map-edge map-edge--${kind}" d="${path}" data-from="${from}" data-to="${to}"></path>`;
-    }).join("");
+  function badge(category, count) {
+    return `<span class="category-badge category-badge--${tone(category)}"><span>${esc(category)}</span>${count === undefined ? "" : `<strong>${number(count)}</strong>`}</span>`;
   }
 
-  function processNodes(nodes, selectedId) {
-    return nodes.map((node) => `
-      <button
-        class="process-node${node.id === selectedId ? " is-selected" : ""}"
-        type="button"
-        data-process-id="${A.escapeHtml(node.id)}"
-        style="left:${node.x}%;top:${node.y}%"
-        aria-pressed="${node.id === selectedId}"
-        aria-label="${A.escapeHtml(`${node.label}: ${node.headline}`)}"
-      >
-        <span class="node-name">${A.escapeHtml(node.label)}</span>
-        <span class="node-status tone-${A.escapeHtml(node.status.tone)}"><span>${A.escapeHtml(node.status.label)}</span><strong>${node.totals.active || node.totals.review || node.totals.incomplete || node.totals.historical ? A.formatNumber(node.totals.active || node.totals.review || node.totals.incomplete || node.totals.historical) : "—"}</strong></span>
-      </button>`).join("");
+  function metricCards(summary, activeCategory) {
+    return `<div class="summary-cards" aria-label="Ringkasan temuan">${CATEGORIES.map((category) => {
+      const key = CATEGORY_KEYS[category];
+      const selected = category === activeCategory;
+      return `<button class="summary-card summary-card--${tone(category)}${selected ? " is-selected" : ""}" data-category="${esc(category)}" type="button" aria-pressed="${selected}">
+        <span>${esc(category)}</span><strong>${number(summary?.[key] || 0)}</strong>
+      </button>`;
+    }).join("")}</div>`;
   }
 
-  function priorityMarkup(items, selectedId) {
-    if (!items.length) return `<p class="attention-summary">Belum ada prioritas aktif pada snapshot ini.</p>`;
-    return items.map((item) => `
-      <button class="priority-item tone-${A.escapeHtml(item.status.tone)}${item.processId === selectedId ? " is-selected" : ""}" type="button" data-priority-process="${A.escapeHtml(item.processId)}">
-        <span class="priority-rail" aria-hidden="true"></span>
-        <span class="priority-copy"><strong>${A.escapeHtml(item.title)}</strong><span>${A.escapeHtml(item.process)} · ${A.escapeHtml(item.reviewer)} · ${A.escapeHtml(item.status.label)}</span></span>
-        <span class="priority-count">${A.formatNumber(item.count)}</span>
-      </button>`).join("");
+  function findingRow(row, archive) {
+    const expanded = state.expanded.has(row.finding_id);
+    const checked = state.selected.has(row.finding_id);
+    const primary = row.primary_document || {};
+    const details = expanded ? `<tr class="finding-detail-row"><td colspan="5">${findingDetail(row, archive)}</td></tr>` : "";
+    return `<tr class="finding-row">
+      <td class="expand-cell"><input type="checkbox" data-select-finding="${esc(row.finding_id)}" ${checked ? "checked" : ""} aria-label="Pilih ${esc(row.title)}"><button class="icon-button" data-expand-finding="${esc(row.finding_id)}" type="button" aria-expanded="${expanded}" aria-label="${expanded ? "Tutup" : "Buka"} rincian">${expanded ? "−" : "+"}</button></td>
+      <td><strong>${esc(primary.number)}</strong><span class="native-state">${esc(primary.status || "Status tidak tersedia")}</span></td>
+      <td>${badge(row.category)}<strong class="finding-title">${esc(row.title)}</strong></td>
+      <td>${esc(row.affected_summary)}</td>
+      <td class="actions-cell">${nativeLink(primary)}${archive ? `<button class="button-link" data-reopen-finding="${esc(row.finding_id)}" type="button">Buka Kembali</button>` : `<button class="button-link" data-close-finding="${esc(row.finding_id)}" type="button">Tutup Temuan</button>`}</td>
+    </tr>${details}`;
   }
 
-  function inspectorMarkup(node, snapshot) {
-    const rule = node.primaryRule;
-    const explanation = rule?.explanation || "Agregat tepercaya untuk proses ini belum tersedia pada kontrak backend saat ini.";
-    const why = rule?.why || "Proses tetap ditampilkan agar hubungan bisnis dapat dipahami tanpa menyimpulkan kondisi yang belum didukung bukti.";
-    const impact = rule?.impact || "Memerlukan bukti tambahan sebelum kondisi operasional dapat dinilai.";
-    const reviewer = rule?.owner || rule?.reviewer || node.reviewer;
-    const evidence = rule?.evidenceStrength || (node.specialStatus === "MANUAL_EVIDENCE_REQUIRED" ? "Bukti manual" : "Belum tersedia");
-    const ruleIds = node.rules.length ? node.rules.map((item) => item.ruleId) : node.ruleIds;
-    const classification = node.totals.active ? "active" : node.totals.review ? "review" : node.totals.incomplete ? "incomplete" : node.totals.historical ? "historical" : "active";
-    const primaryRuleId = rule?.ruleId || node.ruleIds[0] || "";
-    return `
-      <div class="panel-scroll">
-        <div class="panel-title-row">
-          <div><span class="eyebrow">Proses terpilih</span></div>
-          <button class="icon-button drawer-close" type="button" data-close-drawer aria-label="Tutup inspector">Tutup</button>
-        </div>
-        <section class="inspector-summary">
-          <h2>${A.escapeHtml(node.label)}</h2>
-          <p>${A.escapeHtml(node.headline)}</p>
-          <div class="inline-actions">${statusBadge(node.status)}</div>
-        </section>
-        <section class="condition-card"><strong>Kondisi bisnis saat ini</strong><span>${A.escapeHtml(explanation)}</span></section>
-        <section class="inspector-section"><h3>Mengapa penting</h3><p>${A.escapeHtml(why)}</p></section>
-        <section class="inspector-section"><h3>Dampak operasional yang mungkin</h3><p>${A.escapeHtml(impact)}</p></section>
-        <section class="inspector-section">
-          <h3>Bukti dan penanggung jawab</h3>
-          <div class="detail-grid">
-            <div class="detail-item"><span>Pemilik proses</span><strong>${A.escapeHtml(node.owner)}</strong></div>
-            <div class="detail-item"><span>Peninjau</span><strong>${A.escapeHtml(reviewer)}</strong></div>
-            <div class="detail-item"><span>Pemeriksaan</span><strong>${node.rules.length ? A.formatNumber(node.totals.checked) : "Belum tersedia"}</strong></div>
-            <div class="detail-item"><span>Kekuatan bukti</span><strong>${A.escapeHtml(evidence)}</strong></div>
-            <div class="detail-item"><span>Masalah aktif</span><strong>${A.formatNumber(node.totals.active)}</strong></div>
-            <div class="detail-item"><span>Perlu ditinjau</span><strong>${A.formatNumber(node.totals.review)}</strong></div>
-            <div class="detail-item"><span>Bukti belum lengkap</span><strong>${A.formatNumber(node.totals.incomplete)}</strong></div>
-            <div class="detail-item"><span>Catatan historis</span><strong>${A.formatNumber(node.totals.historical)}</strong></div>
-            <div class="detail-item"><span>Snapshot</span><strong>${A.escapeHtml(A.formatDateTime(snapshot))}</strong></div>
-          </div>
-        </section>
-        <div class="technical-reference">${technicalReference(node.status.raw, ruleIds)}</div>
-        <div class="inspector-actions">
-          <a class="secondary-button" data-route-link href="${routeHref("validation", { process: node.id })}">Lihat Pemeriksaan SOP</a>
-          ${primaryRuleId ? `<a class="primary-button" data-route-link href="${routeHref("exceptions", { classification, rule: primaryRuleId })}">Lihat Pengecualian</a>` : ""}
-        </div>
-      </div>`;
+  function findingDetail(row, archive) {
+    const facts = (row.facts || []).map((fact) => `<li><span>${esc(fact.label)}</span><strong>${esc(fact.value ?? "Belum tersedia")}</strong></li>`).join("");
+    const documents = (row.impacted_documents || []).map((document) => `<li><div><strong>${esc(document.number)}</strong><span>${esc(document.status || "Status tidak tersedia")}</span></div><div>${documentLink(document)}${nativeLink(document, "Buka")}</div></li>`).join("");
+    const lines = (row.impacted_lines || []).map((line) => `<li>${(line.values || []).map((item) => `<span><small>${esc(item.label)}</small>${esc(item.value ?? "Belum tersedia")}</span>`).join("")}</li>`).join("");
+    return `<section class="finding-detail">
+      <div><h3>Fakta yang ditemukan</h3><ul class="fact-list">${facts || "<li>Fakta bisnis belum tersedia.</li>"}</ul></div>
+      <div><h3>Dokumen yang perlu diperiksa</h3><ul class="document-list">${documents || "<li>Dokumen terkait belum dapat dibuktikan.</li>"}</ul>${lines ? `<ul class="line-evidence">${lines}</ul>` : ""}</div>
+      <div><h3>${esc(row.recommendation_heading)}</h3><p>${esc(row.recommendation || "Konfirmasi dengan pemilik proses terkait.")}</p></div>
+      <div><h3>Perlu diperiksa oleh</h3><p><strong>${esc(row.process_owner)}</strong>${row.responsible_user ? `<br>${esc(row.responsible_user)}` : ""}</p></div>
+      ${archive ? `<div class="archive-note"><strong>${row.lifecycle_state === "AUTO_RESOLVED" ? "Selesai Otomatis" : esc(row.closed_reason || "Ditutup")}</strong>${row.closed_note ? `<p>${esc(row.closed_note)}</p>` : ""}<small>${dateTime(row.auto_resolved_at || row.closed_at)}</small></div>` : ""}
+    </section>`;
   }
 
-  function overviewMarkup(data, selectedId) {
-    const selectedNode = data.map.nodes.find((node) => node.id === selectedId) || data.map.nodes.find((node) => node.id === "sales-order");
-    const freshness = A.freshnessState(data.health);
-    const metrics = data.metrics;
-    return `
-      <div class="overview-grid">
-        <aside class="panel attention-panel" id="attentionPanel" aria-label="Perhatian dan prioritas">
-          <div class="panel-scroll">
-            <div class="panel-title-row">
-              <div><span class="eyebrow">Perhatian saat ini</span><h2>Prioritas</h2></div>
-              <button class="icon-button drawer-close" type="button" data-close-drawer aria-label="Tutup panel prioritas">Tutup</button>
-            </div>
-            <section class="freshness-card tone-${A.escapeHtml(freshness.tone)}">
-              <strong>${A.escapeHtml(freshness.label)}</strong>
-              <span>${A.escapeHtml(freshness.detail)}</span>
-            </section>
-            <div class="metric-strip" aria-label="Hitungan operasional ringkas">
-              <div class="metric-item"><span>Pemeriksaan</span><strong>${A.formatNumber(metrics.checksPerformed)}</strong></div>
-              <div class="metric-item"><span>Masalah Aktif</span><strong>${A.formatNumber(metrics.active)}</strong></div>
-              <div class="metric-item"><span>Perlu Ditinjau</span><strong>${A.formatNumber(metrics.review)}</strong></div>
-              <div class="metric-item"><span>Bukti Belum Lengkap</span><strong>${A.formatNumber(metrics.incomplete)}</strong></div>
-              <div class="metric-item"><span>Catatan Historis</span><strong>${A.formatNumber(metrics.historical)}</strong></div>
-            </div>
-            <p class="attention-summary">Masalah aktif diprioritaskan lebih dahulu; catatan historis tetap terlihat sebagai konteks audit.</p>
-            <section class="priority-section" aria-labelledby="priorityTitle">
-              <span class="eyebrow" id="priorityTitle">Priority feed</span>
-              <div class="priority-list">${priorityMarkup(data.priorities, selectedNode.id)}</div>
-            </section>
-          </div>
-        </aside>
-
-        <section class="panel process-stage" aria-labelledby="processMapTitle">
-          <header class="process-map-header">
-            <div><span class="eyebrow">Hubungan proses bisnis</span><h1 id="processMapTitle">Peta Proses</h1><p>Peta menunjukkan hubungan proses dan dokumen, bukan selalu urutan waktu.</p></div>
-            <div class="map-header-actions">
-              <button class="icon-button mobile-panel-trigger" type="button" data-panel="attention" aria-controls="attentionPanel" aria-expanded="false">Prioritas</button>
-              <button class="icon-button mobile-panel-trigger" type="button" data-panel="inspector" aria-controls="inspectorPanel" aria-expanded="false">Inspector</button>
-              <div class="map-legend" aria-label="Legenda hubungan">
-                <span><i class="legend-line"></i>Utama</span>
-                <span><i class="legend-line legend-line--support"></i>Pendukung</span>
-                <span><i class="legend-line legend-line--manual"></i>Manual / belum terbit</span>
-              </div>
-            </div>
-          </header>
-          <div class="map-canvas" id="processMap">
-            <svg viewBox="0 0 1000 650" preserveAspectRatio="none" aria-hidden="true">${processEdges()}</svg>
-            <div>${processNodes(data.map.nodes, selectedNode.id)}</div>
-            <div class="map-toolbar" aria-label="Kontrol peta proses">
-              <button class="icon-button" id="mapMotionButton" type="button">${motionPaused ? "Lanjut" : "Jeda"}</button>
-              <button class="icon-button" id="mapResetButton" type="button">Reset</button>
-              <button class="icon-button" id="mapFocusButton" type="button">Fokus</button>
-            </div>
-            <span class="relationship-note">Nilai yang belum didukung agregat backend ditampilkan sebagai “Belum tersedia”.</span>
-          </div>
-        </section>
-
-        <aside class="panel inspector-panel" id="inspectorPanel" aria-label="Inspector proses">
-          ${inspectorMarkup(selectedNode, data.health.latest_run?.completed_at)}
-        </aside>
-      </div>
-      <button class="drawer-backdrop" type="button" data-close-drawer aria-label="Tutup panel"></button>`;
-  }
-
-  function closeDrawers(returnFocus = true) {
-    document.querySelectorAll(".attention-panel.is-open,.inspector-panel.is-open,.drawer-backdrop.is-open").forEach((item) => item.classList.remove("is-open"));
-    document.querySelectorAll("[data-panel]").forEach((button) => button.setAttribute("aria-expanded", "false"));
-    document.querySelector(".process-stage")?.removeAttribute("inert");
-    document.querySelector(".topbar")?.removeAttribute("inert");
-    document.querySelectorAll(".attention-panel,.inspector-panel").forEach((panel) => panel.removeAttribute("inert"));
-    if (returnFocus) activeDrawerTrigger?.focus();
-    activeDrawerTrigger = null;
-  }
-
-  function openDrawer(button) {
-    closeDrawers(false);
-    const panel = document.getElementById(`${button.dataset.panel}Panel`);
-    if (!panel) return;
-    activeDrawerTrigger = button;
-    button.setAttribute("aria-expanded", "true");
-    panel.classList.add("is-open");
-    document.querySelector(".drawer-backdrop")?.classList.add("is-open");
-    document.querySelector(".process-stage")?.setAttribute("inert", "");
-    document.querySelector(".topbar")?.setAttribute("inert", "");
-    document.querySelectorAll(".attention-panel,.inspector-panel").forEach((item) => {
-      if (item !== panel) item.setAttribute("inert", "");
-    });
-    panel.querySelector("[data-close-drawer]")?.focus();
-  }
-
-  function trapDrawerFocus(event) {
-    if (event.key !== "Tab") return;
-    const panel = document.querySelector(".attention-panel.is-open,.inspector-panel.is-open");
-    if (!panel) return;
-    const focusable = [...panel.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])')];
-    if (!focusable.length) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  }
-
-  function selectOverviewProcess(processId, push = true) {
-    if (!overviewCache || !overviewCache.map.nodes.some((node) => node.id === processId)) return;
-    lastSelectedProcess = processId;
-    const url = new URL(window.location.href);
-    url.searchParams.set("view", "overview");
-    url.searchParams.set("process", processId);
-    window.history[push ? "pushState" : "replaceState"](null, "", url);
-    viewContainer.innerHTML = overviewMarkup(overviewCache, processId);
-    bindOverview(processId);
-  }
-
-  function bindOverview(selectedId) {
-    document.querySelectorAll("[data-process-id]").forEach((node) => {
-      const process = overviewCache.map.nodes.find((item) => item.id === node.dataset.processId);
-      node.addEventListener("click", () => selectOverviewProcess(node.dataset.processId));
-      node.addEventListener("mouseenter", (event) => showMapTooltip(event, process));
-      node.addEventListener("mousemove", moveMapTooltip);
-      node.addEventListener("mouseleave", hideMapTooltip);
-      node.addEventListener("focus", (event) => showMapTooltip(event, process));
-      node.addEventListener("blur", hideMapTooltip);
-    });
-    document.querySelectorAll("[data-priority-process]").forEach((item) => item.addEventListener("click", () => selectOverviewProcess(item.dataset.priorityProcess)));
-    document.querySelectorAll("[data-panel]").forEach((button) => button.addEventListener("click", () => openDrawer(button)));
-    document.querySelectorAll("[data-close-drawer]").forEach((button) => button.addEventListener("click", closeDrawers));
-    document.getElementById("mapMotionButton")?.addEventListener("click", toggleMotion);
-    document.getElementById("mapResetButton")?.addEventListener("click", () => selectOverviewProcess("sales-order"));
-    document.getElementById("mapFocusButton")?.addEventListener("click", () => {
-      const node = document.querySelector(`[data-process-id="${CSS.escape(selectedId)}"]`);
-      node?.scrollIntoView({ block: "center", inline: "center", behavior: reducedMotion.matches ? "auto" : "smooth" });
-      node?.classList.add("is-focused");
-      window.setTimeout(() => node?.classList.remove("is-focused"), 560);
-    });
-    applyMotionState();
-  }
-
-  function showMapTooltip(event, process) {
-    if (!process) return;
-    mapTooltip.innerHTML = `<strong>${A.escapeHtml(process.label)}</strong><span>${A.escapeHtml(process.headline)}<br>Pemilik: ${A.escapeHtml(process.owner)}</span>`;
-    mapTooltip.hidden = false;
-    moveMapTooltip(event);
-  }
-
-  function moveMapTooltip(event) {
-    const x = Math.min(window.innerWidth - 275, Math.max(8, (event.clientX || event.target.getBoundingClientRect().right) + 12));
-    const y = Math.min(window.innerHeight - 110, Math.max(8, (event.clientY || event.target.getBoundingClientRect().top) + 12));
-    mapTooltip.style.left = `${x}px`;
-    mapTooltip.style.top = `${y}px`;
-  }
-
-  function hideMapTooltip() {
-    mapTooltip.hidden = true;
-  }
-
-  async function renderOverview(state) {
-    const [health, validation, poScope, ioHealth] = await Promise.all([
-      apiJson("/api/control-tower/health"),
-      apiJson("/api/control-tower/sop-validation"),
-      apiJson("/api/control-tower/po-cancellation-scope?limit=1&offset=0"),
-      apiJson("/api/control-tower/io-health?limit=1&offset=0"),
-    ]);
-    const context = { completedAt: health.latest_run?.completed_at, po: A.poScopeSummary(poScope.summary) };
-    const map = A.normalizeProcessMap(validation.rows, context);
-    const metrics = A.overviewMetrics(health, validation.rows, poScope.summary, ioHealth.summary);
-    overviewCache = { health, map, metrics, priorities: A.priorityFeed(map.rules, 6), ioHealth };
-    const selected = map.nodes.some((node) => node.id === state.process) ? state.process : lastSelectedProcess;
-    lastSelectedProcess = map.nodes.some((node) => node.id === selected) ? selected : "sales-order";
-    commitView(overviewMarkup(overviewCache, lastSelectedProcess), health, () => bindOverview(lastSelectedProcess));
-  }
-
-  function validationRow(rule) {
-    const classification = classificationForRule(rule);
-    return `
-      <tr>
-        <td class="validation-title"><strong>${A.escapeHtml(rule.title)}</strong>${rule.currentSummary ? `<span>${A.escapeHtml(rule.currentSummary)}</span>` : ""}<span>${technicalReference(rule.rawStatus, rule.ruleId)}</span></td>
-        <td>${statusBadge(rule.status)}</td>
-        <td class="business-explanation"><strong>${A.escapeHtml(rule.explanation)}</strong><span><b>Mengapa penting:</b> ${A.escapeHtml(rule.why)}</span><span><b>Dampak:</b> ${A.escapeHtml(rule.impact)}</span></td>
-        <td>${A.escapeHtml(rule.process)}</td>
-        <td>${A.escapeHtml(rule.processOwner)}</td>
-        <td>${A.escapeHtml(rule.reviewer)}</td>
-        <td class="num">${A.formatNumber(rule.checkedCount)}</td>
-        <td class="num">${A.formatNumber(rule.compliantCount)}</td>
-        <td class="num">${A.formatNumber(rule.activeIssues)}</td>
-        <td class="num">${A.formatNumber(rule.historicalCount)}</td>
-        <td class="num">${A.formatNumber(rule.reviewRequired)}</td>
-        <td class="num">${A.formatNumber(rule.incompleteEvidence)}</td>
-        <td>${A.escapeHtml(rule.evidenceStrength)}<span class="cell-note">Evaluasi: ${A.escapeHtml(A.formatDateTime(rule.latestEvaluation))}</span></td>
-        <td><a class="table-link" data-route-link href="${routeHref("exceptions", { classification, rule: rule.ruleId })}">Lihat pengecualian</a></td>
-      </tr>`;
-  }
-
-  function bindValidation(state) {
-    document.getElementById("validationFilters")?.addEventListener("submit", (event) => {
-      event.preventDefault();
-      const process = document.getElementById("validationProcessFilter").value;
-      const rule = document.getElementById("validationRuleFilter").value;
-      navigate(routeHref("validation", { process, rule }));
-    });
-    document.getElementById("clearValidationFilters")?.addEventListener("click", () => navigate(routeHref("validation")));
-  }
-
-  async function renderValidation(state) {
-    const [health, validation, poScope] = await Promise.all([
-      apiJson("/api/control-tower/health"),
-      apiJson("/api/control-tower/sop-validation"),
-      apiJson("/api/control-tower/po-cancellation-scope?limit=1&offset=0"),
-    ]);
-    const context = { completedAt: health.latest_run?.completed_at, po: A.poScopeSummary(poScope.summary) };
-    const allRules = (validation.rows || []).map((row) => A.normalizeRule(row, context));
-    const process = A.PROCESS_DEFINITIONS.find((item) => item.id === state.process);
-    const rules = allRules.filter((rule) => (!process || process.ruleIds.includes(rule.ruleId)) && (!state.rule || state.rule === rule.ruleId));
-    const totals = rules.reduce((result, rule) => {
-      result.checked += rule.checkedCount;
-      result.active += rule.activeIssues;
-      result.review += rule.reviewRequired;
-      result.incomplete += rule.incompleteEvidence;
-      return result;
-    }, { checked: 0, active: 0, review: 0, incomplete: 0 });
-    const processOptions = A.PROCESS_DEFINITIONS.filter((item) => item.ruleIds.length).map((item) => `<option value="${A.escapeHtml(item.id)}"${state.process === item.id ? " selected" : ""}>${A.escapeHtml(item.label)}</option>`).join("");
-    const ruleOptions = allRules.map((rule) => `<option value="${A.escapeHtml(rule.ruleId)}"${state.rule === rule.ruleId ? " selected" : ""}>${A.escapeHtml(rule.ruleId)} — ${A.escapeHtml(rule.title)}</option>`).join("");
-    const html = `
-      ${viewHeading("Validasi SOP", "Pemeriksaan bisnis terhubung langsung dengan proses, pengecualian, dan bukti snapshot.", `${A.formatNumber(rules.length)} dari ${A.formatNumber(allRules.length)} pemeriksaan`)}
-      ${process ? `<section class="context-banner"><span>Filter proses aktif: <strong>${A.escapeHtml(process.label)}</strong></span><a class="secondary-button" data-route-link href="${routeHref("overview", { process: process.id })}">Kembali ke peta</a></section>` : ""}
-      <form class="filter-panel" id="validationFilters">
-        <label><span>Proses</span><select id="validationProcessFilter"><option value="">Semua proses</option>${processOptions}</select></label>
-        <label class="classification-control"><span>Rule teknis</span><select id="validationRuleFilter"><option value="">Semua rule</option>${ruleOptions}</select></label>
-        <div class="filter-actions"><button class="primary-button" type="submit">Terapkan</button><button class="secondary-button" id="clearValidationFilters" type="button">Hapus</button></div>
-      </form>
-      <section class="summary-strip" aria-label="Ringkasan validasi terpilih">
-        <article class="detail-item"><span>Diperiksa</span><strong>${A.formatNumber(totals.checked)}</strong></article>
-        <article class="detail-item"><span>Masalah Aktif</span><strong>${A.formatNumber(totals.active)}</strong></article>
-        <article class="detail-item"><span>Perlu Ditinjau</span><strong>${A.formatNumber(totals.review)}</strong></article>
-        <article class="detail-item"><span>Bukti Belum Lengkap</span><strong>${A.formatNumber(totals.incomplete)}</strong></article>
+  async function renderFindings(archive = false) {
+    const params = currentParams();
+    const category = params.get("category") || "";
+    const process = params.get("process") || "";
+    const query = new URLSearchParams({ archive: String(archive), limit: "500" });
+    if (category) query.set("category", category);
+    if (process) query.set("process_node", process);
+    const data = await apiJson(`/findings?${query}`);
+    state.currentRows = data.rows || [];
+    const visibleIds = new Set(state.currentRows.map((row) => row.finding_id));
+    state.selected = new Set([...state.selected].filter((id) => visibleIds.has(id)));
+    const title = archive ? "Arsip" : "Temuan";
+    const bulkLabel = archive ? "Buka kembali pilihan" : "Tutup pilihan";
+    qs("#viewContainer").innerHTML = `<section class="page-heading"><div><p class="eyebrow">Control Tower · cakupan ${new Date().getFullYear()}</p><h1>${title}</h1><p>${archive ? "Riwayat temuan yang ditutup manual atau selesai otomatis." : "Satu baris menunjukkan satu pelanggaran bisnis pada satu dokumen utama."}</p></div></section>
+      ${archive ? "" : metricCards(data.summary, category)}
+      <section class="table-toolbar">
+        <div><strong>${number(data.total)} ${archive ? "temuan di arsip" : "temuan aktif"}</strong>${process ? `<span>Proses: ${esc(process)}</span>` : ""}</div>
+        <div>${category || process ? `<button class="button-secondary" data-clear-filter type="button">Hapus filter</button>` : ""}<button class="button-primary" id="bulkAction" type="button" disabled>${bulkLabel}</button></div>
       </section>
-      <section class="table-panel" aria-label="Matriks Validasi SOP">
-        <div class="table-toolbar"><div><strong>Matriks Validasi SOP</strong><span>Bahasa bisnis utama; referensi teknis ditampilkan setelahnya.</span></div></div>
-        <div class="table-scroll" tabindex="0" aria-label="Tabel Validasi SOP dapat digulir secara horizontal">
-          <table class="validation-table"><thead><tr><th>Kontrol bisnis</th><th>Status</th><th>Penjelasan, alasan, dampak</th><th>Proses</th><th>Pemilik</th><th>Peninjau</th><th class="num">Diperiksa</th><th class="num">Sesuai</th><th class="num">Aktif</th><th class="num">Historis</th><th class="num">Ditinjau</th><th class="num">Bukti belum lengkap</th><th>Bukti &amp; evaluasi</th><th>Tindakan</th></tr></thead><tbody>${rules.length ? rules.map(validationRow).join("") : `<tr><td colspan="14" class="empty-cell">Tidak ada pemeriksaan untuk filter yang dipilih.</td></tr>`}</tbody></table>
-        </div>
-      </section>`;
-    commitView(html, health, () => bindValidation(state));
+      <div class="table-shell"><table class="findings-table"><thead><tr><th><span class="sr-only">Pilih dan buka</span></th><th>Dokumen Utama</th><th>Penjelasan Masalah</th><th>Dokumen Terdampak</th><th>Aksi</th></tr></thead><tbody>${data.rows.length ? data.rows.map((row) => findingRow(row, archive)).join("") : `<tr><td colspan="5"><div class="empty-state"><h2>${archive ? "Arsip masih kosong" : "Tidak ada temuan untuk filter ini"}</h2><p>Data ditampilkan dari hasil sinkronisasi terakhir yang berhasil.</p></div></td></tr>`}</tbody></table></div>`;
+    bindFindingActions(archive, data);
   }
 
-  function classificationOptions(selected) {
-    return [
-      ["active", "Masalah Aktif"],
-      ["historical", "Catatan Historis"],
-      ["review", "Perlu Ditinjau"],
-      ["incomplete", "Bukti Sistem Belum Lengkap"],
-      ["document-gap", "Hubungan Dokumen Belum Lengkap"],
-    ].map(([value, label]) => `<option value="${value}"${selected === value ? " selected" : ""}>${label}</option>`).join("");
+  function bindFindingActions(archive, data, rerender = () => renderFindings(archive)) {
+    qsa("[data-category]").forEach((button) => button.addEventListener("click", () => {
+      const url = new URL(location.href);
+      if (url.searchParams.get("category") === button.dataset.category) url.searchParams.delete("category");
+      else url.searchParams.set("category", button.dataset.category);
+      navigate(url);
+    }));
+    qs("[data-clear-filter]")?.addEventListener("click", () => {
+      const url = new URL(location.href); url.searchParams.delete("category"); url.searchParams.delete("process"); navigate(url);
+    });
+    qsa("[data-select-finding]").forEach((input) => input.addEventListener("change", () => {
+      if (input.checked) state.selected.add(input.dataset.selectFinding); else state.selected.delete(input.dataset.selectFinding);
+      qs("#bulkAction").disabled = state.selected.size === 0;
+      qs("#bulkAction").textContent = `${archive ? "Buka kembali" : "Tutup"} ${state.selected.size || ""} pilihan`.trim();
+    }));
+    qsa("[data-expand-finding]").forEach((button) => button.addEventListener("click", () => {
+      const key = button.dataset.expandFinding;
+      if (state.expanded.has(key)) state.expanded.delete(key); else state.expanded.add(key);
+      rerender().catch(showFailure);
+    }));
+    qsa("[data-close-finding]").forEach((button) => button.addEventListener("click", () => openCloseDialog([button.dataset.closeFinding], data, rerender)));
+    qsa("[data-reopen-finding]").forEach((button) => button.addEventListener("click", () => openReopenDialog([button.dataset.reopenFinding], rerender)));
+    qs("#bulkAction")?.addEventListener("click", () => archive ? openReopenDialog([...state.selected], rerender) : openCloseDialog([...state.selected], data, rerender));
   }
 
-  function selectOptions(options, selected, emptyLabel) {
-    return `<option value="">${A.escapeHtml(emptyLabel)}</option>` + options.map(([value, label]) => `<option value="${A.escapeHtml(value)}"${selected === value ? " selected" : ""}>${A.escapeHtml(label)}</option>`).join("");
-  }
-
-  function filtersMarkup(state) {
-    const historical = state.classification === "historical";
-    const disabled = historical ? " disabled" : "";
-    return `
-      <form class="filter-panel" id="worklistFilters">
-        <label class="classification-control"><span>Klasifikasi</span><select id="classificationFilter">${classificationOptions(state.classification)}</select></label>
-        <label><span>Proses</span><select id="processFilter"${disabled}>${selectOptions(A.PROCESS_FILTERS, state.process, "Semua proses")}</select></label>
-        <label><span>Peninjau</span><select id="ownerFilter"${disabled}>${selectOptions(A.OWNER_FILTERS.map((owner) => [owner, owner]), state.owner, "Semua tim")}</select></label>
-        <label><span>Tingkat dampak</span><select id="severityFilter"${disabled}><option value="">Semua tingkat</option><option value="HIGH"${state.severity === "HIGH" ? " selected" : ""}>Tinggi</option><option value="MEDIUM"${state.severity === "MEDIUM" ? " selected" : ""}>Sedang</option><option value="LOW"${state.severity === "LOW" ? " selected" : ""}>Rendah</option></select></label>
-        <label><span>Dokumen</span><input id="documentFilter" type="search" maxlength="100" value="${A.escapeHtml(state.document)}" placeholder="Nomor dokumen"${disabled}></label>
-        <label><span>Tanggal dari</span><input id="dateFromFilter" type="date" value="${A.escapeHtml(state.date_from)}"${disabled}></label>
-        <label><span>Tanggal sampai</span><input id="dateToFilter" type="date" value="${A.escapeHtml(state.date_to)}"${disabled}></label>
-        <div class="filter-actions"><button class="primary-button" type="submit">Terapkan</button><button class="secondary-button" id="clearWorklistFilters" type="button">Hapus</button></div>
-      </form>`;
-  }
-
-  function selectedFiltersMarkup(state) {
-    const labels = { active: "Masalah Aktif", historical: "Catatan Historis", review: "Perlu Ditinjau", incomplete: "Bukti Sistem Belum Lengkap", "document-gap": "Hubungan Dokumen Belum Lengkap" };
-    const tokens = [`Klasifikasi: ${labels[state.classification]}`];
-    if (state.rule) tokens.push(`Rule: ${state.rule}`);
-    if (state.process) tokens.push(`Proses: ${state.process}`);
-    if (state.owner) tokens.push(`Peninjau: ${state.owner}`);
-    if (state.severity) tokens.push(`Dampak: ${state.severity}`);
-    if (state.document) tokens.push(`Dokumen: ${state.document}`);
-    if (state.date_from || state.date_to) tokens.push(`Tanggal: ${state.date_from || "…"}–${state.date_to || "…"}`);
-    return `<div class="selected-filters" aria-label="Filter terpilih"><span class="selected-filters-label">Filter terpilih</span>${tokens.map((token) => `<span class="filter-token">${A.escapeHtml(token)}</span>`).join("")}</div>`;
-  }
-
-  function relatedDocumentText(item) {
-    const model = A.MODEL_LABELS[item.model] || item.model || "Dokumen terkait";
-    return `${item.number || "Nomor tidak tersedia"} · ${model} · ${A.statePresentation(item.state).label}`;
-  }
-
-  function severityLabel(value) {
-    return { HIGH: "Tinggi", MEDIUM: "Sedang", LOW: "Rendah", HISTORICAL: "Historis" }[value] || "Belum tersedia";
-  }
-
-  function exceptionRow(item, state) {
-    const shareUrl = new URL(window.location.href);
-    shareUrl.searchParams.set("view", "exceptions");
-    shareUrl.searchParams.set("document", item.affectedDocument);
-    return `
-      <tr>
-        <td>${statusBadge(item.status)}<span class="cell-note">${A.escapeHtml(severityLabel(item.severity))}</span></td>
-        <td class="exception-situation"><strong>${A.escapeHtml(item.situation)}</strong><span>${A.escapeHtml(item.explanation)}</span><span>${technicalReference(item.rawStatus, item.ruleId)}</span></td>
-        <td class="exception-document"><strong>${A.escapeHtml(item.affectedDocument)}</strong><span>${A.escapeHtml(item.affectedModel)}${item.documentId ? ` · Native ID ${A.escapeHtml(item.documentId)}` : ""}</span>${(item.relatedDocuments || []).map((related) => `<span>Dokumen terkait: ${A.escapeHtml(relatedDocumentText(related))}</span>`).join("") || "<span>Dokumen terkait belum tersedia.</span>"}</td>
-        <td>${A.escapeHtml(item.process)}</td>
-        <td class="exception-impact"><strong>Mengapa penting:</strong> ${A.escapeHtml(item.why)}<span><b>Dampak:</b> ${A.escapeHtml(item.impact)}</span><span><b>Peninjau:</b> ${A.escapeHtml(item.reviewer)}</span></td>
-        <td>${statusBadge(item.confidence)}<span class="cell-note">${A.escapeHtml(A.formatDateTime(item.detectedAt))}</span></td>
-        <td><div class="table-actions"><button class="secondary-button copy-action" type="button" data-copy="${A.escapeHtml(item.affectedDocument)}">Salin nomor</button><button class="secondary-button copy-action" type="button" data-copy="${A.escapeHtml(shareUrl.toString())}">Salin URL</button>${item.journeyUrl ? `<a class="table-link" data-route-link href="${A.escapeHtml(item.journeyUrl)}">Perjalanan dokumen</a>` : ""}</div></td>
-      </tr>`;
-  }
-
-  function bindCopyActions() {
-    document.querySelectorAll("[data-copy]").forEach((button) => button.addEventListener("click", async () => {
-      const value = button.dataset.copy;
+  function openCloseDialog(ids, data, rerender) {
+    const dialog = qs("#actionDialog");
+    qs("#actionDialogTitle").textContent = `Tutup ${ids.length} temuan`;
+    qs("#actionDialogBody").innerHTML = `<p>Temuan tetap tersimpan di Arsip. Refresh berikutnya tidak akan membukanya kembali otomatis.</p><label>Alasan<select id="closeReason" required><option value="">Pilih alasan</option>${(data.close_reasons || []).map((reason) => `<option>${esc(reason)}</option>`).join("")}</select></label><label>Catatan<textarea id="closeNote" rows="4" placeholder="Wajib untuk alasan tertentu"></textarea></label>`;
+    qs("#actionSubmit").onclick = async (event) => {
+      event.preventDefault();
       try {
-        await navigator.clipboard.writeText(value);
-      } catch {
-        const textarea = document.createElement("textarea");
-        textarea.value = value;
-        textarea.setAttribute("readonly", "");
-        textarea.style.position = "fixed";
-        textarea.style.opacity = "0";
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand("copy");
-        textarea.remove();
-      }
-      showToast("Disalin ke clipboard.");
+        const reason = qs("#closeReason").value;
+        const note = qs("#closeNote").value;
+        await apiJson("/findings/bulk-close", "POST", { finding_ids: ids, reason, note: note || null });
+        dialog.close(); toast(`${ids.length} temuan dipindahkan ke Arsip.`); await rerender();
+      } catch (error) { toast(error.message, "danger"); }
+    };
+    dialog.showModal();
+  }
+
+  function openReopenDialog(ids, rerender) {
+    const dialog = qs("#actionDialog");
+    qs("#actionDialogTitle").textContent = `Buka kembali ${ids.length} temuan`;
+    qs("#actionDialogBody").innerHTML = `<p>Temuan akan kembali ke ringkasan aktif.</p><label>Alasan buka kembali<textarea id="reopenReason" rows="4" required></textarea></label>`;
+    qs("#actionSubmit").onclick = async (event) => {
+      event.preventDefault();
+      try {
+        await apiJson("/findings/bulk-reopen", "POST", { finding_ids: ids, reason: qs("#reopenReason").value });
+        dialog.close(); toast(`${ids.length} temuan dibuka kembali.`); await rerender();
+      } catch (error) { toast(error.message, "danger"); }
+    };
+    dialog.showModal();
+  }
+
+  function mapBadgeMarkup(node, counts) {
+    const short = { "Masalah Aktif": "M", "Perlu Ditinjau": "T", "Data Belum Lengkap": "D" };
+    return CATEGORIES.map((category) => `<button data-map-category="${esc(category)}" data-process="${esc(node.process || "")}" type="button" title="${esc(category)}"><span aria-hidden="true">${short[category]}</span><span class="sr-only">${esc(category)}</span><strong>${number(counts?.[category] || 0)}</strong></button>`).join("");
+  }
+
+  async function renderProcessMap() {
+    const data = await apiJson("/process-map");
+    const paths = MAP_ROUTES.map((route) => `<path class="process-route" data-from="${route.from}" data-to="${route.to}" d="${route.d}" marker-end="url(#arrow)"/>`).join("");
+    const lanes = MAP_LANES.map(([label, y]) => `<div class="process-lane" style="top:${y}px;height:150px"><strong>${esc(label)}</strong></div>`).join("");
+    const nodes = MAP_NODES.map((node) => `<article class="process-node${node.external ? " process-node--external" : ""}" data-process-node="${node.id}" style="left:${node.x}px;top:${node.y}px;width:${node.w}px;height:${node.h}px">
+      <button class="process-node-title" data-process="${esc(node.process || "")}" type="button" ${node.process ? "" : "disabled"}><strong>${esc(node.label)}</strong>${node.external ? "<small>Di luar Odoo · integrasi mendatang</small>" : ""}</button>
+      ${node.external ? "" : `<div class="process-node-counts">${mapBadgeMarkup(node, data.counts?.[node.process] || {})}</div>`}
+    </article>`).join("");
+    qs("#viewContainer").innerHTML = `<section class="page-heading"><div><p class="eyebrow">Struktur proses perusahaan</p><h1>Peta Proses</h1></div><div class="map-legend"><span class="legend-line"></span>Alur bisnis</div></section>
+      <div class="process-map-scroll" tabindex="0" aria-label="Peta proses; geser horizontal untuk melihat seluruh alur"><div class="process-map-canvas">${lanes}<svg class="process-route-layer" width="3620" height="900" viewBox="0 0 3620 900" aria-hidden="true"><defs><marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0 H7 V7 H0 Z"/></marker></defs>${paths}</svg><div class="process-node-layer">${nodes}</div></div></div>`;
+    qsa("[data-process]").forEach((button) => button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const process = button.dataset.process;
+      if (!process) return;
+      const url = new URL("/control-tower?view=findings", location.origin);
+      url.searchParams.set("process", process);
+      if (button.dataset.mapCategory) url.searchParams.set("category", button.dataset.mapCategory);
+      navigate(url);
     }));
   }
 
-  function bindExceptions(state, total) {
-    const form = document.getElementById("worklistFilters");
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      const classification = document.getElementById("classificationFilter").value;
-      const values = { classification };
-      if (classification === "historical") values.rule = "PO-CANCEL-001";
-      else {
-        values.process = document.getElementById("processFilter").value;
-        values.owner = document.getElementById("ownerFilter").value;
-        values.severity = document.getElementById("severityFilter").value;
-        values.document = document.getElementById("documentFilter").value.trim();
-        values.date_from = document.getElementById("dateFromFilter").value;
-        values.date_to = document.getElementById("dateToFilter").value;
-        values.rule = state.rule;
+  function fieldList(items) {
+    return `<dl class="field-list">${(items || []).map((item) => `<div><dt>${esc(item.label)}</dt><dd>${esc(item.value)}</dd></div>`).join("")}</dl>`;
+  }
+
+  function documentTabs(tabs, selected) {
+    const slug = { "Ringkasan": "summary", "Line Item": "lines", "Dokumen Terkait": "related", "Temuan Aktif": "findings", "Tracking": "tracking", "Gross Profit": "gross-profit" };
+    return `<nav class="document-tabs" aria-label="Bagian dokumen">${tabs.map((tab) => `<button class="${slug[tab] === selected ? "is-active" : ""}" data-document-tab="${slug[tab]}" type="button">${esc(tab)}</button>`).join("")}</nav>`;
+  }
+
+  function renderSummaryTab(data) {
+    const gp = data.gross_profit?.cards;
+    return `${gp ? `<div class="gp-cards"><article><span>GP Rencana</span><strong>${money(gp.planned_gp)}</strong></article><article><span>Margin Rencana</span><strong>${percent(gp.planned_margin)}</strong></article><article><span>GP Realisasi</span><strong>${money(gp.realized_gp)}</strong></article><article><span>Margin Realisasi</span><strong>${percent(gp.realized_margin)}</strong></article></div>` : ""}
+      <section class="detail-section"><h2>Ringkasan</h2>${fieldList(data.summary?.primary)}${data.summary?.additional?.length ? `<details><summary>Tampilkan field lainnya</summary>${fieldList(data.summary.additional)}</details>` : ""}</section>`;
+  }
+
+  function renderLinesTab(data) {
+    const rows = data.line_items || [];
+    return `<section class="detail-section"><div class="section-heading"><div><h2>Line Item</h2><p>${data.showing_problematic_only ? "Hanya line bermasalah ditampilkan." : "Seluruh line ditampilkan."}</p></div>${data.showing_problematic_only ? `<button class="button-secondary" data-show-all-lines type="button">Tampilkan semua line item</button>` : data.problematic_line_count ? `<button class="button-secondary" data-problem-lines type="button">Tampilkan line bermasalah</button>` : ""}</div><div class="line-grid">${rows.length ? rows.map((line) => `<article class="line-card${line.problematic ? " line-card--problem" : ""}">${fieldList(line.values)}</article>`).join("") : `<div class="empty-state"><p>Tidak ada line item untuk ditampilkan.</p></div>`}</div></section>`;
+  }
+
+  function renderRelatedTab(data) {
+    return `<section class="detail-section"><h2>Dokumen Terkait</h2><div class="related-groups">${(data.related_groups || []).length ? data.related_groups.map((group) => `<details open><summary>${esc(group.module)} <span>${number(group.documents.length)}</span></summary><ul>${group.documents.map((document) => `<li><div><strong>${esc(document.number)}</strong><span>${esc(document.status || "Status tidak tersedia")}</span></div><div>${documentLink(document)}${nativeLink(document, "Buka")}</div></li>`).join("")}</ul></details>`).join("") : `<div class="empty-state"><p>Dokumen terkait belum dapat dibuktikan.</p></div>`}</div></section>`;
+  }
+
+  function renderFindingsTab(data) {
+    return `<section class="detail-section"><h2>Temuan Aktif</h2><div class="table-shell"><table class="findings-table"><thead><tr><th></th><th>Dokumen Utama</th><th>Penjelasan Masalah</th><th>Dokumen Terdampak</th><th>Aksi</th></tr></thead><tbody>${(data.findings || []).length ? data.findings.map((row) => findingRow(row, false)).join("") : `<tr><td colspan="5"><div class="empty-state"><p>Tidak ada temuan aktif pada dokumen ini.</p></div></td></tr>`}</tbody></table></div></section>`;
+  }
+
+  function trackingMarkup(tracking, embedded = false) {
+    const timeline = tracking?.timeline || [];
+    const visible = state.showAllActivities ? timeline : timeline.filter((item) => item.depth === 0 || ["SO", "IO", "MO", "RKB", "ROP", "PO", "Receipt", "Delivery", "Invoice", "Vendor Bill", "Payment"].includes(item.type));
+    const edges = tracking?.diagram?.edges || [];
+    const outgoing = new Map();
+    for (const edge of edges) outgoing.set(edge.source, [...(outgoing.get(edge.source) || []), edge.target]);
+    const hidden = new Set();
+    const visited = new Set(state.collapsedBranches);
+    function hideChildren(key) {
+      for (const child of outgoing.get(key) || []) {
+        if (visited.has(child)) continue;
+        visited.add(child);
+        hidden.add(child);
+        hideChildren(child);
       }
-      navigate(routeHref("exceptions", values));
+    }
+    for (const key of state.collapsedBranches) hideChildren(key);
+    const diagramNodes = timeline.filter((item) => !hidden.has(item.key));
+    const mode = state.trackingMode;
+    return `<section class="detail-section tracking-section"><div class="section-heading"><div><h2>${embedded ? "Tracking" : "Tracking Terintegrasi"}</h2>${tracking?.context ? `<p>Konteks utama: <strong>${esc(tracking.context.number)}</strong></p>` : ""}</div><div class="segmented"><button data-tracking-mode="Timeline" class="${mode === "Timeline" ? "is-active" : ""}" type="button">Timeline</button><button data-tracking-mode="Diagram" class="${mode === "Diagram" ? "is-active" : ""}" type="button">Diagram</button></div></div>
+      ${mode === "Timeline" ? `<div class="timeline-toolbar"><button class="button-secondary" data-toggle-activities type="button">${state.showAllActivities ? "Tampilkan milestone saja" : "Tampilkan semua aktivitas"}</button></div><ol class="tracking-timeline">${visible.map((item) => `<li><span class="timeline-dot"></span><div><small>${esc(item.type)}</small><a data-route-link href="${esc(item.detail_url)}">${esc(item.number)}</a><span>${esc(item.status || "Status tidak tersedia")}</span>${item.summary ? `<p>${esc(item.summary)}</p>` : ""}</div></li>`).join("") || `<li><div>Hubungan dokumen belum dapat dibuktikan.</div></li>`}</ol>` : `<div class="tracking-diagram">${diagramNodes.map((item) => `<article style="--depth:${Math.min(Number(item.depth) || 0, 6)}">${outgoing.has(item.key) ? `<button class="branch-toggle" data-branch-key="${esc(item.key)}" type="button" aria-expanded="${!state.collapsedBranches.has(item.key)}">${state.collapsedBranches.has(item.key) ? "+" : "−"}</button>` : `<span class="branch-spacer"></span>`}<a data-route-link href="${esc(item.detail_url)}"><small>${esc(item.type)}</small><strong>${esc(item.number)}</strong><span>${esc(item.status || "Status tidak tersedia")}</span></a></article>`).join("") || `<div class="empty-state">Hubungan dokumen belum dapat dibuktikan.</div>`}</div>`}
+    </section>`;
+  }
+
+  function grossProfitMarkup(gp) {
+    if (!gp) return `<div class="empty-state"><p>Gross Profit belum tersedia untuk Sales Order ini.</p></div>`;
+    return `<section class="detail-section"><h2>Gross Profit</h2><p>Rekonsiliasi utama dalam IDR. COGS memakai akun ${esc(gp.cogs_account?.code)} — ${esc(gp.cogs_account?.name)}.</p>
+      <div class="gp-cards"><article><span>Revenue Rencana</span><strong>${money(gp.planned.revenue)}</strong></article><article><span>Total RKB</span><strong>${money(gp.planned.rkb)}</strong></article><article><span>GP Rencana</span><strong>${money(gp.planned.gross_profit)}</strong></article><article><span>Margin Rencana</span><strong>${percent(gp.planned.margin)}</strong></article><article><span>Revenue Realisasi</span><strong>${money(gp.realized.revenue)}</strong></article><article><span>COGS</span><strong>${money(gp.realized.cogs)}</strong></article><article><span>GP Realisasi</span><strong>${money(gp.realized.gross_profit)}</strong></article><article><span>Margin Realisasi</span><strong>${percent(gp.realized.margin)}</strong></article></div>
+      <div class="table-shell"><table><thead><tr><th>Produk</th><th>Invoice</th><th>Qty</th><th>Revenue</th><th>COGS langsung</th><th>Gross Profit Line</th></tr></thead><tbody>${(gp.lines || []).map((line) => `<tr><td>${esc(line.product || "Belum tersedia")}</td><td>${esc(line.invoice_number)}</td><td>${number(line.quantity)}</td><td>${money(line.revenue_idr)}</td><td>${line.cogs_idr === null ? "Belum dapat dialokasikan" : money(line.cogs_idr)}</td><td>${line.gross_profit_idr === null ? "Belum dapat dihitung" : money(line.gross_profit_idr)}</td></tr>`).join("") || `<tr><td colspan="6">Belum ada line Posted yang dapat direkonsiliasi.</td></tr>`}</tbody></table></div>
+      ${(gp.limitations || []).length ? `<aside class="data-limitation"><strong>Data yang perlu dilengkapi</strong><ul>${gp.limitations.map((item) => `<li>${esc(item)}</li>`).join("")}</ul></aside>` : ""}</section>`;
+  }
+
+  async function renderDocument() {
+    const params = currentParams();
+    const model = params.get("model");
+    const id = params.get("id");
+    const tab = params.get("tab") || "summary";
+    if (!model || !id) throw new Error("Dokumen belum dipilih.");
+    const data = await apiJson(`/documents/${encodeURIComponent(model)}/${encodeURIComponent(id)}?include_all_lines=${state.includeAllLines}&include_tracking=${tab === "tracking"}`);
+    const previous = history.state?.previousDocument;
+    state.currentDocumentNumber = data.document.number;
+    let content;
+    if (tab === "lines") content = renderLinesTab(data);
+    else if (tab === "related") content = renderRelatedTab(data);
+    else if (tab === "findings") content = renderFindingsTab(data);
+    else if (tab === "tracking") content = trackingMarkup(data.tracking, true);
+    else if (tab === "gross-profit") content = grossProfitMarkup(data.gross_profit);
+    else content = renderSummaryTab(data);
+    qs("#viewContainer").innerHTML = `<nav class="document-breadcrumb" aria-label="Breadcrumb"><button data-history-back type="button">← ${previous ? `Kembali ke ${esc(previous)}` : "Kembali"}</button><span>…</span><strong>${esc(data.document.number)}</strong></nav>
+      <header class="document-header"><div><span class="document-type">${esc(data.document.type)}</span><h1>${esc(data.document.number)}</h1><span class="native-state">${esc(data.document.status || "Status tidak tersedia")}</span></div>${nativeLink(data.document)}</header>
+      ${documentTabs(data.tabs, tab)}${content}`;
+    qs("#odooSyncTime").textContent = dateTime(data.odoo_sync_at);
+    qsa("[data-document-tab]").forEach((button) => button.addEventListener("click", () => {
+      const url = new URL(location.href); url.searchParams.set("tab", button.dataset.documentTab); navigate(url);
+    }));
+    qs("[data-history-back]")?.addEventListener("click", () => history.length > 1 ? history.back() : navigate("/control-tower?view=findings"));
+    qs("[data-show-all-lines]")?.addEventListener("click", () => { state.includeAllLines = true; renderDocument().catch(showFailure); });
+    qs("[data-problem-lines]")?.addEventListener("click", () => { state.includeAllLines = false; renderDocument().catch(showFailure); });
+    bindTrackingActions(data.tracking, true);
+    bindFindingActions(false, { close_reasons: ["Dokumen terlalu lama untuk diperbaiki", "Sudah tidak relevan", "Pengecualian bisnis yang sah", "Sudah dikoreksi di luar sistem", "Duplikat temuan", "Alasan lain"] }, renderDocument);
+  }
+
+  function trackingChooser() {
+    return `<section class="tracking-start"><p class="eyebrow">Mulai dari dokumen apa pun</p><h1>Tracking Terintegrasi</h1><p>Cari dokumen melalui pencarian global, lalu buka tab Tracking. Jika Sales Order terkait tersedia, dokumen tersebut menjadi konteks utama.</p><button class="button-primary" data-open-search type="button">Cari dokumen</button></section>`;
+  }
+
+  async function renderTracking() {
+    const params = currentParams();
+    const model = params.get("model");
+    const id = params.get("id");
+    if (!model || !id) { qs("#viewContainer").innerHTML = trackingChooser(); qs("[data-open-search]").onclick = openSearch; return; }
+    let data;
+    if (state.trackingScope === "RKB Tracking" && model === "approval.request") data = await apiJson(`/rkb-tracking/${encodeURIComponent(id)}`);
+    else data = await apiJson(`/tracking/${encodeURIComponent(model)}/${encodeURIComponent(id)}`);
+    qs("#viewContainer").innerHTML = `<section class="page-heading"><div><p class="eyebrow">Hubungan dokumen berbasis relasi Odoo</p><h1>Tracking Terintegrasi</h1></div><div class="segmented tracking-scope"><button data-tracking-scope="Order Tracking" class="${state.trackingScope === "Order Tracking" ? "is-active" : ""}" type="button">Order Tracking</button><button data-tracking-scope="RKB Tracking" class="${state.trackingScope === "RKB Tracking" ? "is-active" : ""}" type="button">RKB Tracking</button><button data-tracking-scope="Semua Hubungan" class="${state.trackingScope === "Semua Hubungan" ? "is-active" : ""}" type="button">Semua Hubungan</button></div></section>${state.trackingScope === "RKB Tracking" && data.rkb ? rkbMarkup(data) : trackingMarkup(data)}`;
+    qsa("[data-tracking-scope]").forEach((button) => button.addEventListener("click", () => { state.trackingScope = button.dataset.trackingScope; renderTracking().catch(showFailure); }));
+    bindTrackingActions(data, false);
+  }
+
+  function rkbMarkup(data) {
+    return `<section class="detail-section"><div class="section-heading"><div><span class="document-type">RKB</span><h2>${esc(data.rkb.number)}</h2><span class="native-state">${esc(data.rkb.status)}</span><p>${esc(data.rkb.work_reference || "Referensi pekerjaan belum tersedia")}</p></div>${nativeLink(data.rkb)}</div>
+      <div class="rkb-items">${(data.items || []).map((item) => `<article><header><h3>${esc(item.product)}</h3><span>${esc(item.uom || "")}</span></header><div class="rkb-summary"><span>Kebutuhan<strong>${number(item.summary.required)}</strong></span><span>Stock Awal<strong>${item.summary.opening_stock === null ? "Tidak tersedia" : number(item.summary.opening_stock)}</strong></span><span>Diproses ke ROP<strong>${item.summary.processed_to_rop === null ? "Tidak tersedia" : number(item.summary.processed_to_rop)}</strong></span><span>Sudah Di-PO<strong>${number(item.summary.ordered_for_rkb)}</strong></span><span>Sudah Diterima<strong>${number(item.summary.received)}</strong></span><span>Kekurangan Saat Ini<strong>${number(item.summary.current_shortage)}</strong></span></div><p class="material-state">${esc(item.material_status)}</p>
+        <details><summary>${number(item.branches.length)} cabang procurement</summary>${(item.branches || []).map((branch) => `<div class="rkb-branch"><div><strong>${esc(branch.po_number)}</strong><span>${esc(branch.po_status)}</span><p>Untuk kebutuhan RKB: ${number(Math.min(Number(branch.po_quantity || 0), Number(item.summary.required || 0)))} · Tambahan untuk stock: ${number(Math.max(Number(branch.po_quantity || 0) - Number(item.summary.required || 0), 0))} · Total PO: ${number(branch.po_quantity)}</p></div><div>${branch.po_open_url ? `<a class="button-link" target="_blank" rel="noopener" href="${esc(branch.po_open_url)}">Buka PO</a>` : ""}</div>${branch.receipt_number ? `<div><strong>${esc(branch.receipt_number)}</strong><span>${esc(branch.receipt_status)}</span><p>${esc(branch.progress_text)}</p>${branch.receipt_open_url ? `<a class="button-link" target="_blank" rel="noopener" href="${esc(branch.receipt_open_url)}">Buka Receipt</a>` : ""}</div>` : ""}</div>`).join("") || `<p>Cabang ROP/PO/Receipt belum dapat dibuktikan.</p>`}</details>
+        <details><summary>Nilai finansial</summary><p>Nilai RKB: ${money(item.financial.rkb_value)} · Nilai PO: ${money(item.financial.po_value)}</p></details></article>`).join("")}</div>
+      <aside class="data-limitation"><strong>Data yang perlu dilengkapi</strong><ul>${(data.limitations || []).map((item) => `<li>${esc(item)}</li>`).join("")}</ul></aside></section>`;
+  }
+
+  function bindTrackingActions(data, embedded) {
+    qsa("[data-tracking-mode]").forEach((button) => button.addEventListener("click", () => { state.trackingMode = button.dataset.trackingMode; embedded ? renderDocument().catch(showFailure) : renderTracking().catch(showFailure); }));
+    qs("[data-toggle-activities]")?.addEventListener("click", () => { state.showAllActivities = !state.showAllActivities; embedded ? renderDocument().catch(showFailure) : renderTracking().catch(showFailure); });
+    qsa("[data-branch-key]").forEach((button) => button.addEventListener("click", () => {
+      const key = button.dataset.branchKey;
+      if (state.collapsedBranches.has(key)) state.collapsedBranches.delete(key); else state.collapsedBranches.add(key);
+      embedded ? renderDocument().catch(showFailure) : renderTracking().catch(showFailure);
+    }));
+  }
+
+  function openSearch() {
+    const dialog = qs("#searchDialog");
+    dialog.showModal();
+    setTimeout(() => qs("#globalSearchInput").focus(), 0);
+  }
+
+  async function performSearch(query) {
+    const target = qs("#searchResults");
+    if (query.trim().length < 2) { target.innerHTML = `<p class="search-help">Ketik minimal dua karakter.</p>`; return; }
+    target.innerHTML = `<p class="search-help">Mencari…</p>`;
+    try {
+      const data = await apiJson(`/search?q=${encodeURIComponent(query.trim())}&limit=100`);
+      target.innerHTML = data.groups.length ? data.groups.map((group) => `<section><h3>${esc(group.type)}</h3><ul>${group.documents.map((document) => `<li><a data-search-detail href="${esc(document.detail_url)}"><strong>${esc(document.number)}</strong><span>${esc(document.status || "Status tidak tersedia")}</span><small>${esc(document.secondary || "Informasi tambahan belum tersedia")}</small>${document.active_findings ? `<em>${number(document.active_findings)} Temuan Aktif</em>` : ""}</a><a class="button-link" target="_blank" rel="noopener" href="${esc(document.open_url)}">Buka Odoo</a></li>`).join("")}</ul></section>`).join("") : `<div class="empty-state"><p>Dokumen tidak ditemukan.</p></div>`;
+      qsa("[data-search-detail]", target).forEach((link) => link.addEventListener("click", (event) => { event.preventDefault(); qs("#searchDialog").close(); navigate(link.href); }));
+    } catch (error) { target.innerHTML = `<p class="error-copy">${esc(error.message)}</p>`; }
+  }
+
+  async function startRefresh() {
+    try {
+      const started = await apiJson("/refresh", "POST");
+      state.refreshJob = started;
+      qs("#refreshButton").disabled = true;
+      renderRefreshPanel(started);
+      pollRefresh(started.poll_url || `/api/control-tower/refresh/${started.job_id}`);
+    } catch (error) { toast(error.message, "danger"); }
+  }
+
+  async function pollRefresh(pollUrl) {
+    clearTimeout(state.refreshTimer);
+    try {
+      const path = pollUrl.startsWith(API) ? pollUrl.slice(API.length) : pollUrl.replace(/^\/api\/control-tower/, "");
+      const job = await apiJson(path);
+      state.refreshJob = job;
+      renderRefreshPanel(job);
+      if (["QUEUED", "RUNNING"].includes(job.status)) state.refreshTimer = setTimeout(() => pollRefresh(pollUrl), 1200);
+      else {
+        qs("#refreshButton").disabled = false;
+        if (job.status === "COMPLETED") { toast(job.message || "Data berhasil diperbarui."); await loadCurrentView(); }
+      }
+    } catch (error) { qs("#refreshButton").disabled = false; toast(error.message, "danger"); }
+  }
+
+  function renderRefreshPanel(job) {
+    const panel = qs("#refreshPanel");
+    const currentIndex = PHASES.findIndex(([key]) => key === job.phase);
+    const percentageValue = Math.max(0, Math.min(100, Number(job.percentage || (job.status === "COMPLETED" ? 100 : 0))));
+    panel.hidden = false;
+    panel.innerHTML = `<header><div><strong>Refresh Data Odoo</strong><span>${esc(job.phase_label || job.message || "Persiapan")}</span></div><button data-minimize-refresh type="button" aria-label="Minimalkan">−</button></header><div class="refresh-panel-body"><div class="progress-heading"><strong>${number(percentageValue, { maximumFractionDigits: 1 })}%</strong><span>${esc(job.current_work || "Menunggu proses berikutnya")}</span></div><progress max="100" value="${percentageValue}">${percentageValue}%</progress>${job.processed_records !== null && job.processed_records !== undefined ? `<p>${number(job.processed_records)} / ${job.total_records === null ? "?" : number(job.total_records)} record</p>` : ""}<ol>${PHASES.map(([key, label], index) => `<li class="${job.status === "FAILED" && key === job.failed_phase ? "is-failed" : index < currentIndex || job.status === "COMPLETED" ? "is-done" : index === currentIndex ? "is-active" : ""}"><span></span>${esc(label)}</li>`).join("")}</ol>${job.status === "FAILED" ? `<div class="refresh-error"><strong>${esc(job.failed_phase_label || job.phase_label || "Tahap gagal")}</strong><p>${esc(job.error_message || job.message)}</p><div><button class="button-primary" data-retry-refresh type="button">Coba Lagi dari Tahap Gagal</button><button class="button-secondary" data-close-refresh type="button">Tutup</button></div></div>` : job.status === "COMPLETED" && job.final_summary ? `<div class="refresh-summary"><strong>Selesai</strong><p>${number(job.final_summary.documents_changed || job.changed_documents)} dokumen berubah · ${number(job.final_summary.new_findings || 0)} temuan baru · ${number(job.final_summary.auto_resolved_findings || 0)} selesai otomatis</p><small>${esc(job.final_summary.duration || "")} · ${dateTime(job.completed_at)}</small></div>` : ""}</div>`;
+    qs("[data-minimize-refresh]")?.addEventListener("click", () => panel.classList.toggle("is-minimized"));
+    qs("[data-close-refresh]")?.addEventListener("click", () => { panel.hidden = true; });
+    qs("[data-retry-refresh]")?.addEventListener("click", async () => {
+      try { const retry = await apiJson(`/refresh/${job.job_id}/retry`, "POST"); pollRefresh(retry.poll_url); } catch (error) { toast(error.message, "danger"); }
     });
-    document.getElementById("classificationFilter").addEventListener("change", () => form.requestSubmit());
-    document.getElementById("clearWorklistFilters").addEventListener("click", () => navigate(routeHref("exceptions", { classification: "active" })));
-    document.querySelector("[data-page='previous']")?.addEventListener("click", () => navigate(routeHref("exceptions", { ...state, offset: Math.max(0, state.offset - 25), params: undefined, view: undefined, id: undefined, model: undefined, journeyPage: undefined })));
-    document.querySelector("[data-page='next']")?.addEventListener("click", () => {
-      if (state.offset + 25 < total) navigate(routeHref("exceptions", { ...state, offset: state.offset + 25, params: undefined, view: undefined, id: undefined, model: undefined, journeyPage: undefined }));
+  }
+
+  async function updateFreshness() {
+    try {
+      const health = await apiJson("/health");
+      const completed = health.latest_run?.completed_at || health.last_successful_odoo_sync_at;
+      qs("#odooSyncTime").textContent = dateTime(completed);
+      qs("#screenRefreshTime").textContent = dateTime(new Date().toISOString());
+    } catch (_error) {
+      qs("#odooSyncTime").textContent = "Belum tersedia";
+      qs("#screenRefreshTime").textContent = dateTime(new Date().toISOString());
+    }
+  }
+
+  function showFailure(error) {
+    setBusy(false);
+    qs("#viewContainer").innerHTML = `<div class="error-state"><h1>Data terbaru belum dapat dimuat</h1><p>${esc(error.message)}</p><button class="button-primary" data-retry-view type="button">Coba lagi</button></div>`;
+    qs("[data-retry-view]").onclick = () => loadCurrentView();
+  }
+
+  async function loadCurrentView() {
+    const params = currentParams();
+    state.view = params.get("view") || "findings";
+    syncNavigation(state.view);
+    setBusy(true);
+    try {
+      if (state.view === "archive") await renderFindings(true);
+      else if (state.view === "process-map") await renderProcessMap();
+      else if (state.view === "tracking") await renderTracking();
+      else if (state.view === "document") await renderDocument();
+      else await renderFindings(false);
+      setBusy(false);
+      qs("#screenRefreshTime").textContent = dateTime(new Date().toISOString());
+    } catch (error) { showFailure(error); }
+  }
+
+  function parseRoute(path) {
+    const tokens = String(path).trim().split(/\s+/);
+    const points = [];
+    let x = 0, y = 0;
+    for (let index = 0; index < tokens.length; index += 1) {
+      const command = tokens[index][0];
+      const raw = tokens[index].slice(1);
+      if (command === "M") { x = Number(raw); y = Number(tokens[++index]); points.push([x, y]); }
+      else if (command === "H") { x = Number(raw); points.push([x, y]); }
+      else if (command === "V") { y = Number(raw); points.push([x, y]); }
+      else throw new Error(`Unsupported route command: ${command}`);
+    }
+    return points;
+  }
+
+  function routeSegments(path) {
+    const points = parseRoute(path);
+    return points.slice(1).map((point, index) => ({ x1: points[index][0], y1: points[index][1], x2: point[0], y2: point[1] }));
+  }
+
+  function segmentCrossesNode(segment, node, allowEndpoint = false) {
+    const left = node.x, right = node.x + node.w, top = node.y, bottom = node.y + node.h;
+    const inside = (x, y) => x > left && x < right && y > top && y < bottom;
+    if (allowEndpoint && (inside(segment.x1, segment.y1) || inside(segment.x2, segment.y2))) return false;
+    if (segment.y1 === segment.y2) return segment.y1 > top && segment.y1 < bottom && Math.max(segment.x1, segment.x2) > left && Math.min(segment.x1, segment.x2) < right;
+    return segment.x1 > left && segment.x1 < right && Math.max(segment.y1, segment.y2) > top && Math.min(segment.y1, segment.y2) < bottom;
+  }
+
+  function validateMapGeometry(nodes = MAP_NODES, routes = MAP_ROUTES) {
+    const errors = [];
+    for (let index = 0; index < nodes.length; index += 1) {
+      for (let other = index + 1; other < nodes.length; other += 1) {
+        const a = nodes[index], b = nodes[other];
+        if (a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y) errors.push(`node-overlap:${a.id}:${b.id}`);
+      }
+    }
+    for (const route of routes) {
+      for (const segment of routeSegments(route.d)) {
+        if (segment.x1 !== segment.x2 && segment.y1 !== segment.y2) errors.push(`diagonal:${route.from}:${route.to}`);
+        for (const node of nodes) {
+          if ([route.from, route.to].includes(node.id)) continue;
+          if (segmentCrossesNode(segment, node)) errors.push(`route-node:${route.from}:${route.to}:${node.id}`);
+        }
+      }
+    }
+    return errors;
+  }
+
+  function bindShell() {
+    document.addEventListener("click", (event) => {
+      const link = event.target.closest("[data-route-link]");
+      if (!link || link.target === "_blank" || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      event.preventDefault(); navigate(link.href);
     });
-    bindCopyActions();
-  }
-
-  async function renderExceptions(state) {
-    const request = A.exceptionRequest({ ...state, limit: 25 });
-    const [payload, poScope, health] = await Promise.all([
-      apiJson(request.url),
-      apiJson("/api/control-tower/po-cancellation-scope?limit=1&offset=0"),
-      apiJson("/api/control-tower/health"),
-    ]);
-    const rows = request.kind === "historical" ? (payload.rows || []).map(A.normalizeHistoricalPo) : (payload.rows || []).map(A.normalizeException);
-    const total = Number(payload.total || 0);
-    const po = A.poScopeSummary(poScope.summary);
-    const html = `
-      ${viewHeading("Daftar Pengecualian", "Default menampilkan masalah operasional aktif; ketidakpastian dan histori tetap dipisahkan.", `${A.formatNumber(total)} hasil`)}
-      ${filtersMarkup(state)}
-      ${selectedFiltersMarkup(state)}
-      ${A.shouldShowActivePoEmptyState(state, total) ? `<section class="state-panel tone-success"><h2>Tidak ada masalah aktif untuk PO yang dibatalkan mulai tahun 2026.</h2><p>${A.formatNumber(po.checked)} PO diperiksa dan ${A.formatNumber(po.checked - po.active)} sesuai. ${A.formatNumber(po.historical)} kasus sebelum 2026 tetap tersedia sebagai Catatan Historis.</p></section><br>` : ""}
-      <section class="table-panel" aria-label="Daftar pengecualian Control Tower">
-        <div class="table-toolbar"><div><strong>Worklist operasional</strong><span>Filter dan pagination diproses di server; tidak ada write-back pada fase ini.</span></div></div>
-        <div class="table-scroll" tabindex="0" aria-label="Tabel pengecualian dapat digulir secara horizontal">
-          <table class="exception-table"><thead><tr><th>Klasifikasi</th><th>Apa yang terjadi</th><th>Dokumen</th><th>Proses</th><th>Alasan, dampak, peninjau</th><th>Bukti</th><th>Tindakan</th></tr></thead><tbody>${rows.length ? rows.map((item) => exceptionRow(item, state)).join("") : `<tr><td colspan="7" class="empty-cell">${A.escapeHtml(A.emptyMessage(state.classification, state.rule))}</td></tr>`}</tbody></table>
-        </div>
-        <footer class="pagination-footer"><button class="secondary-button" type="button" data-page="previous"${state.offset <= 0 ? " disabled" : ""}>Sebelumnya</button><span>${total ? `${A.formatNumber(state.offset + 1)}–${A.formatNumber(Math.min(total, state.offset + 25))} dari ${A.formatNumber(total)}` : "0 hasil"}</span><button class="secondary-button" type="button" data-page="next"${state.offset + 25 >= total ? " disabled" : ""}>Berikutnya</button></footer>
-      </section>`;
-    commitView(html, health, () => bindExceptions(state, total));
-  }
-
-  function journeySearch(model = "", id = "") {
-    const models = [
-      ["sale.order", "Sales Order"], ["sale.order.line", "Baris Sales Order"],
-      ["approval.request", "Internal Order"], ["approval.product.line", "Baris Internal Order"],
-      ["mrp.production", "Manufacturing Order"], ["purchase.order", "Purchase Order"],
-      ["stock.picking", "Receipt / Delivery"], ["account.move", "Invoice"],
-    ];
-    return `<form class="filter-panel journey-search" id="journeySearch"><label><span>Jenis dokumen utama</span><select id="journeyModel" required><option value="">Pilih jenis dokumen</option>${models.map(([value, label]) => `<option value="${value}"${model === value ? " selected" : ""}>${label}</option>`).join("")}</select></label><label><span>Native ID</span><input id="journeyId" type="number" min="1" step="1" value="${A.escapeHtml(id)}" placeholder="Contoh: 116" required></label><button class="primary-button" type="submit">Tampilkan hubungan</button></form>`;
-  }
-
-  function bindJourneySearch() {
-    document.getElementById("journeySearch")?.addEventListener("submit", (event) => {
-      event.preventDefault();
-      const model = document.getElementById("journeyModel").value;
-      const id = document.getElementById("journeyId").value;
-      if (model && id) navigate(routeHref("journey", { model, id }));
+    qs("#searchButton").addEventListener("click", openSearch);
+    qs("#globalSearchInput").addEventListener("input", (event) => {
+      clearTimeout(state.searchTimer);
+      state.searchTimer = setTimeout(() => performSearch(event.target.value), 250);
+    });
+    qs("#refreshButton").addEventListener("click", startRefresh);
+    qs("#themeButton").addEventListener("click", () => {
+      const selected = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+      document.documentElement.dataset.theme = selected; localStorage.setItem("control-tower-theme", selected);
+      qs("#themeButton").textContent = `Dark Mode · ${selected === "dark" ? "On" : "Off"}`;
+    });
+    window.addEventListener("popstate", () => loadCurrentView().then(() => window.scrollTo(0, history.state?.scroll || 0)));
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "/" && !/input|textarea|select/i.test(event.target.tagName)) { event.preventDefault(); openSearch(); }
     });
   }
 
-  function journeyRelationRow(link) {
-    return `<tr><td class="num">${A.formatNumber(link.depth)}</td><td class="relation-document"><strong>${A.escapeHtml(link.parent.number)}</strong><span>${A.escapeHtml(link.parent.modelLabel)} · Native ID ${A.escapeHtml(link.parent.id)}</span></td><td>${statusBadge(link.parent.state)}</td><td class="relation-document"><strong>${A.escapeHtml(link.child.number)}</strong><span>${A.escapeHtml(link.child.modelLabel)} · Native ID ${A.escapeHtml(link.child.id)}</span></td><td>${statusBadge(link.child.state)}</td><td>${statusBadge(link.evidence)}<span class="cell-note">${A.escapeHtml(link.linkType || "Tipe hubungan belum tersedia")}</span></td><td>${statusBadge(link.confidence)}</td></tr>`;
+  function start() {
+    const selectedTheme = localStorage.getItem("control-tower-theme") || "light";
+    document.documentElement.dataset.theme = selectedTheme;
+    qs("#themeButton").textContent = `Dark Mode · ${selectedTheme === "dark" ? "On" : "Off"}`;
+    bindShell(); updateFreshness(); loadCurrentView();
   }
 
-  function journeyValidationRows(validations) {
-    if (!validations.length) return `<li><span>Tidak ada hasil validasi langsung untuk dokumen utama ini.</span></li>`;
-    return validations.map((item) => `<li><span><strong>${A.escapeHtml(item.situation)}</strong><br>${technicalReference(item.rawStatus, item.ruleId)}</span>${statusBadge(item.status)}</li>`).join("");
-  }
-
-  function bindJourney(state, totalPages) {
-    bindJourneySearch();
-    document.querySelector("[data-journey-page='previous']")?.addEventListener("click", () => navigate(routeHref("journey", { model: state.model, id: state.id, journey_page: Math.max(1, state.journeyPage - 1) })));
-    document.querySelector("[data-journey-page='next']")?.addEventListener("click", () => navigate(routeHref("journey", { model: state.model, id: state.id, journey_page: Math.min(totalPages, state.journeyPage + 1) })));
-    bindCopyActions();
-  }
-
-  async function renderJourney(state) {
-    if (!state.model || !state.id) {
-      const health = await apiJson("/api/control-tower/health");
-      const html = `
-        ${viewHeading("Perjalanan Dokumen", "Telusuri bukti langsung dan turunan tanpa menganggap hubungan sebagai kronologi.")}
-        <section class="context-banner"><strong>Perjalanan Dokumen menunjukkan hubungan dokumen, bukan selalu urutan waktu.</strong></section>
-        ${journeySearch()}
-        <section class="summary-strip"><article class="detail-item"><span>Bukti langsung</span><strong>Ditampilkan bila tersedia</strong></article><article class="detail-item"><span>Bukti turunan</span><strong>Diberi label terpisah</strong></article><article class="detail-item"><span>Payment</span><strong>Belum dipublikasikan</strong></article><article class="detail-item"><span>Distribusi JO</span><strong>Memerlukan bukti manual</strong></article></section>`;
-      commitView(html, health, bindJourneySearch);
-      return;
-    }
-
-    const [payload, health] = await Promise.all([
-      apiJson(`/api/control-tower/journey/${encodeURIComponent(state.model)}/${encodeURIComponent(state.id)}`),
-      apiJson("/api/control-tower/health"),
-    ]);
-    const journey = A.normalizeJourney(payload);
-    const validations = (payload.validations || []).map(A.normalizeException);
-    const totalPages = Math.max(1, Math.ceil(journey.links.length / JOURNEY_PAGE_SIZE));
-    const page = Math.min(state.journeyPage, totalPages);
-    const start = (page - 1) * JOURNEY_PAGE_SIZE;
-    const visible = journey.links.slice(start, start + JOURNEY_PAGE_SIZE);
-    const html = `
-      ${viewHeading("Perjalanan Dokumen", "Perjalanan Dokumen menunjukkan hubungan dokumen, bukan selalu urutan waktu.", `${A.formatNumber(journey.links.length)} hubungan`)}
-      ${journeySearch(state.model, state.id)}
-      <section class="journey-summary" aria-label="Dokumen utama"><article class="detail-item"><span>Jenis dokumen</span><strong>${A.escapeHtml(journey.root.modelLabel)}</strong></article><article class="detail-item"><span>Nomor dokumen</span><strong>${A.escapeHtml(journey.root.number)}</strong></article><article class="detail-item"><span>Native ID</span><strong>${A.escapeHtml(journey.root.id)}</strong></article><article class="detail-item"><span>Status</span><strong>${A.escapeHtml(journey.root.state.label)}</strong></article></section>
-      <div class="inline-actions"><button class="secondary-button" type="button" data-copy="${A.escapeHtml(journey.root.number)}">Salin nomor dokumen</button><button class="secondary-button" type="button" data-copy="${A.escapeHtml(window.location.href)}">Salin URL</button></div><br>
-      <div class="journey-layout">
-        <section class="table-panel" aria-label="Hubungan dokumen"><div class="table-toolbar"><div><strong>Hubungan dokumen</strong><span>Bukti, status, dan native reference—bukan urutan waktu.</span></div></div><div class="table-scroll" tabindex="0" aria-label="Tabel hubungan dapat digulir secara horizontal"><table class="relation-table"><thead><tr><th>Tingkat</th><th>Dokumen asal</th><th>Status asal</th><th>Dokumen terkait</th><th>Status terkait</th><th>Bukti relasi</th><th>Kekuatan bukti</th></tr></thead><tbody>${visible.length ? visible.map(journeyRelationRow).join("") : `<tr><td colspan="7" class="empty-cell">Belum ada hubungan dokumen pada snapshot terbaru.</td></tr>`}</tbody></table></div><footer class="pagination-footer"><button class="secondary-button" type="button" data-journey-page="previous"${page <= 1 ? " disabled" : ""}>Sebelumnya</button><span>${journey.links.length ? `${A.formatNumber(start + 1)}–${A.formatNumber(Math.min(journey.links.length, start + JOURNEY_PAGE_SIZE))} dari ${A.formatNumber(journey.links.length)}` : "0 hubungan"}</span><button class="secondary-button" type="button" data-journey-page="next"${page >= totalPages ? " disabled" : ""}>Berikutnya</button></footer></section>
-        <aside class="panel journey-aside" aria-label="Kelengkapan perjalanan"><h3>Tahap yang ditemukan</h3><p>Tahap yang tidak terlihat tidak dianggap gagal; hubungan mungkin belum tersedia atau memang tidak berlaku.</p><ul class="stage-list">${journey.expectedStages.map((stage) => `<li><span>${A.escapeHtml(stage.label)}</span>${statusBadge(stage.available ? { label: "Ditemukan", tone: "success" } : { label: "Tidak ditemukan", tone: "neutral" })}</li>`).join("")}</ul><h3>Validasi dokumen utama</h3><ul class="evidence-list">${journeyValidationRows(validations)}</ul><h3>Cakupan khusus</h3><ul class="stage-list"><li><span>Payment</span>${statusBadge(A.statusPresentation("MAPPING_PENDING"))}</li><li><span>Distribusi JO</span>${statusBadge(A.statusPresentation("MANUAL_EVIDENCE_REQUIRED"))}</li></ul></aside>
-      </div>`;
-    commitView(html, health, () => bindJourney({ ...state, journeyPage: page }, totalPages));
-  }
-
-  function navigate(target) {
-    const url = new URL(target, window.location.origin);
-    if (url.origin !== window.location.origin || url.pathname !== "/control-tower") return;
-    if ((url.searchParams.get("view") || "overview") === "overview" && !url.searchParams.get("process")) url.searchParams.set("process", lastSelectedProcess);
-    window.history.pushState(null, "", `${url.pathname}${url.search}`);
-    closeDrawers();
-    requestLoad("navigation");
-  }
-
-  function applyTheme(theme) {
-    const selected = theme === "dark" ? "dark" : "light";
-    document.documentElement.dataset.theme = selected;
-    themeButton.setAttribute("aria-pressed", String(selected === "dark"));
-    themeButton.textContent = selected === "dark" ? "Tema Terang" : "Tema Gelap";
-  }
-
-  function toggleTheme() {
-    const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
-    localStorage.setItem(THEME_KEY, next);
-    applyTheme(next);
-  }
-
-  function applyMotionState() {
-    document.body.classList.toggle("motion-paused", motionPaused || reducedMotion.matches);
-    document.querySelectorAll(".map-edge").forEach((edge) => edge.classList.toggle("is-paused", motionPaused || reducedMotion.matches));
-    motionButton.setAttribute("aria-pressed", String(motionPaused));
-    motionButton.textContent = reducedMotion.matches ? "Gerak Diminimalkan" : motionPaused ? "Lanjut Animasi" : "Jeda Animasi";
-    motionButton.disabled = reducedMotion.matches;
-    const mapButton = document.getElementById("mapMotionButton");
-    if (mapButton) {
-      mapButton.textContent = reducedMotion.matches ? "Gerak minimum" : motionPaused ? "Lanjut" : "Jeda";
-      mapButton.disabled = reducedMotion.matches;
-    }
-  }
-
-  function toggleMotion() {
-    if (reducedMotion.matches) {
-      showToast("Gerak diminimalkan oleh preferensi sistem.");
-      return;
-    }
-    motionPaused = !motionPaused;
-    localStorage.setItem(MOTION_KEY, String(motionPaused));
-    applyMotionState();
-  }
-
-  function toggleDisplayMode() {
-    displayMode = !displayMode;
-    document.body.classList.toggle("display-mode", displayMode);
-    displayButton.setAttribute("aria-pressed", String(displayMode));
-    displayButton.textContent = displayMode ? "Keluar Display" : "Display Mode";
-    if (displayMode && routeState().view !== "overview") navigate(routeHref("overview", { process: lastSelectedProcess }));
-  }
-
-  function clearAutoTimer() {
-    if (autoTimer) window.clearTimeout(autoTimer);
-    autoTimer = null;
-    autoDueAt = null;
-  }
-
-  function scheduleAutoRefresh() {
-    clearAutoTimer();
-    const value = autoRefreshSelect.value;
-    if (value === "off" || document.hidden || sessionExpired || blockingError) return;
-    const delay = Number(value) * 60_000;
-    autoDueAt = Date.now() + delay;
-    autoTimer = window.setTimeout(async () => {
-      autoTimer = null;
-      if (!document.hidden && !activeLoad && !sessionExpired && !blockingError) await requestLoad("auto");
-      scheduleAutoRefresh();
-    }, delay);
-  }
-
-  function setAutoRefresh(value) {
-    const selected = AUTO_REFRESH_VALUES.has(value) ? value : "5";
-    autoRefreshSelect.value = selected;
-    localStorage.setItem(AUTO_REFRESH_KEY, selected);
-    scheduleAutoRefresh();
-  }
-
-  document.addEventListener("click", (event) => {
-    const anchor = event.target.closest("a[data-route-link]");
-    if (!anchor || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-    const url = new URL(anchor.href, window.location.origin);
-    if (url.origin === window.location.origin && url.pathname === "/control-tower") {
-      event.preventDefault();
-      navigate(url);
-    }
-  });
-
-  refreshButton.addEventListener("click", () => requestLoad("manual"));
-  autoRefreshSelect.addEventListener("change", () => setAutoRefresh(autoRefreshSelect.value));
-  themeButton.addEventListener("click", toggleTheme);
-  displayButton.addEventListener("click", toggleDisplayMode);
-  motionButton.addEventListener("click", toggleMotion);
-  window.addEventListener("popstate", () => requestLoad("popstate"));
-  window.addEventListener("keydown", (event) => {
-    trapDrawerFocus(event);
-    if (event.key === "Escape") {
-      closeDrawers();
-      if (displayMode) toggleDisplayMode();
-    }
-  });
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden) clearAutoTimer();
-    else {
-      if (autoDueAt && autoDueAt <= Date.now()) requestLoad("auto");
-      scheduleAutoRefresh();
-    }
-  });
-  reducedMotion.addEventListener?.("change", applyMotionState);
-
-  applyTheme(localStorage.getItem(THEME_KEY) || "light");
-  applyMotionState();
-  setAutoRefresh(localStorage.getItem(AUTO_REFRESH_KEY) || "5");
-  updateNavigation(routeState().view);
-  requestLoad("initial");
-
-  window.ControlTowerApp = Object.freeze({ requestLoad, routeState, navigate, toggleDisplayMode });
-})();
+  return Object.freeze({ MAP_LANES, MAP_NODES, MAP_ROUTES, PHASES, parseRoute, routeSegments, segmentCrossesNode, validateMapGeometry, start });
+});

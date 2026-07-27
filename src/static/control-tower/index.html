@@ -5,45 +5,37 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>Control Tower Operasional</title>
-  <link rel="stylesheet" href="/static/control-tower/control-tower.css?v=20260721-v02">
+  <link rel="stylesheet" href="/static/control-tower/control-tower.css?v=20260722-v03-final">
 </head>
 <body>
   <a class="skip-link" href="#viewContainer">Lewati ke konten utama</a>
   <div class="app-shell" id="appShell">
     <header class="topbar">
-      <a class="brand" href="/control-tower?view=overview" data-route-link aria-label="Control Tower — Overview">
+      <a class="brand" href="/control-tower?view=findings" data-route-link aria-label="Control Tower — Temuan">
         <span class="brand-mark" aria-hidden="true"><span></span></span>
         <span class="brand-copy"><strong>Control Tower</strong><small>Operasional &amp; bukti proses</small></span>
       </a>
 
       <nav class="primary-navigation" aria-label="Navigasi utama Control Tower">
-        <a href="/control-tower?view=overview" data-view-link="overview" data-route-link>Overview</a>
-        <a href="/control-tower?view=validation" data-view-link="validation" data-route-link>Validasi SOP</a>
-        <a href="/control-tower?view=exceptions" data-view-link="exceptions" data-route-link>Daftar Pengecualian</a>
-        <a href="/control-tower?view=journey" data-view-link="journey" data-route-link>Perjalanan Dokumen</a>
+        <a href="/control-tower?view=findings" data-view-link="findings" data-route-link>Temuan</a>
+        <a href="/control-tower?view=process-map" data-view-link="process-map" data-route-link>Peta Proses</a>
+        <a href="/control-tower?view=tracking" data-view-link="tracking" data-route-link>Tracking</a>
+        <a href="/control-tower?view=archive" data-view-link="archive" data-route-link>Arsip</a>
       </nav>
 
       <div class="topbar-actions">
+        <button class="search-trigger" id="searchButton" type="button" aria-haspopup="dialog">
+          <span aria-hidden="true">⌕</span><span>Cari dokumen</span><kbd>/</kbd>
+        </button>
         <div class="refresh-times" aria-label="Waktu pembaruan">
-          <span>Snapshot data: <time id="snapshotTime">Belum tersedia</time></span>
+          <span>Sinkronisasi Odoo: <time id="odooSyncTime">Belum tersedia</time></span>
           <span>Layar diperbarui: <time id="screenRefreshTime">Belum tersedia</time></span>
         </div>
-        <label class="compact-select" for="autoRefreshSelect">
-          <span>Auto-refresh</span>
-          <select id="autoRefreshSelect">
-            <option value="off">Nonaktif</option>
-            <option value="5">5 menit</option>
-            <option value="15">15 menit</option>
-            <option value="30">30 menit</option>
-          </select>
-        </label>
         <button class="topbar-button topbar-button--primary" id="refreshButton" type="button">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg>
           <span>Refresh Data</span>
         </button>
-        <button class="topbar-button" id="motionButton" type="button" aria-pressed="false">Jeda Animasi</button>
-        <button class="topbar-button" id="themeButton" type="button" aria-pressed="false">Tema Gelap</button>
-        <button class="topbar-button" id="displayButton" type="button" aria-pressed="false">Display Mode</button>
+        <button class="topbar-button" id="themeButton" type="button" aria-pressed="false" aria-label="Dark Mode: Off">Dark Mode · Off</button>
         <a class="topbar-button topbar-link" href="/logout">Keluar</a>
       </div>
     </header>
@@ -53,14 +45,27 @@
     <main class="application-view" id="viewContainer" tabindex="-1" aria-busy="true"></main>
   </div>
 
-  <div class="map-tooltip" id="mapTooltip" role="tooltip" hidden></div>
+  <aside class="refresh-panel" id="refreshPanel" aria-live="polite" hidden></aside>
   <div class="toast-region" id="toastRegion" aria-live="polite" aria-atomic="true"></div>
 
-  <noscript>
-    <section class="noscript-message">JavaScript diperlukan untuk menggunakan Control Tower.</section>
-  </noscript>
+  <dialog class="app-dialog" id="searchDialog" aria-labelledby="searchDialogTitle">
+    <form method="dialog" class="dialog-shell">
+      <header><h2 id="searchDialogTitle">Cari seluruh dokumen</h2><button value="cancel" aria-label="Tutup">×</button></header>
+      <label class="search-field"><span class="sr-only">Nomor, customer, vendor, project, produk, atau sumber</span><input id="globalSearchInput" type="search" autocomplete="off" placeholder="Nomor, customer, vendor, project, produk, atau sumber…"></label>
+      <div id="searchResults" class="search-results" aria-live="polite"></div>
+    </form>
+  </dialog>
 
-  <script src="/static/control-tower/control-tower-adapter.js?v=20260721-v02"></script>
-  <script src="/static/control-tower/control-tower.js?v=20260721-v02"></script>
+  <dialog class="app-dialog" id="actionDialog" aria-labelledby="actionDialogTitle">
+    <form method="dialog" class="dialog-shell" id="actionForm">
+      <header><h2 id="actionDialogTitle">Tutup temuan</h2><button value="cancel" aria-label="Tutup">×</button></header>
+      <div id="actionDialogBody"></div>
+      <footer><button class="button-secondary" value="cancel">Batal</button><button class="button-primary" id="actionSubmit" value="default">Simpan</button></footer>
+    </form>
+  </dialog>
+
+  <noscript><section class="noscript-message">JavaScript diperlukan untuk menggunakan Control Tower.</section></noscript>
+  <script src="/static/control-tower/control-tower-adapter.js?v=20260722-v03-final"></script>
+  <script src="/static/control-tower/control-tower.js?v=20260722-v03-final"></script>
 </body>
 </html>

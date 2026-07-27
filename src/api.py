@@ -63,6 +63,11 @@ CONTROL_TOWER_QUERY_PARAMETERS = frozenset(
         "journey_page",
         "date_from",
         "date_to",
+        "mode",
+        "finding",
+        "status",
+        "case",
+        "expanded",
     }
 )
 PROTECTED_PAGE_PATHS = {
