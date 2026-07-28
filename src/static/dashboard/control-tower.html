@@ -52,7 +52,8 @@
   @media (prefers-reduced-motion: reduce) { .motion { animation: none; } .node, .choice { transition: none !important; } }
 
   .node, .choice { position: absolute; z-index: 2; width: 146px; min-height: 84px; border: 1px solid #d8cab6; border-radius: 13px; background: var(--surface); box-shadow: 0 6px 16px rgba(54, 42, 25, .055); }
-  .node { display: flex; flex-direction: column; justify-content: center; padding: 13px; transition: opacity .2s ease, border-color .2s ease, box-shadow .2s ease, transform .2s ease; }
+  .node { appearance: none; color: inherit; font: inherit; text-align: left; cursor: pointer; display: flex; flex-direction: column; justify-content: center; padding: 13px; transition: opacity .2s ease, border-color .2s ease, box-shadow .2s ease, transform .2s ease; }
+  .node:focus-visible { outline: 3px solid var(--amber); outline-offset: 3px; }
   .node strong, .choice strong { display: block; font-size: 12px; line-height: 1.28; letter-spacing: -.01em; }
   .node small, .choice small { display: block; margin-top: 5px; color: var(--muted); font-size: 9px; line-height: 1.35; }
   .node.fulfilment { border-color: #c97819; color: #2e1f0e; background: linear-gradient(150deg, #efbb68, #d98e26); }
@@ -111,7 +112,11 @@
   .review-bar strong { color: var(--ink); }
   .tracking-note { text-align: right; }
   @media (max-width: 700px) { .app { padding: 16px; } .page-head, .toolbar, .review-bar { align-items: flex-start; flex-direction: column; } .state-text, .tracking-note { text-align: left; } .states { justify-content: flex-start; } }
-  .map-scroll { position: relative; } .map-scroll::after { content: "Geser untuk melihat alur →"; display: none; position: absolute; right: 12px; top: 50%; z-index: 5; padding: 7px 10px; border: 1px solid #d9be94; border-radius: 999px; background: rgba(255, 253, 249, .94); color: var(--amber-dark); font-size: 10px; font-weight: 700; box-shadow: 0 5px 14px rgba(67, 48, 27, .08); pointer-events: none; } @media (max-width: 1100px) { .map-scroll.has-overflow::after { display: block; } } .route.reference { stroke: #bca27a; stroke-dasharray: 2 4; } .back-control[hidden] { display: none; } .control-tower-header { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; margin:0 0 14px; padding-bottom:16px; border-bottom:1px solid var(--border); } .control-tower-header h1 { margin:0; font-size:24px; } .control-tower-header p { margin:6px 0 0; color:var(--muted); font-size:12px; } .header-actions, .view-navigation { display:flex; align-items:center; gap:7px; flex-wrap:wrap; } .header-actions a, .view-navigation a { border:1px solid var(--border); border-radius:999px; padding:7px 10px; color:var(--muted); background:var(--surface); font-size:11px; font-weight:700; text-decoration:none; } .header-actions a[aria-current="page"], .view-navigation a[aria-current="page"] { border-color:#d99b48; color:var(--amber-dark); background:var(--amber-pale); } .view-navigation { margin:0 0 14px; padding:5px; border:1px solid var(--border); border-radius:12px; background:var(--surface-soft); } .view-navigation a { border-color:transparent; } .skip-link { position:absolute; left:-9999px; } .skip-link:focus { left:12px; top:12px; z-index:20; padding:8px; background:var(--surface); } </style>
+  .map-scroll { position: relative; } .map-scroll::after { content: "Geser untuk melihat alur →"; display: none; position: absolute; right: 12px; top: 50%; z-index: 5; padding: 7px 10px; border: 1px solid #d9be94; border-radius: 999px; background: rgba(255, 253, 249, .94); color: var(--amber-dark); font-size: 10px; font-weight: 700; box-shadow: 0 5px 14px rgba(67, 48, 27, .08); pointer-events: none; } @media (max-width: 1100px) { .map-scroll.has-overflow::after { display: block; } } .route.reference { stroke: #bca27a; stroke-dasharray: 2 4; } .back-control[hidden] { display: none; } .control-tower-header { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; margin:0 0 14px; padding-bottom:16px; border-bottom:1px solid var(--border); } .control-tower-header h1 { margin:0; font-size:24px; } .control-tower-header p { margin:6px 0 0; color:var(--muted); font-size:12px; } .header-actions, .view-navigation { display:flex; align-items:center; gap:7px; flex-wrap:wrap; } .header-actions a, .view-navigation a { border:1px solid var(--border); border-radius:999px; padding:7px 10px; color:var(--muted); background:var(--surface); font-size:11px; font-weight:700; text-decoration:none; } .header-actions a[aria-current="page"], .view-navigation a[aria-current="page"] { border-color:#d99b48; color:var(--amber-dark); background:var(--amber-pale); } .view-navigation { margin:0 0 14px; padding:5px; border:1px solid var(--border); border-radius:12px; background:var(--surface-soft); } .view-navigation a { border-color:transparent; } .skip-link { position:absolute; left:-9999px; } .skip-link:focus { left:12px; top:12px; z-index:20; padding:8px; background:var(--surface); }   .map-viewport { position: relative; }
+  .map-scroll::after { content: none !important; display: none !important; }
+  .scroll-cue { display: none; position: absolute; right: 12px; top: 50%; z-index: 5; padding: 7px 10px; border: 1px solid #d9be94; border-radius: 999px; background: rgba(255, 253, 249, .94); color: var(--amber-dark); font-size: 10px; font-weight: 700; box-shadow: 0 5px 14px rgba(67, 48, 27, .08); pointer-events: none; transform: translateY(-50%); }
+  @media (max-width: 1200px) { .map-viewport.has-overflow:not(.has-scrolled) .scroll-cue { display: block; } }
+</style>
 </head>
 <body>
 <a class="skip-link" href="#controlTowerContent">Lewati ke konten utama</a><main class="app control-tower-dashboard" id="controlTowerContent" tabindex="-1"><header class="control-tower-header"><div><h1>Control Tower Operasional</h1><p>Process Map operasional untuk gambaran proses yang mudah dipindai.</p></div><div class="header-actions" aria-label="Navigasi dashboard"><a href="/dashboard/control-tower" aria-current="page">Control Tower</a><a href="/dashboard/internal-orders">Internal Orders</a><a href="/dashboard/sales-orders">Sales Orders</a><a href="/dashboard/internal-order-rekap">Order Material Tracking</a><a href="/logout">Keluar</a></div></header><nav class="view-navigation" aria-label="Bagian Control Tower"><a href="?view=overview" aria-current="page">Process Map</a><a href="?view=tracking">Tracking</a><a href="?view=temuan">Temuan</a></nav>
@@ -128,7 +133,8 @@
   <div class="toolbar-title">Control Tower · Process Map</div>
   <button class="state-control back-control" id="overview-control" type="button" hidden>Kembali ke gambaran besar</button>
 </div>
-<div class="map-scroll" tabindex="0" aria-label="Scrollable process map canvas">
+<div class="map-viewport">
+    <div class="map-scroll" tabindex="0" aria-label="Scrollable process map canvas">
       <div class="canvas" id="canvas">
         <svg id="routes" aria-hidden="true">
           <defs><marker id="arrow" markerWidth="6" markerHeight="6" refX="5.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#a96312" /></marker></defs>
@@ -137,14 +143,14 @@
         <article class="node" data-key="estimate"><strong>Estimasi / RKB Kasar</strong><small>Di luar Odoo</small></article>
         <article class="node" data-key="quotation"><strong>Quotation</strong><small>Penawaran</small></article>
         <article class="node" data-key="sales-order"><strong>Sales Order</strong><small>SO</small></article>
-        <article class="node fulfilment" data-key="fulfilment"><strong>Fulfilment</strong><small>MO atau From Stock / IO</small></article>
+        <button class="node fulfilment" data-key="fulfilment" type="button" aria-expanded="false" aria-controls="fulfilment-choices" aria-label="Tampilkan pilihan Fulfilment"><strong>Fulfilment</strong><small>MO atau From Stock / IO</small></button>
         <article class="node" data-key="delivery"><strong>Delivery</strong><small>DO</small></article>
         <article class="node" data-key="invoice"><strong>Invoice</strong><small>INV</small></article>
         <article class="node" data-key="payment"><strong>Payment</strong><small>Traceability-only</small></article>
 
         <section class="branch-zone fulfilment-zone" aria-label="Fulfilment sources">
           <div class="zone-label"><h2>Sumber pemenuhan</h2><span>dua pilihan</span></div>
-          <div class="choices">
+          <div class="choices" id="fulfilment-choices">
             <button class="choice" data-choice="manufacturing"><strong>Manufacturing Order</strong><small>Produksi dimulai setelah SO aktif</small></button>
             <button class="choice" data-choice="stock"><strong>From Stock / Internal Order</strong><small>Barang tersedia; Internal Order opsional untuk produksi lebih awal</small></button>
           </div>
@@ -177,6 +183,8 @@
         <aside class="focus-note"><strong id="focus-note-title">Manufacturing Order journey</strong><span id="focus-note-copy">Hanya jalur ini yang dianimasikan. Dokumen lengkap dan hubungan detail tetap berada di Tracking.</span></aside>
       </div>
     </div>
+    <div class="scroll-cue" aria-hidden="true">Geser untuk melihat alur -&gt;</div>
+    </div>
     <footer class="review-bar"><span><strong>Alur:</strong> gambaran besar → pilih Fulfilment → pilih sumber pemenuhan.</span><span class="tracking-note">Full document lineage belongs in <strong>Tracking</strong>.</span></footer>
   </section>
 </main>
@@ -190,6 +198,8 @@
   const stateDescription = document.querySelector('#state-description');
   const overviewControl = document.querySelector('#overview-control');
   const mapScroll = document.querySelector('.map-scroll');
+  const mapViewport = document.querySelector('.map-viewport');
+  const fulfilmentControl = document.querySelector('[data-key="fulfilment"]');
   const focusNoteTitle = document.querySelector('#focus-note-title');
   const focusNoteCopy = document.querySelector('#focus-note-copy');
   let currentState = 'overview';
@@ -285,16 +295,18 @@
       ['sales-order', 'fulfilment', 'delivery', 'invoice'].forEach(key => document.querySelector(`[data-key="${key}"]`).classList.add('active'));
     }
     overviewControl.hidden = state === 'overview';
+    fulfilmentControl.setAttribute('aria-expanded', String(state !== 'overview'));
     focusNoteTitle.textContent = state === 'stock-focused' ? 'From Stock / Internal Order' : 'Manufacturing Order journey';
     focusNoteCopy.textContent = state === 'stock-focused' ? 'From Stock tetap langsung ke fulfilment. Internal Order adalah jalur produksi opsional sebelum SO.' : 'Hanya jalur ini yang dianimasikan. Dokumen lengkap dan hubungan detail tetap berada di Tracking.';
     [stateName.textContent, stateDescription.textContent] = copy[state];
-    requestAnimationFrame(() => { draw(); mapScroll.classList.toggle('has-overflow', mapScroll.scrollWidth > mapScroll.clientWidth + 1); });
+    requestAnimationFrame(() => { draw(); mapViewport.classList.toggle('has-overflow', mapScroll.scrollWidth > mapScroll.clientWidth + 1); });
   }
   overviewControl.addEventListener('click', () => apply('overview'));
-  document.querySelector('[data-key="fulfilment"]').addEventListener('click', () => apply(currentState === 'overview' ? 'expanded' : 'overview'));
+  fulfilmentControl.addEventListener('click', () => apply(currentState === 'overview' ? 'expanded' : 'overview'));
   document.querySelector('[data-choice="manufacturing"]').addEventListener('click', () => apply('focused'));
   document.querySelector('[data-choice="stock"]').addEventListener('click', () => apply('stock-focused'));
-  window.addEventListener('resize', () => { draw(); mapScroll.classList.toggle('has-overflow', mapScroll.scrollWidth > mapScroll.clientWidth + 1); });
+  mapScroll.addEventListener('scroll', () => mapViewport.classList.toggle('has-scrolled', mapScroll.scrollLeft > 4));
+  window.addEventListener('resize', () => { draw(); mapViewport.classList.toggle('has-overflow', mapScroll.scrollWidth > mapScroll.clientWidth + 1); });
   window.addEventListener('load', () => apply('overview'));
 </script>
 </body>
