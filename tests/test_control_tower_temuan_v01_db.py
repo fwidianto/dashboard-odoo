@@ -8,8 +8,6 @@ from hashlib import md5
 import json
 import os
 from pathlib import Path
-import time
-from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -24,8 +22,17 @@ TEST_DATABASE_ENV = "CT_TEST_POSTGRES_URL"
 SCHEMA = "ct_temuan_v01_test"
 COMPANY_3, COMPANY_4 = 3, 4
 SO_3, SO_4 = 930001, 940001
-RUN_IDS = [str(uuid4()) for _ in range(4)]
-RUN_3, RUN_4_INITIAL, RUN_4_LATEST, RUN_3_RETURN = RUN_IDS
+RUN_3 = "00000000-0000-4000-8000-000000000003"
+RUN_4_INITIAL = "00000000-0000-4000-8000-000000000004"
+RUN_4_LATEST = "00000000-0000-4000-8000-000000000005"
+RUN_3_RETURN = "00000000-0000-4000-8000-000000000006"
+RUN_3_COMPLETED = datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc)
+RUN_4_INITIAL_COMPLETED = datetime(2026, 2, 1, 9, 0, tzinfo=timezone.utc)
+REPEAT_DETECTED = datetime(2026, 2, 1, 10, 1, tzinfo=timezone.utc)
+RESOLUTION_DETECTED = datetime(2026, 2, 1, 10, 2, tzinfo=timezone.utc)
+RECURRENCE_DETECTED = datetime(2026, 2, 1, 10, 3, tzinfo=timezone.utc)
+RUN_4_LATEST_COMPLETED = datetime(2026, 2, 1, 11, 0, tzinfo=timezone.utc)
+RUN_3_RETURN_COMPLETED = datetime(2026, 2, 1, 12, 0, tzinfo=timezone.utc)
 FINDING_3 = md5(f"DH2-SALES-001|sale.order|{SO_3}|{COMPANY_3}".encode()).hexdigest()
 FINDING_4 = md5(f"DH2-SALES-001|sale.order|{SO_4}|{COMPANY_4}".encode()).hexdigest()
 
@@ -75,10 +82,6 @@ def _tx(engine):
         yield conn
 
 
-def _now(offset=0):
-    return datetime.now(timezone.utc) + timedelta(seconds=offset)
-
-
 def _payload(client_ref=None, po_date=None):
     return json.dumps({"date_order": "2026-01-15 09:00:00", "client_order_ref": client_ref, "x_studio_tanggal_po_cust": po_date})
 
@@ -110,7 +113,7 @@ def _update_so(conn, run_id, record_id, client_ref=None, po_date=None):
     """), {"run_id": run_id, "record_id": record_id, "payload": _payload(client_ref, po_date)})
 
 
-def _source_rule(engine, run_id, record_id):
+def _source_rule(engine, run_id, record_id, detected_at):
     with _tx(engine) as conn:
         row = conn.execute(text("""
             SELECT document_number, state, payload
@@ -128,8 +131,8 @@ def _source_rule(engine, run_id, record_id):
             INSERT INTO mv_ct_rule_results
                 (rule_id, document_model, document_id, document_number, actual_condition, validation_status, detected_at)
             VALUES ('SO-PO-001', 'sale.order', :record_id, :document_number,
-                    CAST(:actual_condition AS JSONB), :validation_status, clock_timestamp())
-        """), {"record_id": record_id, "document_number": row["document_number"], "actual_condition": json.dumps({"client_order_ref": payload.get("client_order_ref"), "customer_po_date": payload.get("x_studio_tanggal_po_cust"), "state": row["state"]}), "validation_status": "MISMATCH" if missing else "VALIDATED"})
+                    CAST(:actual_condition AS JSONB), :validation_status, :detected_at)
+        """), {"record_id": record_id, "document_number": row["document_number"], "actual_condition": json.dumps({"client_order_ref": payload.get("client_order_ref"), "customer_po_date": payload.get("x_studio_tanggal_po_cust"), "state": row["state"]}), "validation_status": "MISMATCH" if missing else "VALIDATED", "detected_at": detected_at})
 
 
 def _projection(engine):
@@ -179,12 +182,12 @@ def test_temuan_postgres_lifecycle_and_company_isolation(test_postgres_engine):
     engine = test_postgres_engine
     url = os.environ[TEST_DATABASE_ENV]
     with _tx(engine) as conn:
-        _insert_run(conn, RUN_3, COMPANY_3, _now(20))
+        _insert_run(conn, RUN_3, COMPANY_3, RUN_3_COMPLETED)
         _insert_so(conn, RUN_3, COMPANY_3, SO_3, "SO-TEST-3-001")
-        _insert_run(conn, RUN_4_INITIAL, COMPANY_4, _now(-20))
+        _insert_run(conn, RUN_4_INITIAL, COMPANY_4, RUN_4_INITIAL_COMPLETED)
         _insert_so(conn, RUN_4_INITIAL, COMPANY_4, SO_4, "SO-TEST-4-001")
-    _source_rule(engine, RUN_3, SO_3)
-    _source_rule(engine, RUN_4_INITIAL, SO_4)
+    _source_rule(engine, RUN_3, SO_3, RUN_3_COMPLETED)
+    _source_rule(engine, RUN_4_INITIAL, SO_4, RUN_4_INITIAL_COMPLETED)
     _projection(engine)
 
     first = _finding(engine, FINDING_3)
@@ -201,20 +204,20 @@ def test_temuan_postgres_lifecycle_and_company_isolation(test_postgres_engine):
     assert _finding(engine, FINDING_4) is None
     first_detected = first["first_detected_time"]
 
-    time.sleep(0.02)
-    _source_rule(engine, RUN_3, SO_3)
+    _source_rule(engine, RUN_3, SO_3, REPEAT_DETECTED)
     _projection(engine)
     repeated = _finding(engine, FINDING_3)
     assert repeated["finding_id"] == first["finding_id"] and repeated["first_detected_time"] == first_detected
-    assert repeated["last_detected_time"] > first_detected and repeated["current_status"] == "OPEN"
+    assert repeated["last_detected_time"] == REPEAT_DETECTED and repeated["last_detected_time"] > first_detected and repeated["current_status"] == "OPEN"
 
     with _tx(engine) as conn:
         _update_so(conn, RUN_3, SO_3, "CUST-REF-3", "2026-01-20")
-    _source_rule(engine, RUN_3, SO_3)
+    _source_rule(engine, RUN_3, SO_3, RESOLUTION_DETECTED)
     _projection(engine)
     resolved = _finding(engine, FINDING_3)
     assert resolved["finding_id"] == FINDING_3 and resolved["current_status"] == "RESOLVED"
     assert resolved["first_detected_time"] == first_detected
+    assert resolved["last_detected_time"] == REPEAT_DETECTED
     service = _service(engine, url)
     try:
         ids = {row["finding_id"] for row in service.findings()["rows"]}
@@ -224,18 +227,17 @@ def test_temuan_postgres_lifecycle_and_company_isolation(test_postgres_engine):
 
     with _tx(engine) as conn:
         _update_so(conn, RUN_3, SO_3)
-    time.sleep(0.02)
-    _source_rule(engine, RUN_3, SO_3)
+    _source_rule(engine, RUN_3, SO_3, RECURRENCE_DETECTED)
     _projection(engine)
     recurring = _finding(engine, FINDING_3)
     assert recurring["finding_id"] == FINDING_3 and recurring["current_status"] == "OPEN"
-    assert recurring["first_detected_time"] == first_detected and recurring["last_detected_time"] > repeated["last_detected_time"]
+    assert recurring["first_detected_time"] == first_detected and recurring["last_detected_time"] == RECURRENCE_DETECTED and recurring["last_detected_time"] > repeated["last_detected_time"]
     before_company_4 = dict(recurring)
 
     with _tx(engine) as conn:
-        _insert_run(conn, RUN_4_LATEST, COMPANY_4, _now(30))
+        _insert_run(conn, RUN_4_LATEST, COMPANY_4, RUN_4_LATEST_COMPLETED)
         _insert_so(conn, RUN_4_LATEST, COMPANY_4, SO_4, "SO-TEST-4-001")
-    _source_rule(engine, RUN_4_LATEST, SO_4)
+    _source_rule(engine, RUN_4_LATEST, SO_4, RUN_4_LATEST_COMPLETED)
     _projection(engine)
     company_4_finding = _finding(engine, FINDING_4)
     assert company_4_finding and company_4_finding["company_id"] == COMPANY_4
@@ -252,9 +254,9 @@ def test_temuan_postgres_lifecycle_and_company_isolation(test_postgres_engine):
         service.close()
 
     with _tx(engine) as conn:
-        _insert_run(conn, RUN_3_RETURN, COMPANY_3, _now(40))
+        _insert_run(conn, RUN_3_RETURN, COMPANY_3, RUN_3_RETURN_COMPLETED)
         _insert_so(conn, RUN_3_RETURN, COMPANY_3, SO_3, "SO-TEST-3-001")
-    _source_rule(engine, RUN_3_RETURN, SO_3)
+    _source_rule(engine, RUN_3_RETURN, SO_3, RUN_3_RETURN_COMPLETED)
     _projection(engine)
     service = _service(engine, url)
     try:
