@@ -41,6 +41,39 @@ Each task must identify:
 
 Do not combine broad investigation, implementation, redesign, refactoring, production hardening, and the next milestone in one run.
 
+## Incremental production rollout standard
+
+The default delivery model is **production readiness per capability**, not waiting for the entire product to be complete.
+
+Follow the reusable standard in:
+
+`docs/01_Project_Management/INCREMENTAL_PRODUCTION_WORKFLOW.md`
+
+For each release:
+
+1. define the user promise in operational language;
+2. select the smallest complete source-to-user vertical slice;
+3. state the production boundary and first intended users;
+4. build only the foundation required for a trustworthy result;
+5. validate source/database, service/API, and browser/user behavior;
+6. translate technical output into information the user can understand and act on;
+7. deploy at small scale;
+8. observe real use;
+9. stabilize material trust and usability issues;
+10. expand one capability and repeat.
+
+A backend component is supporting progress, not normally a release milestone by itself. Lead milestones with what users can newly see, understand, or do.
+
+Use these capability gates:
+
+- **Gate A — Defined**;
+- **Gate B — End-to-end working**;
+- **Gate C — Small-scale production ready**;
+- **Gate D — User validated**;
+- **Gate E — Ready to expand**.
+
+A capability may be production-ready within a narrow boundary while other product areas remain incomplete. Do not imply unsupported breadth.
+
 ## Shared non-negotiable boundaries
 
 - Odoo is **read-only**. Do not call Odoo `create`, `write`, or `unlink`, and do not execute raw SQL against Odoo.
@@ -85,6 +118,10 @@ Preserve these rules:
 - Payment remains traceability-only until Accounting approves the interpretation;
 - the dashboard must remain read-only until a separate approved write-back or ticket-governance milestone exists;
 - frontend Process Map work must not outrun reconciled graph and rule evidence.
+
+The current capability-based sequence is governed by:
+
+`docs/08_Control_Tower/INCREMENTAL_PRODUCTION_ROADMAP.md`
 
 ## Implementation discipline
 
@@ -137,22 +174,34 @@ Use the narrowest supported description. Distinguish among:
 - behaviorally validated;
 - visually reviewed;
 - user-ready for the stated scenario;
+- small-scale production ready for the stated boundary;
+- user validated;
 - operationally ready;
 - production-engineering ready.
 
-Do not call a feature `complete`, `production-ready`, or `validated` without evidence for that exact claim.
+Do not call a feature `complete`, `production-ready`, or `validated` without evidence for that exact claim and boundary.
 
 ## Required completion report
 
 Every substantial Codex run must finish with:
 
-1. **Outcome** — what changed in user or business language.
+### A. User-visible outcome
+
+1. **Outcome** — what users can newly see, understand, or do.
 2. **Start here** — the exact command, route, screen, document, or artifact.
-3. **Check first** — no more than three review steps.
+3. **Check first** — no more than three user review steps.
 4. **Expected result** — what each check should show.
-5. **Evidence** — tests, database checks, reconciliation, visual proof, or operational proof actually performed.
-6. **Readiness** — the narrowest justified label.
-7. **Limitations** — incomplete, uncertain, deferred, or unsafe areas.
-8. **Next task** — one bounded recommendation only.
+5. **User states** — success, empty, loading, error, and not-found behavior when relevant.
+6. **Production boundary** — first users, supported scenario, and explicit non-scope.
+
+### B. Technical evidence
+
+1. **Evidence** — tests, database checks, reconciliation, visual proof, or operational proof actually performed.
+2. **Implementation** — the smallest relevant schema, API, files, or architecture changed.
+3. **Safety** — authentication, company scope, migration, rollback, and read-only evidence when applicable.
+4. **Readiness** — the narrowest justified capability gate and label.
+5. **Limitations** — incomplete, uncertain, deferred, or unsafe areas.
+6. **Repository status** — branch, commit, push, PR, and uncommitted state.
+7. **Next task** — one bounded recommendation only.
 
 Lead with the product or business outcome, not a list of changed files.
