@@ -121,6 +121,44 @@ class ControlTowerService:
         """, params) or {"total": 0}
         return {"rows": rows, "total": total["total"], "limit": limit, "offset": offset}
 
+    def findings(self, *, limit: int = 200, offset: int = 0) -> dict[str, Any]:
+        """Return current-company OPEN Temuan findings only."""
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        where = """
+            WHERE finding.current_status = 'OPEN'
+              AND finding.company_id = current_run.company_id
+        """
+        rows = self._rows(f"""
+            SELECT
+                finding.finding_id,
+                finding.category,
+                finding.rule_code,
+                finding.affected_model,
+                finding.affected_document_id,
+                finding.native_document_reference,
+                finding.company_id,
+                finding.title,
+                finding.summary,
+                finding.evidence_payload,
+                finding.first_detected_time,
+                finding.last_detected_time,
+                finding.current_status,
+                finding.destination_url
+            FROM ct_finding finding
+            CROSS JOIN vw_ct_current_run current_run
+            {where}
+            ORDER BY finding.rule_code, finding.affected_model,
+                     finding.affected_document_id, finding.finding_id
+            LIMIT :limit OFFSET :offset
+        """, params)
+        total = self._row(f"""
+            SELECT COUNT(*) AS total
+            FROM ct_finding finding
+            CROSS JOIN vw_ct_current_run current_run
+            {where}
+        """, params) or {"total": 0}
+        return {"rows": rows, "total": total["total"], "limit": limit, "offset": offset}
+
     def po_cancellation_scope(
         self,
         *,

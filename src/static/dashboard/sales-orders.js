@@ -830,6 +830,83 @@ async function loadRowDetails(soId) {
   }
 }
 
+function showLinkedSalesOrderNotFound(rawId) {
+  const displayId = String(rawId || '');
+  els.lastLoaded.textContent = 'Sales Order not found';
+  const cell = document.createElement('td');
+  cell.colSpan = Math.max(1, visibleColumnCount());
+  cell.className = 'empty-cell';
+  cell.textContent = 'Sales Order dengan ID ' + displayId + ' tidak ditemukan pada snapshot ini.';
+  const row = document.createElement('tr');
+  row.appendChild(cell);
+  els.dashboardRows.replaceChildren(row);
+}
+
+function clearConflictingLinkedFilter(filterKey, value) {
+  const selected = state.filters[filterKey];
+  if (selected.size && !selected.has(String(value || ''))) selected.clear();
+}
+
+function revealLinkedSalesOrder(row) {
+  els.soFilter.value = row.sales_order_number ? String(row.sales_order_number) : '';
+  clearConflictingLinkedFilter('year', row.order_year);
+  clearConflictingLinkedFilter('customer', row.customer_name);
+  clearConflictingLinkedFilter('productType', row.product_type_label);
+  clearConflictingLinkedFilter('source', row.source_type);
+  clearConflictingLinkedFilter('status', row.sales_order_state);
+  clearConflictingLinkedFilter('followUp', row.follow_up_status);
+  if (!dateOverlaps(row, els.commitmentFromFilter.value, els.commitmentToFilter.value)) {
+    els.commitmentFromFilter.value = '';
+    els.commitmentToFilter.value = '';
+  }
+  if (state.reviewSignalFilter && !reviewSignalMatches(row)) state.reviewSignalFilter = '';
+  if (state.quickFilter === 'DELIVERED_SO' && !row.has_delivered_qty) state.quickFilter = '';
+  if (state.quickFilter === 'INVOICED_SO' && !row.has_invoiced_qty) state.quickFilter = '';
+}
+
+function expandSalesOrderRow(button) {
+  const soId = String(button.dataset.so);
+  const mainRow = button.closest('tr[data-row-so-id]');
+  if (!mainRow) return;
+  const row = state.rows.find((item) => String(item.sales_order_id) === soId);
+  if (!row) return;
+  state.expanded.add(soId);
+  button.textContent = '-';
+  if (state.detailCache.has(soId)) {
+    Object.assign(row, state.detailCache.get(soId), { detail_loaded: true });
+    mainRow.insertAdjacentHTML('afterend', detailRow(row));
+    return;
+  }
+  row.detail_loaded = false;
+  mainRow.insertAdjacentHTML('afterend', detailRow(row, { loading: true }));
+  loadRowDetails(soId);
+}
+
+function focusLinkedSalesOrder(rawId) {
+  const requestedId = String(rawId || '').trim();
+  if (!/^\d+$/.test(requestedId)) {
+    if (rawId) showLinkedSalesOrderNotFound(requestedId);
+    return;
+  }
+  const row = state.rows.find((item) => String(item.sales_order_id) === requestedId);
+  if (!row) {
+    showLinkedSalesOrderNotFound(requestedId);
+    return;
+  }
+  revealLinkedSalesOrder(row);
+  applyFilters();
+  requestAnimationFrame(() => {
+    const button = document.querySelector('[data-so="' + CSS.escape(requestedId) + '"]');
+    if (!button) {
+      showLinkedSalesOrderNotFound(requestedId);
+      return;
+    }
+    expandSalesOrderRow(button);
+    button.closest('tr[data-row-so-id]')?.scrollIntoView({ behavior: 'auto', block: 'center' });
+    button.focus({ preventScroll: true });
+  });
+}
+
 function tableRow(row) {
   const expanded = state.expanded.has(String(row.sales_order_id));
   return `
@@ -1210,6 +1287,7 @@ async function loadDashboard() {
     state.detailLoading.clear();
     populateFilters(payload.filters || {});
     applyFilters();
+    focusLinkedSalesOrder(new URLSearchParams(window.location.search).get('sales_order_id'));
     els.lastLoaded.textContent = `Loaded ${new Date().toLocaleString()}`;
   } catch (error) {
     els.lastLoaded.textContent = "Failed to load";
@@ -1378,19 +1456,7 @@ els.dashboardRows.addEventListener("click", (event) => {
     return;
   }
 
-  const row = state.rows.find((item) => String(item.sales_order_id) === soId);
-  if (!row) return;
-  state.expanded.add(soId);
-  button.textContent = "-";
-  if (state.detailCache.has(soId)) {
-    Object.assign(row, state.detailCache.get(soId), { detail_loaded: true });
-    mainRow.insertAdjacentHTML("afterend", detailRow(row));
-    return;
-  }
-
-  row.detail_loaded = false;
-  mainRow.insertAdjacentHTML("afterend", detailRow(row, { loading: true }));
-  loadRowDetails(soId);
+  expandSalesOrderRow(button);
 });
 
 columnController = DashboardTableTools.createColumnController({
