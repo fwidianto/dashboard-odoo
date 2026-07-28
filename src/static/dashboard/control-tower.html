@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Control Tower Operasional - Process Map</title>
+<style>
+  :root {
+    --page: #f4eee5;
+    --surface: #fffdf9;
+    --surface-soft: #fbf6ee;
+    --ink: #30291f;
+    --muted: #7d7161;
+    --line: #cbb895;
+    --line-soft: #d8c9b2;
+    --amber: #d98e26;
+    --amber-dark: #a96312;
+    --amber-pale: #fff3de;
+    --border: #ddcfbb;
+    --shadow: 0 18px 42px rgba(67, 48, 27, .10), 0 2px 6px rgba(67, 48, 27, .04);
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  button { font: inherit; }
+
+  .app { max-width: 1600px; min-height: 100vh; margin: 0 auto; padding: 28px; }
+  .page-head { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin: 0 0 18px; }
+  h1 { margin: 0; font-size: clamp(26px, 2.2vw, 32px); line-height: 1.1; letter-spacing: -.035em; }
+  .subhead { margin: 8px 0 0; font-size: 13px; color: var(--muted); }
+  .state-text { color: var(--muted); font-size: 12px; text-align: right; }
+  .state-text strong { display: block; color: var(--amber-dark); font-size: 11px; letter-spacing: .045em; text-transform: uppercase; }
+
+  .shell { overflow: hidden; border: 1px solid var(--border); border-radius: 20px; background: var(--surface); box-shadow: var(--shadow); }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 62px; padding: 12px 18px; border-bottom: 1px solid #e8ddcd; background: var(--surface-soft); }
+  .toolbar-title { font-size: 12px; font-weight: 750; letter-spacing: .01em; }
+  .states { display: flex; flex-wrap: wrap; justify-content: end; gap: 7px; }
+  .state-control { appearance: none; cursor: pointer; border: 1px solid transparent; border-radius: 999px; padding: 7px 11px; color: #6f6252; background: transparent; font-size: 11px; font-weight: 650; transition: background .18s ease, color .18s ease, border-color .18s ease; }
+  .state-control:hover { border-color: #d9be94; background: #fffaf2; }
+  .state-control[aria-pressed="true"] { border-color: #d99b48; color: #7f470c; background: var(--amber-pale); }
+
+  .map-scroll { overflow-x: auto; overscroll-behavior-inline: contain; }
+  .map-scroll:focus-visible { outline: 2px solid var(--amber); outline-offset: -2px; }
+  .canvas { position: relative; width: 1420px; height: 760px; overflow: hidden; background: radial-gradient(circle at 51% 10%, #fffefa 0, #fffdf9 47%, #fcf7ef 100%); }
+  .canvas::after { content: ""; position: absolute; right: 0; bottom: 0; left: 0; height: 90px; pointer-events: none; background: linear-gradient(to bottom, transparent, rgba(251, 246, 238, .55)); }
+  svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 1; }
+  .route { fill: none; stroke: var(--line); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+  .route.support { stroke: #c7ad81; stroke-width: 1; stroke-dasharray: 3 5; }
+  .route.focus { stroke: var(--amber); stroke-width: 1.8; }
+  .motion { fill: none; stroke: #efb25b; stroke-width: 2.1; stroke-linecap: round; stroke-dasharray: 2 10; animation: journey 2.4s linear infinite; vector-effect: non-scaling-stroke; will-change: stroke-dashoffset; }
+  @keyframes journey { to { stroke-dashoffset: -24; } }
+  @media (prefers-reduced-motion: reduce) { .motion { animation: none; } .node, .choice { transition: none !important; } }
+
+  .node, .choice { position: absolute; z-index: 2; width: 146px; min-height: 84px; border: 1px solid #d8cab6; border-radius: 13px; background: var(--surface); box-shadow: 0 6px 16px rgba(54, 42, 25, .055); }
+  .node { display: flex; flex-direction: column; justify-content: center; padding: 13px; transition: opacity .2s ease, border-color .2s ease, box-shadow .2s ease, transform .2s ease; }
+  .node strong, .choice strong { display: block; font-size: 12px; line-height: 1.28; letter-spacing: -.01em; }
+  .node small, .choice small { display: block; margin-top: 5px; color: var(--muted); font-size: 9px; line-height: 1.35; }
+  .node.fulfilment { border-color: #c97819; color: #2e1f0e; background: linear-gradient(150deg, #efbb68, #d98e26); }
+  .node.fulfilment small { color: rgba(46, 31, 14, .72); }
+  .node.active { border-color: var(--amber); box-shadow: 0 0 0 4px rgba(217, 142, 38, .13), 0 7px 18px rgba(128, 76, 18, .10); }
+  .node.dim { opacity: .30; }
+  .node[data-key="estimate"] { left: 50px; top: 84px; }
+  .node[data-key="quotation"] { left: 250px; top: 84px; }
+  .node[data-key="sales-order"] { left: 450px; top: 84px; }
+  .node[data-key="fulfilment"] { left: 650px; top: 84px; }
+  .node[data-key="delivery"] { left: 850px; top: 84px; }
+  .node[data-key="invoice"] { left: 1050px; top: 84px; }
+  .node[data-key="payment"] { left: 1250px; top: 84px; }
+
+  .branch-zone { position: absolute; z-index: 2; opacity: 0; pointer-events: none; transform: translateY(-6px); transition: opacity .2s ease, transform .2s ease; }
+  .canvas.is-expanded .fulfilment-zone,
+  .canvas.is-focused .fulfilment-zone,
+  .canvas.is-stock-focused .fulfilment-zone,
+  .canvas.is-expanded .material-zone,
+  .canvas.is-focused .material-zone,
+  .canvas.is-focused .production-zone,
+  .canvas.is-stock-focused .stock-journey-zone,
+  .canvas.is-stock-focused .production-zone { opacity: 1; pointer-events: auto; transform: translateY(0); }
+  .fulfilment-zone { left: 544px; top: 262px; width: 440px; padding: 14px; border: 1px dashed #cfb78d; border-radius: 16px; background: rgba(255, 253, 249, .86); }
+  .zone-label { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 1px 11px; }
+  .zone-label h2 { margin: 0; font-size: 12px; letter-spacing: -.01em; }
+  .zone-label span { color: var(--amber-dark); font-size: 8px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
+  .choices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .choice { position: static; width: auto; min-height: 88px; padding: 12px; text-align: left; cursor: pointer; transition: border-color .18s ease, box-shadow .18s ease, background .18s ease; }
+  .choice:hover, .choice:focus-visible { border-color: var(--amber); background: #fffaf1; outline: none; }
+  .choice.active { border-color: var(--amber); background: var(--amber-pale); box-shadow: 0 0 0 3px rgba(217, 142, 38, .10); }
+
+  .material-zone { left: 264px; top: 456px; width: 742px; padding: 14px 15px 15px; border: 1px solid #dfceb5; border-radius: 16px; background: rgba(251, 246, 237, .92); }
+  .material-flow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+  .material-step { position: relative; min-height: 55px; padding: 10px; border: 1px solid #d9cbb8; border-radius: 10px; background: var(--surface); }
+  .material-step strong { display: block; font-size: 9px; line-height: 1.25; }
+  .material-step small { display: block; margin-top: 3px; color: var(--muted); font-size: 7.5px; }
+  .stock-journey-zone { left: 450px; top: 456px; width: 260px; padding: 14px 15px 15px; border: 1px solid #dfceb5; border-radius: 16px; background: rgba(251, 246, 237, .94); }
+  .stock-flow { display: grid; grid-template-columns: 1fr; }
+  .stock-step { min-height: 58px; padding: 11px; border: 1px solid #d9cbb8; border-radius: 10px; background: var(--surface); }
+  .stock-step strong { display: block; font-size: 9px; line-height: 1.25; }
+  .stock-step small { display: block; margin-top: 4px; color: var(--muted); font-size: 7.5px; line-height: 1.3; }
+  .production-zone { left: 378px; top: 604px; width: 628px; padding: 14px 15px 15px; border: 1px solid #d6bc93; border-radius: 16px; background: rgba(255, 250, 241, .96); }
+  .canvas.is-stock-focused .production-zone { top: 590px; }
+  .production-flow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; }
+  .production-step { min-height: 58px; padding: 11px; border: 1px solid #d9cbb8; border-radius: 10px; background: var(--surface); }
+  .production-step strong { display: block; font-size: 9px; line-height: 1.25; }
+  .production-step small { display: block; margin-top: 4px; color: var(--muted); font-size: 7.5px; line-height: 1.3; }
+  .focus-note { position: absolute; z-index: 3; left: 1040px; top: 280px; width: 276px; padding: 15px 16px; border: 1px solid #e1cfb4; border-radius: 14px; background: rgba(255, 250, 241, .94); color: var(--muted); opacity: 0; transform: translateY(-5px); transition: opacity .2s ease, transform .2s ease; box-shadow: 0 8px 22px rgba(67, 48, 27, .05); }
+  .focus-note::before { content: ""; position: absolute; top: 16px; left: -6px; width: 1px; height: 34px; background: var(--amber); }
+  .focus-note strong { display: block; color: var(--ink); font-size: 11px; }
+  .focus-note span { display: block; margin-top: 5px; font-size: 9px; line-height: 1.45; }
+  .canvas.is-focused .focus-note { opacity: 1; transform: none; }
+
+  .review-bar { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 13px 18px; border-top: 1px solid #e8ddcd; background: var(--surface-soft); color: var(--muted); font-size: 11px; }
+  .review-bar strong { color: var(--ink); }
+  .tracking-note { text-align: right; }
+  @media (max-width: 700px) { .app { padding: 16px; } .page-head, .toolbar, .review-bar { align-items: flex-start; flex-direction: column; } .state-text, .tracking-note { text-align: left; } .states { justify-content: flex-start; } }
+  .map-scroll { position: relative; } .map-scroll::after { content: "Geser untuk melihat alur →"; display: none; position: absolute; right: 12px; top: 50%; z-index: 5; padding: 7px 10px; border: 1px solid #d9be94; border-radius: 999px; background: rgba(255, 253, 249, .94); color: var(--amber-dark); font-size: 10px; font-weight: 700; box-shadow: 0 5px 14px rgba(67, 48, 27, .08); pointer-events: none; } @media (max-width: 1100px) { .map-scroll.has-overflow::after { display: block; } } .route.reference { stroke: #bca27a; stroke-dasharray: 2 4; } .back-control[hidden] { display: none; } .control-tower-header { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; margin:0 0 14px; padding-bottom:16px; border-bottom:1px solid var(--border); } .control-tower-header h1 { margin:0; font-size:24px; } .control-tower-header p { margin:6px 0 0; color:var(--muted); font-size:12px; } .header-actions, .view-navigation { display:flex; align-items:center; gap:7px; flex-wrap:wrap; } .header-actions a, .view-navigation a { border:1px solid var(--border); border-radius:999px; padding:7px 10px; color:var(--muted); background:var(--surface); font-size:11px; font-weight:700; text-decoration:none; } .header-actions a[aria-current="page"], .view-navigation a[aria-current="page"] { border-color:#d99b48; color:var(--amber-dark); background:var(--amber-pale); } .view-navigation { margin:0 0 14px; padding:5px; border:1px solid var(--border); border-radius:12px; background:var(--surface-soft); } .view-navigation a { border-color:transparent; } .skip-link { position:absolute; left:-9999px; } .skip-link:focus { left:12px; top:12px; z-index:20; padding:8px; background:var(--surface); } </style>
+</head>
+<body>
+<a class="skip-link" href="#controlTowerContent">Lewati ke konten utama</a><main class="app control-tower-dashboard" id="controlTowerContent" tabindex="-1"><header class="control-tower-header"><div><h1>Control Tower Operasional</h1><p>Process Map operasional untuk gambaran proses yang mudah dipindai.</p></div><div class="header-actions" aria-label="Navigasi dashboard"><a href="/dashboard/control-tower" aria-current="page">Control Tower</a><a href="/dashboard/internal-orders">Internal Orders</a><a href="/dashboard/sales-orders">Sales Orders</a><a href="/dashboard/internal-order-rekap">Order Material Tracking</a><a href="/logout">Keluar</a></div></header><nav class="view-navigation" aria-label="Bagian Control Tower"><a href="?view=overview" aria-current="page">Process Map</a><a href="?view=tracking">Tracking</a><a href="?view=temuan">Temuan</a></nav>
+  <header class="page-head">
+    <div>
+      <h1>Process Map</h1>
+      <p class="subhead">Executive overview · pilih detail hanya saat diperlukan.</p>
+    </div>
+    <div class="state-text"><strong id="state-name">Gambaran besar</strong><span id="state-description">Primary spine yang tenang dan mudah dipindai.</span></div>
+  </header>
+
+  <section class="shell" aria-label="Control Tower Process Map prototype">
+    <div class="toolbar">
+  <div class="toolbar-title">Control Tower · Process Map</div>
+  <button class="state-control back-control" id="overview-control" type="button" hidden>Kembali ke gambaran besar</button>
+</div>
+<div class="map-scroll" tabindex="0" aria-label="Scrollable process map canvas">
+      <div class="canvas" id="canvas">
+        <svg id="routes" aria-hidden="true">
+          <defs><marker id="arrow" markerWidth="6" markerHeight="6" refX="5.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#a96312" /></marker></defs>
+        </svg>
+
+        <article class="node" data-key="estimate"><strong>Estimasi / RKB Kasar</strong><small>Di luar Odoo</small></article>
+        <article class="node" data-key="quotation"><strong>Quotation</strong><small>Penawaran</small></article>
+        <article class="node" data-key="sales-order"><strong>Sales Order</strong><small>SO</small></article>
+        <article class="node fulfilment" data-key="fulfilment"><strong>Fulfilment</strong><small>MO atau From Stock / IO</small></article>
+        <article class="node" data-key="delivery"><strong>Delivery</strong><small>DO</small></article>
+        <article class="node" data-key="invoice"><strong>Invoice</strong><small>INV</small></article>
+        <article class="node" data-key="payment"><strong>Payment</strong><small>Traceability-only</small></article>
+
+        <section class="branch-zone fulfilment-zone" aria-label="Fulfilment sources">
+          <div class="zone-label"><h2>Sumber pemenuhan</h2><span>dua pilihan</span></div>
+          <div class="choices">
+            <button class="choice" data-choice="manufacturing"><strong>Manufacturing Order</strong><small>Produksi dimulai setelah SO aktif</small></button>
+            <button class="choice" data-choice="stock"><strong>From Stock / Internal Order</strong><small>Barang tersedia; Internal Order opsional untuk produksi lebih awal</small></button>
+          </div>
+        </section>
+
+        <section class="branch-zone material-zone" aria-label="Kebutuhan Material supporting flow">
+          <div class="zone-label"><h2>Kebutuhan Material</h2><span>turunan dari Sales Order</span></div>
+          <div class="material-flow">
+            <div class="material-step"><strong>RKB Pekerjaan</strong><small>Kebutuhan item</small></div>
+            <div class="material-step"><strong>Cek Stock</strong><small>Cukup / shortage</small></div>
+            <div class="material-step"><strong>ROP</strong><small>Permintaan pengadaan</small></div>
+            <div class="material-step"><strong>Purchase Order</strong><small>Pengadaan material</small></div>
+            <div class="material-step"><strong>Receipt &amp; QC</strong><small>Material diterima</small></div>
+          </div>
+        </section>
+        <section class="branch-zone stock-journey-zone" aria-label="Optional Internal Order production path">
+          <div class="zone-label"><h2>Internal Order</h2><span>opsional sebelum SO</span></div>
+          <div class="stock-flow">
+            <div class="stock-step"><strong>Internal Order</strong><small>Opsional untuk produksi lebih awal; bukan syarat From Stock</small></div>
+          </div>
+        </section>
+        <section class="branch-zone production-zone" aria-label="Production process">
+          <div class="zone-label"><h2>Proses Produksi</h2><span>material menjadi finished goods</span></div>
+          <div class="production-flow">
+            <div class="production-step"><strong>Stock Material</strong><small>Material tersedia untuk produksi</small></div>
+            <div class="production-step"><strong>Manufacture</strong><small>Proses produksi</small></div>
+            <div class="production-step"><strong>Finished Goods</strong><small>Barang jadi siap fulfilment</small></div>
+          </div>
+        </section>
+        <aside class="focus-note"><strong id="focus-note-title">Manufacturing Order journey</strong><span id="focus-note-copy">Hanya jalur ini yang dianimasikan. Dokumen lengkap dan hubungan detail tetap berada di Tracking.</span></aside>
+      </div>
+    </div>
+    <footer class="review-bar"><span><strong>Alur:</strong> gambaran besar → pilih Fulfilment → pilih sumber pemenuhan.</span><span class="tracking-note">Full document lineage belongs in <strong>Tracking</strong>.</span></footer>
+  </section>
+</main>
+
+<script>
+  const canvas = document.querySelector('#canvas');
+  const svg = document.querySelector('#routes');
+  const nodes = [...document.querySelectorAll('.node')];
+  const choices = [...document.querySelectorAll('.choice')];
+  const stateName = document.querySelector('#state-name');
+  const stateDescription = document.querySelector('#state-description');
+  const overviewControl = document.querySelector('#overview-control');
+  const mapScroll = document.querySelector('.map-scroll');
+  const focusNoteTitle = document.querySelector('#focus-note-title');
+  const focusNoteCopy = document.querySelector('#focus-note-copy');
+  let currentState = 'overview';
+
+  const copy = {
+    overview: ['Gambaran besar', 'Primary spine yang tenang dan mudah dipindai.'],
+    expanded: ['Fulfilment expanded', 'Dua sumber fulfilment dan supporting flow material.'],
+    focused: ['Jalur fokus: Manufacturing Order', 'SO menurunkan kebutuhan material hingga menjadi Finished Goods.'],
+    'stock-focused': ['Jalur fokus: From Stock / Internal Order', 'From Stock memenuhi secara langsung; Internal Order hanya opsi produksi sebelum SO.']
+  };
+
+  function rect(key) {
+    const a = document.querySelector(`[data-key="${key}"]`).getBoundingClientRect();
+    const b = canvas.getBoundingClientRect();
+    return { left: a.left - b.left, right: a.right - b.left, top: a.top - b.top, bottom: a.bottom - b.top, cx: a.left - b.left + a.width / 2, cy: a.top - b.top + a.height / 2 };
+  }
+  function elementRect(element) {
+    const a = element.getBoundingClientRect();
+    const b = canvas.getBoundingClientRect();
+    return { left: a.left - b.left, right: a.right - b.left, top: a.top - b.top, bottom: a.bottom - b.top, cx: a.left - b.left + a.width / 2, cy: a.top - b.top + a.height / 2 };
+  }
+  function route(d, className, arrow = true) {
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', d); path.setAttribute('class', className);
+    if (arrow) path.setAttribute('marker-end', 'url(#arrow)');
+    svg.append(path);
+  }
+  function draw() {
+    svg.querySelectorAll('path.route, path.motion').forEach(path => path.remove());
+    const spine = ['estimate', 'quotation', 'sales-order', 'fulfilment', 'delivery', 'invoice', 'payment'];
+    spine.slice(0, -1).forEach((key, index) => {
+      const from = rect(key); const to = rect(spine[index + 1]);
+      const d = `M ${from.right} ${from.cy} H ${to.left}`;
+      const focusKeys = ['sales-order', 'fulfilment', 'delivery', 'invoice'];
+      const isFocus = ['focused', 'stock-focused'].includes(currentState) && focusKeys.includes(key);
+      route(d, `route${isFocus ? ' focus' : ''}`);
+      if (isFocus) route(d, 'motion', false);
+    });
+    if (currentState !== 'overview') {
+      const fulfilment = rect('fulfilment');
+      choices.forEach(choice => {
+        const source = elementRect(choice); const elbow = fulfilment.bottom + 28;
+        const d = `M ${source.cx} ${source.top} V ${elbow} H ${fulfilment.cx} V ${fulfilment.bottom}`;
+        const selected = (currentState === 'focused' && choice.dataset.choice === 'manufacturing') || (currentState === 'stock-focused' && choice.dataset.choice === 'stock');
+        if (selected) route(d, 'motion', true); else route(d, 'route support');
+      });
+      const salesOrder = rect('sales-order');
+      if (currentState !== 'stock-focused') {
+        const materialSteps = [...document.querySelectorAll('.material-step')].map(elementRect);
+        const materialClass = currentState === 'focused' ? 'motion' : 'route support';
+        route(`M ${salesOrder.cx} ${salesOrder.bottom} V ${materialSteps[0].top}`, materialClass);
+        materialSteps.slice(0, -1).forEach((from, index) => {
+          const to = materialSteps[index + 1];
+          route(`M ${from.right} ${from.cy} H ${to.left}`, materialClass);
+        });
+      } else {
+        const stockChoice = elementRect(document.querySelector('[data-choice="stock"]'));
+        const stockSteps = [...document.querySelectorAll('.stock-step')].map(elementRect);
+        route(`M ${stockChoice.cx} ${stockChoice.bottom} V ${stockSteps[0].top}`, 'route reference', false);
+      }
+      if (currentState === 'focused' || currentState === 'stock-focused') {
+        const productionSteps = [...document.querySelectorAll('.production-step')].map(elementRect);
+        if (currentState === 'focused') {
+          const materialSteps = [...document.querySelectorAll('.material-step')].map(elementRect);
+          const from = materialSteps[materialSteps.length - 1];
+          const elbow = productionSteps[0].top - 16;
+          route(`M ${from.cx} ${from.bottom} V ${elbow} H ${productionSteps[0].cx} V ${productionSteps[0].top}`, 'motion');
+        } else {
+          const internalOrder = elementRect(document.querySelector('.stock-step'));
+          const elbow = productionSteps[0].top - 16;
+          route(`M ${internalOrder.cx} ${internalOrder.bottom} V ${elbow} H ${productionSteps[0].cx} V ${productionSteps[0].top}`, 'motion');
+        }
+        productionSteps.slice(0, -1).forEach((from, index) => {
+          const to = productionSteps[index + 1];
+          route(`M ${from.right} ${from.cy} H ${to.left}`, 'motion');
+        });
+      }
+    }
+  }
+  function apply(state) {
+    currentState = state;
+    canvas.classList.toggle('is-expanded', state === 'expanded');
+    canvas.classList.toggle('is-focused', state === 'focused');
+    canvas.classList.toggle('is-stock-focused', state === 'stock-focused');
+    nodes.forEach(node => node.classList.remove('active', 'dim'));
+    choices.forEach(choice => choice.classList.toggle('active',
+      (state === 'focused' && choice.dataset.choice === 'manufacturing') ||
+      (state === 'stock-focused' && choice.dataset.choice === 'stock')
+    ));
+    if (state === 'expanded') document.querySelector('[data-key="fulfilment"]').classList.add('active');
+    if (state === 'focused' || state === 'stock-focused') {
+      ['estimate', 'quotation', 'payment'].forEach(key => document.querySelector(`[data-key="${key}"]`).classList.add('dim'));
+      ['sales-order', 'fulfilment', 'delivery', 'invoice'].forEach(key => document.querySelector(`[data-key="${key}"]`).classList.add('active'));
+    }
+    overviewControl.hidden = state === 'overview';
+    focusNoteTitle.textContent = state === 'stock-focused' ? 'From Stock / Internal Order' : 'Manufacturing Order journey';
+    focusNoteCopy.textContent = state === 'stock-focused' ? 'From Stock tetap langsung ke fulfilment. Internal Order adalah jalur produksi opsional sebelum SO.' : 'Hanya jalur ini yang dianimasikan. Dokumen lengkap dan hubungan detail tetap berada di Tracking.';
+    [stateName.textContent, stateDescription.textContent] = copy[state];
+    requestAnimationFrame(() => { draw(); mapScroll.classList.toggle('has-overflow', mapScroll.scrollWidth > mapScroll.clientWidth + 1); });
+  }
+  overviewControl.addEventListener('click', () => apply('overview'));
+  document.querySelector('[data-key="fulfilment"]').addEventListener('click', () => apply(currentState === 'overview' ? 'expanded' : 'overview'));
+  document.querySelector('[data-choice="manufacturing"]').addEventListener('click', () => apply('focused'));
+  document.querySelector('[data-choice="stock"]').addEventListener('click', () => apply('stock-focused'));
+  window.addEventListener('resize', () => { draw(); mapScroll.classList.toggle('has-overflow', mapScroll.scrollWidth > mapScroll.clientWidth + 1); });
+  window.addEventListener('load', () => apply('overview'));
+</script>
+</body>
+</html>

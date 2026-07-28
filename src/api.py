@@ -45,7 +45,7 @@ if not APP_SETTINGS.session_secret:
     logger.warning("SESSION_SECRET missing; using local development fallback secret for demo auth.")
 
 DEFAULT_DASHBOARD_PATH = "/dashboard/internal-order-rekap"
-PROTECTED_PAGE_PATHS = {"/", "/dashboard/internal-orders", "/dashboard/sales-orders", "/dashboard/internal-order-rekap"}
+PROTECTED_PAGE_PATHS = {"/", "/dashboard/internal-orders", "/dashboard/sales-orders", "/dashboard/internal-order-rekap", "/dashboard/control-tower"}
 PROTECTED_API_PREFIX = "/api/dashboard/"
 DASHBOARD_SESSION_COOKIE = "dashboard_session"
 DASHBOARD_SESSION_TTL_SECONDS = 60 * 60 * 24 * 7
@@ -573,6 +573,12 @@ def get_scheduler() -> Optional[SyncScheduler]:
 async def dashboard_home():
     """Open the first dashboard page by default."""
     return FileResponse(STATIC_DIR / "dashboard" / "internal-orders.html")
+
+
+@app.get("/dashboard/control-tower", include_in_schema=False)
+async def control_tower_dashboard_page():
+    """Serve the static Control Tower Process Map review shell."""
+    return FileResponse(STATIC_DIR / "dashboard" / "control-tower.html")
 
 
 @app.get("/dashboard/internal-orders", include_in_schema=False)
