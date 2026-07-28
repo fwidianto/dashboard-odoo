@@ -34,7 +34,8 @@ IO_HARDENING_SQL_PATH = (
     PROJECT_ROOT / "sql" / "11_control_tower_io_lineage_hardening_v012.sql"
 )
 PO_SCOPE_SQL_PATH = PROJECT_ROOT / "sql" / "12_control_tower_po_2026_scope.sql"
-SQL_PATHS = (*BASE_SQL_PATHS, IO_HARDENING_SQL_PATH, PO_SCOPE_SQL_PATH)
+TEMUAN_SQL_PATH = PROJECT_ROOT / "sql" / "13_control_tower_temuan_v01.sql"
+SQL_PATHS = (*BASE_SQL_PATHS, IO_HARDENING_SQL_PATH, PO_SCOPE_SQL_PATH, TEMUAN_SQL_PATH)
 
 
 def apply_sql(pg: PostgresClient, sql_path: Path) -> None:

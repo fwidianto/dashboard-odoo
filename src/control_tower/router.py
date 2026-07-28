@@ -66,6 +66,15 @@ def exception_worklist(
     )
 
 
+@router.get("/findings", dependencies=[Depends(require_dashboard_auth)])
+def findings(
+    limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    service: ControlTowerService = Depends(service_dependency),
+):
+    return service.findings(limit=limit, offset=offset)
+
+
 @router.get("/po-cancellation-scope", dependencies=[Depends(require_dashboard_auth)])
 def po_cancellation_scope(
     date_scope: Optional[str] = Query(default=None),

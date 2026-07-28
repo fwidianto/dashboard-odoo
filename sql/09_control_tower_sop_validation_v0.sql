@@ -325,7 +325,7 @@ WITH confirmed_so AS (
     FROM vw_ct_native_record_snapshot_current
     WHERE model = 'sale.order'
       AND LOWER(COALESCE(state, '')) = 'sale'
-      AND COALESCE(NULLIF(payload ->> 'date_order', '')::timestamp, write_date) >= TIMESTAMP '2026-01-01'
+      AND NULLIF(payload ->> 'date_order', '')::timestamp >= TIMESTAMP '2026-01-01'
 ),
 source_context AS (
     SELECT

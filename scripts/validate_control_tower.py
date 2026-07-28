@@ -112,6 +112,49 @@ CHECKS = (
         """,
     ),
     (
+        "temuan_status_vocabulary_is_controlled",
+        """
+        SELECT COUNT(*) = 0 AS passed
+        FROM ct_finding
+        WHERE current_status NOT IN ('OPEN', 'RESOLVED')
+           OR category <> 'DATA_BELUM_LENGKAP'
+        """,
+    ),
+    (
+        "temuan_business_key_is_unique",
+        """
+        SELECT COUNT(*) = 0 AS passed
+        FROM (
+            SELECT rule_code, affected_model, affected_document_id, company_id
+            FROM ct_finding
+            GROUP BY rule_code, affected_model, affected_document_id, company_id
+            HAVING COUNT(*) > 1
+        ) duplicates
+        """,
+    ),
+    (
+        "temuan_open_rows_match_current_company",
+        """
+        SELECT COUNT(*) = 0 AS passed
+        FROM ct_finding finding
+        CROSS JOIN vw_ct_current_run current_run
+        WHERE finding.current_status = 'OPEN'
+          AND finding.company_id <> current_run.company_id
+        """,
+    ),
+    (
+        "temuan_open_rows_use_current_source_rule",
+        """
+        SELECT COUNT(*) = 0 AS passed
+        FROM ct_finding finding
+        LEFT JOIN vw_ct_temuan_so_data_incomplete_current current_finding
+          ON current_finding.finding_id = finding.finding_id
+        WHERE finding.current_status = 'OPEN'
+          AND finding.rule_code = 'DH2-SALES-001'
+          AND current_finding.finding_id IS NULL
+        """,
+    ),
+    (
         "so_cancel_excludes_technical_descendants",
         """
         SELECT COUNT(*) = 0 AS passed

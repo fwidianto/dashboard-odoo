@@ -116,10 +116,26 @@
   .map-scroll::after { content: none !important; display: none !important; }
   .scroll-cue { display: none; position: absolute; right: 12px; top: 50%; z-index: 5; padding: 7px 10px; border: 1px solid #d9be94; border-radius: 999px; background: rgba(255, 253, 249, .94); color: var(--amber-dark); font-size: 10px; font-weight: 700; box-shadow: 0 5px 14px rgba(67, 48, 27, .08); pointer-events: none; transform: translateY(-50%); }
   @media (max-width: 1200px) { .map-viewport.has-overflow:not(.has-scrolled) .scroll-cue { display: block; } }
+  .temuan-view { padding: 22px; border: 1px solid var(--border); border-radius: 18px; background: var(--surface); box-shadow: var(--shadow); }
+  .temuan-head h1 { margin: 0; font-size: 24px; }
+  .temuan-head p { margin: 7px 0 0; color: var(--muted); font-size: 12px; }
+  .temuan-status { margin: 18px 0 0; color: var(--muted); font-size: 12px; }
+  .finding-list { display: grid; gap: 12px; margin-top: 18px; }
+  .finding-card { padding: 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-soft); }
+  .finding-category { color: var(--amber-dark); font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+  .finding-card h2 { margin: 7px 0 0; font-size: 15px; }
+  .finding-summary { margin: 7px 0 14px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+  .finding-card dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 12px; margin: 0; font-size: 11px; }
+  .finding-card dt { color: var(--muted); }
+  .finding-card dd { margin: 0; }
+  .finding-card a { color: var(--amber-dark); font-weight: 750; }
+  .finding-retry { margin-top: 12px; border: 1px solid var(--border); border-radius: 999px; padding: 7px 11px; color: var(--amber-dark); background: var(--surface); font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+  .finding-retry:focus-visible, .finding-card a:focus-visible { outline: 3px solid var(--amber); outline-offset: 3px; }
 </style>
 </head>
 <body>
-<a class="skip-link" href="#controlTowerContent">Lewati ke konten utama</a><main class="app control-tower-dashboard" id="controlTowerContent" tabindex="-1"><header class="control-tower-header"><div><h1>Control Tower Operasional</h1><p>Process Map operasional untuk gambaran proses yang mudah dipindai.</p></div><div class="header-actions" aria-label="Navigasi dashboard"><a href="/dashboard/control-tower" aria-current="page">Control Tower</a><a href="/dashboard/internal-orders">Internal Orders</a><a href="/dashboard/sales-orders">Sales Orders</a><a href="/dashboard/internal-order-rekap">Order Material Tracking</a><a href="/logout">Keluar</a></div></header><nav class="view-navigation" aria-label="Bagian Control Tower"><a href="?view=overview" aria-current="page">Process Map</a><a href="?view=tracking">Tracking</a><a href="?view=temuan">Temuan</a></nav>
+<a class="skip-link" href="#controlTowerContent">Lewati ke konten utama</a><main class="app control-tower-dashboard" id="controlTowerContent" tabindex="-1"><header class="control-tower-header"><div><h1>Control Tower Operasional</h1><p>Process Map operasional untuk gambaran proses yang mudah dipindai.</p></div><div class="header-actions" aria-label="Navigasi dashboard"><a href="/dashboard/control-tower" aria-current="page">Control Tower</a><a href="/dashboard/internal-orders">Internal Orders</a><a href="/dashboard/sales-orders">Sales Orders</a><a href="/dashboard/internal-order-rekap">Order Material Tracking</a><a href="/logout">Keluar</a></div></header><nav class="view-navigation" aria-label="Bagian Control Tower"><a href="?view=overview">Process Map</a><a href="?view=tracking">Tracking</a><a href="?view=temuan">Temuan</a></nav>
+<div id="overviewView">
   <header class="page-head">
     <div>
       <h1>Process Map</h1>
@@ -187,6 +203,16 @@
     </div>
     <footer class="review-bar"><span><strong>Alur:</strong> gambaran besar → pilih Fulfilment → pilih sumber pemenuhan.</span><span class="tracking-note">Full document lineage belongs in <strong>Tracking</strong>.</span></footer>
   </section>
+</div>
+
+  <section class="temuan-view" id="temuanView" aria-labelledby="temuanHeading" hidden>
+    <div class="temuan-head">
+      <h1 id="temuanHeading">Temuan</h1>
+      <p>Temuan aktif berbasis bukti langsung dari snapshot Odoo terakhir yang selesai.</p>
+    </div>
+    <div class="temuan-status" id="temuanStatus" role="status" aria-live="polite">Memuat Temuan...</div>
+    <div class="finding-list" id="findingList"></div>
+  </section>
 </main>
 
 <script>
@@ -202,6 +228,11 @@
   const fulfilmentControl = document.querySelector('[data-key="fulfilment"]');
   const focusNoteTitle = document.querySelector('#focus-note-title');
   const focusNoteCopy = document.querySelector('#focus-note-copy');
+  const overviewView = document.querySelector('#overviewView');
+  const temuanView = document.querySelector('#temuanView');
+  const temuanStatus = document.querySelector('#temuanStatus');
+  const findingList = document.querySelector('#findingList');
+  const viewNavigationLinks = [...document.querySelectorAll('.view-navigation a')];
   let currentState = 'overview';
 
   const copy = {
@@ -210,6 +241,69 @@
     focused: ['Jalur fokus: Manufacturing Order', 'SO menurunkan kebutuhan material hingga menjadi Finished Goods.'],
     'stock-focused': ['Jalur fokus: From Stock / Internal Order', 'From Stock memenuhi secara langsung; Internal Order hanya opsi produksi sebelum SO.']
   };
+
+  function escapeHtml(value) {
+    return String(value ?? '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
+  }
+  function findingTime(value) {
+    if (!value) return '-';
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? '-' : parsed.toLocaleString('id-ID');
+  }
+  function renderFindings(rows) {
+    if (!rows.length) {
+      findingList.innerHTML = '';
+      temuanStatus.textContent = 'Tidak ada Temuan Data Belum Lengkap pada snapshot saat ini.';
+      return;
+    }
+    temuanStatus.textContent = '';
+    findingList.innerHTML = rows.map((finding) => [
+      '<article class="finding-card">',
+      '<div class="finding-category">Data Belum Lengkap</div>',
+      '<h2>' + escapeHtml(finding.title) + '</h2>',
+      '<p class="finding-summary">' + escapeHtml(finding.summary) + '</p>',
+      '<dl>',
+      '<dt>Sales Order</dt>',
+      '<dd><a href="' + escapeHtml(finding.destination_url) + '">' + escapeHtml(finding.native_document_reference || finding.affected_document_id) + '</a></dd>',
+      '<dt>Terdeteksi pertama</dt>',
+      '<dd>' + escapeHtml(findingTime(finding.first_detected_time)) + '</dd>',
+      '<dt>Terdeteksi terakhir</dt>',
+      '<dd>' + escapeHtml(findingTime(finding.last_detected_time)) + '</dd>',
+      '</dl>',
+      '</article>'
+    ].join('')).join('');
+  }
+  async function loadFindings() {
+    findingList.innerHTML = '';
+    temuanStatus.textContent = 'Memuat Temuan...';
+    try {
+      const response = await fetch('/api/control-tower/findings', { headers: { Accept: 'application/json' } });
+      if (!response.ok) throw new Error('Request failed: ' + response.status);
+      const payload = await response.json();
+      renderFindings(payload.rows || []);
+    } catch (error) {
+      temuanStatus.textContent = 'Temuan tidak dapat dimuat.';
+      findingList.innerHTML = '<button class="finding-retry" type="button" id="temuanRetry">Coba lagi</button>';
+      document.querySelector('#temuanRetry').addEventListener('click', loadFindings);
+    }
+  }
+  function initializeView() {
+    const isTemuan = new URLSearchParams(window.location.search).get('view') === 'temuan';
+    overviewView.hidden = isTemuan;
+    temuanView.hidden = !isTemuan;
+    viewNavigationLinks.forEach((link) => {
+      const active = (isTemuan && link.getAttribute('href') === '?view=temuan')
+        || (!isTemuan && link.getAttribute('href') === '?view=overview');
+      if (active) link.setAttribute('aria-current', 'page');
+      else link.removeAttribute('aria-current');
+    });
+    if (isTemuan) loadFindings();
+  }
 
   function rect(key) {
     const a = document.querySelector(`[data-key="${key}"]`).getBoundingClientRect();
@@ -308,6 +402,7 @@
   mapScroll.addEventListener('scroll', () => mapViewport.classList.toggle('has-scrolled', mapScroll.scrollLeft > 4));
   window.addEventListener('resize', () => { draw(); mapViewport.classList.toggle('has-overflow', mapScroll.scrollWidth > mapScroll.clientWidth + 1); });
   window.addEventListener('load', () => apply('overview'));
+  initializeView();
 </script>
 </body>
 </html>
