@@ -84,6 +84,23 @@ def findings(
     )
 
 
+@router.get("/evidence", dependencies=[Depends(require_dashboard_auth)])
+def evidence(
+    presentation_category: str = Query(default="MASALAH_AKTIF"),
+    limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    service: ControlTowerService = Depends(service_dependency),
+):
+    try:
+        return service.evidence(
+            presentation_category=presentation_category,
+            limit=limit,
+            offset=offset,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.get("/po-cancellation-scope", dependencies=[Depends(require_dashboard_auth)])
 def po_cancellation_scope(
     date_scope: Optional[str] = Query(default=None),

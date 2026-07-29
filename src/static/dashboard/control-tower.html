@@ -146,7 +146,7 @@
   .temuan-panel h2, .inspector-panel h2 { margin: 0; font-size: 18px; letter-spacing: -.025em; }
   .panel-caption { margin: 7px 0 16px; color: var(--muted); font-size: 11px; line-height: 1.45; }
   .finding-categories { display: grid; gap: 7px; margin-bottom: 16px; }
-  .finding-category-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 10px; color: var(--text-soft); background: var(--surface-soft); font-size: 11px; font-weight: 700; }
+  .finding-category-row { display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 8px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 10px; color: var(--text-soft); background: var(--surface-soft); font: inherit; font-size: 11px; font-weight: 700; text-align: left; cursor: pointer; }
   .finding-category-row strong { color: var(--muted); font-size: 10px; }
   .finding-category-row.is-active { border-color: #d99b48; color: var(--amber-dark); background: var(--amber-pale); }
   .integrated-finding-card { padding: 13px; border: 1px solid #dfceb5; border-radius: 13px; background: var(--surface-soft); }
@@ -168,7 +168,11 @@
   .integrated-finding-card[data-finding-id]:hover, .integrated-finding-card[data-finding-id]:focus-visible, .integrated-finding-card.is-selected { border-color: var(--amber); background: var(--amber-pale); outline: none; }
   .integrated-finding-card .finding-document { display: inline-block; margin-top: 8px; color: var(--amber-dark); font-size: 11px; font-weight: 800; }
   .integrated-finding-card .finding-retry { margin-top: 10px; }
-  .sales-order-finding-badge { display: block; width: max-content; max-width: 100%; margin-top: 7px; padding: 4px 7px; border: 1px solid rgba(125, 75, 14, .25); border-radius: 999px; color: #7f470c; background: #fff3de; font-size: 8px; font-weight: 800; line-height: 1; }  @media (max-width: 1200px) {
+  .sales-order-finding-badge, .process-evidence-badge { display: block; width: max-content; max-width: 100%; margin-top: 7px; padding: 4px 7px; border: 1px solid rgba(125, 75, 14, .25); border-radius: 999px; color: #7f470c; background: #fff3de; font-size: 8px; font-weight: 800; line-height: 1; }
+  .sales-order-finding-badge[hidden], .process-evidence-badge[hidden] { display: none; }
+  .inspector-section summary { color: var(--amber-dark); cursor: pointer; font-size: 11px; font-weight: 750; }
+  .inspector-section pre { max-height: 180px; overflow: auto; margin: 9px 0 0; color: var(--muted); font: 10px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; }
+  @media (max-width: 1200px) {
     .integrated-three-panel { grid-template-columns: minmax(0, 1fr); }
     .integrated-three-panel > .temuan-panel,
     .integrated-three-panel > .control-tower-header,
@@ -187,9 +191,9 @@
   <h2 id="integratedTemuanHeading">Masalah Aktif</h2>
   <p class="panel-caption">Prioritas yang perlu dipahami dan ditinjau dari snapshot terakhir.</p>
   <div class="finding-categories" aria-label="Kategori temuan">
-    <div class="finding-category-row is-active" id="activeFindingCategory"><span>Masalah Aktif</span><strong>Memuat...</strong></div>
-    <div class="finding-category-row"><span>Perlu Ditinjau</span><strong>Belum dimuat</strong></div>
-    <div class="finding-category-row" id="incompleteFindingCategory"><span>Data Belum Lengkap</span><strong>Memuat...</strong></div>
+    <button class="finding-category-row is-active" id="activeFindingCategory" data-presentation-category="MASALAH_AKTIF" type="button" aria-pressed="true"><span>Masalah Aktif</span><strong>Memuat...</strong></button>
+    <button class="finding-category-row" id="reviewFindingCategory" data-presentation-category="PERLU_DITINJAU" type="button" aria-pressed="false"><span>Perlu Ditinjau</span><strong>Memuat...</strong></button>
+    <button class="finding-category-row" id="incompleteFindingCategory" data-presentation-category="DATA_BELUM_LENGKAP" type="button" aria-pressed="false"><span>Data Belum Lengkap</span><strong>Memuat...</strong></button>
   </div>
   <div id="integratedFindingList" class="integrated-finding-list" aria-live="polite">
     <div class="integrated-finding-card integrated-finding-card--loading" aria-label="Ringkasan temuan">Memuat temuan...</div>
@@ -218,7 +222,7 @@
 
         <article class="node" data-key="estimate"><strong>Estimasi / RKB Kasar</strong><small>Di luar Odoo</small></article>
         <article class="node" data-key="quotation"><strong>Quotation</strong><small>Penawaran</small></article>
-        <article class="node" data-key="sales-order" role="button" tabindex="0" aria-label="Sales Order"><strong>Sales Order</strong><small>SO</small><span class="sales-order-finding-badge" id="salesOrderFindingBadge" hidden></span></article>
+        <article class="node" data-key="sales-order" data-process-key="sales-order" role="button" tabindex="0" aria-label="Sales Order"><strong>Sales Order</strong><small>SO</small><span class="sales-order-finding-badge" id="salesOrderFindingBadge" hidden></span></article>
         <button class="node fulfilment" data-key="fulfilment" type="button" aria-expanded="false" aria-controls="fulfilment-choices" aria-label="Tampilkan pilihan Fulfilment"><strong>Fulfilment</strong><small>MO atau From Stock / IO</small></button>
         <article class="node" data-key="delivery"><strong>Delivery</strong><small>DO</small></article>
         <article class="node" data-key="invoice"><strong>Invoice</strong><small>INV</small></article>
@@ -227,8 +231,8 @@
         <section class="branch-zone fulfilment-zone" aria-label="Fulfilment sources">
           <div class="zone-label"><h2>Sumber pemenuhan</h2><span>dua pilihan</span></div>
           <div class="choices" id="fulfilment-choices">
-            <button class="choice" data-choice="manufacturing"><strong>Manufacturing Order</strong><small>Produksi dimulai setelah SO aktif</small></button>
-            <button class="choice" data-choice="stock"><strong>From Stock / Internal Order</strong><small>Barang tersedia; Internal Order opsional untuk produksi lebih awal</small></button>
+            <button class="choice" data-choice="manufacturing" data-process-key="manufacturing-order"><strong>Manufacturing Order</strong><small>Produksi dimulai setelah SO aktif</small><span class="process-evidence-badge" data-process-badge="manufacturing-order" hidden></span></button>
+            <button class="choice" data-choice="stock" data-process-key="internal-order"><strong>From Stock / Internal Order</strong><small>Barang tersedia; Internal Order opsional untuk produksi lebih awal</small><span class="process-evidence-badge" data-process-badge="internal-order" hidden></span></button>
           </div>
         </section>
 
@@ -238,7 +242,7 @@
             <div class="material-step"><strong>RKB Pekerjaan</strong><small>Kebutuhan item</small></div>
             <div class="material-step"><strong>Cek Stock</strong><small>Cukup / shortage</small></div>
             <div class="material-step"><strong>ROP</strong><small>Permintaan pengadaan</small></div>
-            <div class="material-step"><strong>Purchase Order</strong><small>Pengadaan material</small></div>
+            <div class="material-step" data-process-key="material-purchase-order"><strong>Purchase Order</strong><small>Pengadaan material</small><span class="process-evidence-badge" data-process-badge="material-purchase-order" hidden></span></div>
             <div class="material-step"><strong>Receipt &amp; QC</strong><small>Material diterima</small></div>
           </div>
         </section>
@@ -278,9 +282,13 @@
   <h2 id="inspectorHeading">Belum ada pilihan</h2>
   <div class="inspector-state" id="inspectorState">Pilih proses atau temuan untuk melihat konteks yang didukung bukti.</div>
   <section class="inspector-section"><h3>Tujuan proses</h3><p id="inspectorPurpose">Menjaga alur kerja tetap terbaca dari Sales Order hingga fulfilment.</p></section>
+  <section class="inspector-section"><h3>Sumber klasifikasi</h3><p id="inspectorClassification">Belum ada node atau temuan yang dipilih.</p></section>
   <section class="inspector-section"><h3>Ekspektasi kerja</h3><ul id="inspectorExpected"><li>Periksa kondisi proses yang dipilih.</li><li>Gunakan bukti sumber sebelum menyimpulkan.</li></ul></section>
   <section class="inspector-section"><h3>SOP checks &amp; exceptions</h3><p id="inspectorChecks">Belum ada node atau temuan yang dipilih.</p></section>
   <section class="inspector-section"><h3>Related data</h3><p id="inspectorRelated">Relasi dan dokumen terkait akan ditampilkan saat tersedia.</p></section>
+  <section class="inspector-section"><h3>Confidence / limitation</h3><p id="inspectorConfidence">Belum ada review limitation.</p></section>
+  <section class="inspector-section"><h3>Destination</h3><p id="inspectorAction">Tidak ada destination yang dipilih.</p></section>
+  <details class="inspector-section" id="inspectorRawEvidence" hidden><summary>Bukti mentah (sekunder)</summary><pre id="inspectorRawEvidenceContent"></pre></details>
 </aside>
 </main>
 
@@ -293,7 +301,14 @@
   const inspectorPurpose = document.querySelector('#inspectorPurpose');
   const inspectorChecks = document.querySelector('#inspectorChecks');
   const inspectorRelated = document.querySelector('#inspectorRelated');
+  const inspectorClassification = document.querySelector('#inspectorClassification');
+  const inspectorExpected = document.querySelector('#inspectorExpected');
+  const inspectorConfidence = document.querySelector('#inspectorConfidence');
+  const inspectorAction = document.querySelector('#inspectorAction');
+  const inspectorRawEvidence = document.querySelector('#inspectorRawEvidence');
+  const inspectorRawEvidenceContent = document.querySelector('#inspectorRawEvidenceContent');
   const choices = [...document.querySelectorAll('.choice')];
+  const processElements = [...document.querySelectorAll('.node, .choice, .material-step')];
   const stateName = document.querySelector('#state-name');
   const stateDescription = document.querySelector('#state-description');
   const overviewControl = document.querySelector('#overview-control');
@@ -308,7 +323,9 @@
   const findingList = document.querySelector('#findingList');
   const viewNavigationLinks = [...document.querySelectorAll('.view-navigation a')];  const integratedFindingList = document.querySelector('#integratedFindingList');
   const activeFindingCategory = document.querySelector('#activeFindingCategory strong');
+  const reviewFindingCategory = document.querySelector('#reviewFindingCategory strong');
   const incompleteFindingCategory = document.querySelector('#incompleteFindingCategory strong');
+  const categoryRows = [...document.querySelectorAll('[data-presentation-category]')];
   const findingBadge = document.querySelector('#salesOrderFindingBadge');
   const findingFilters = Object.freeze({ affected_model: 'sale.order', category: 'DATA_BELUM_LENGKAP', rule_code: 'DH2-SALES-001' });
   const findingPageSize = 200;
@@ -316,6 +333,8 @@
   let findingsTotal = 0;
   let findingLoadMoreError = '';
   let findingLoadingMore = false;
+  let selectedPresentationCategory = new URLSearchParams(window.location.search).get('presentation_category') || 'MASALAH_AKTIF';
+  let currentEvidence = null;
   let selectedFindingId = new URLSearchParams(window.location.search).get('selected_finding');
   let selectedProcessKey = new URLSearchParams(window.location.search).get('selected_process');
   let currentState = 'overview';
@@ -523,7 +542,266 @@
     loadFindings();
   }
 
-  function rect(key) {
+  const presentationCategoryLabels = {
+    MASALAH_AKTIF: 'Masalah Aktif',
+    PERLU_DITINJAU: 'Perlu Ditinjau',
+    DATA_BELUM_LENGKAP: 'Data Belum Lengkap'
+  };
+  const presentationCategories = Object.keys(presentationCategoryLabels);
+
+  function evidenceKey(row) {
+    return String(row?.evidence_key || row?.finding_id || row?.issue_id || 'unknown');
+  }
+  function evidenceDestination(row) {
+    if (!row?.destination_url) return '';
+    const url = new URL(row.destination_url, window.location.origin);
+    url.searchParams.set('return_to', returnContextUrl(evidenceKey(row), row.process_key || selectedProcessKey));
+    return `${url.pathname}${url.search}`;
+  }
+  function readableEvidence(value) {
+    if (value === null || value === undefined || value === '') return 'Belum tersedia';
+    if (Array.isArray(value)) return value.length ? value.map(readableEvidence).join(', ') : 'Kosong';
+    if (typeof value === 'object') {
+      return Object.entries(value).map(([key, item]) => `${key}: ${readableEvidence(item)}`).join('; ') || 'Kosong';
+    }
+    return String(value);
+  }
+  function sourceStatus(row) {
+    return row?.validation_status || row?.current_status || 'Belum tersedia';
+  }
+  function evidenceDocument(row) {
+    const model = row?.affected_model || row?.document_model || 'model tidak tersedia';
+    const reference = row?.native_document_reference || row?.document_number || 'nomor tidak tersedia';
+    const id = row?.affected_document_id ?? row?.document_id ?? 'ID tidak tersedia';
+    return `${model} · ${reference} · ID ${id}`;
+  }
+  function categoryCountText(value) {
+    return Number(value || 0).toLocaleString('id-ID');
+  }
+  function processSummary(processKey) {
+    return currentEvidence?.process_counts?.find(item => item.process_key === processKey) || null;
+  }
+  function renderProcessBadges(processCounts = []) {
+    const counts = new Map((processCounts || []).map(item => [item.process_key, Number(item.count || 0)]));
+    document.querySelectorAll('[data-process-badge]').forEach(badge => {
+      const count = counts.get(badge.dataset.processBadge) || 0;
+      badge.hidden = count === 0;
+      badge.textContent = count ? `${presentationCategoryLabels[selectedPresentationCategory]} · ${categoryCountText(count)}` : '';
+    });
+    const salesCount = counts.get('sales-order') || 0;
+    findingBadge.hidden = salesCount === 0;
+    findingBadge.textContent = salesCount ? `${presentationCategoryLabels[selectedPresentationCategory]} · ${categoryCountText(salesCount)}` : '';
+  }
+  function renderCategoryCounts(payload = {}) {
+    const counts = payload.category_counts || {};
+    activeFindingCategory.textContent = categoryCountText(counts.MASALAH_AKTIF);
+    reviewFindingCategory.textContent = categoryCountText(counts.PERLU_DITINJAU);
+    incompleteFindingCategory.textContent = categoryCountText(counts.DATA_BELUM_LENGKAP);
+    categoryRows.forEach(row => {
+      const active = row.dataset.presentationCategory === selectedPresentationCategory;
+      row.classList.toggle('is-active', active);
+      row.setAttribute('aria-pressed', String(active));
+    });
+    renderProcessBadges(payload.process_counts || []);
+  }
+  function setInspectorRawEvidence(row) {
+    const raw = {
+      expected_condition: row?.expected_condition,
+      actual_condition: row?.actual_condition,
+      evidence: row?.evidence,
+      evidence_payload: row?.evidence_payload
+    };
+    const hasRaw = Object.values(raw).some(value => value !== undefined && value !== null);
+    inspectorRawEvidence.hidden = !hasRaw;
+    inspectorRawEvidenceContent.textContent = hasRaw ? JSON.stringify(raw, null, 2) : '';
+  }
+  function selectEvidence(row, updateUrl = true) {
+    if (!row) return;
+    selectedFindingId = evidenceKey(row);
+    selectedProcessKey = row.process_key || null;
+    document.querySelectorAll('[data-finding-id]').forEach(card => card.classList.toggle('is-selected', card.dataset.findingId === selectedFindingId));
+    processElements.forEach(element => element.classList.toggle('active', Boolean(selectedProcessKey && (element.dataset.processKey === selectedProcessKey || element.dataset.key === selectedProcessKey))));
+    const category = presentationCategoryLabels[row.presentation_category] || row.presentation_category || 'Kategori tidak tersedia';
+    const originalRule = row.rule_id || 'Rule tidak tersedia';
+    const sourceRule = row.source_rule_id && row.source_rule_id !== originalRule ? ` · source ${row.source_rule_id}` : '';
+    inspectorHeading.textContent = row.title || row.rule_name || originalRule;
+    inspectorState.textContent = `${category} · ${sourceStatus(row)} · ${row.severity || 'Severity belum tersedia'}`;
+    inspectorClassification.textContent = `Presentation category: ${category}; original rule ID: ${originalRule}${sourceRule}; affected model: ${row.affected_model || row.document_model || 'Belum tersedia'}; document: ${evidenceDocument(row)}.`;
+    inspectorPurpose.textContent = row.process_key ? `Evidence dipetakan ke node ${row.process_key}; gunakan detail sumber sebelum menyimpulkan.` : 'Evidence tetap terlihat di Temuan; rule-to-process mapping belum cukup didukung untuk badge node.';
+    inspectorExpected.innerHTML = `<li>Original validation status: ${escapeHtml(sourceStatus(row))}</li><li>Expected condition: ${escapeHtml(readableEvidence(row.expected_condition))}</li>`;
+    inspectorChecks.innerHTML = `${escapeHtml(row.evidence_wording || row.summary || 'Penjelasan evidence belum tersedia.')}<br><strong>Actual evidence:</strong> ${escapeHtml(readableEvidence(row.actual_condition || row.evidence_payload))}<br><strong>Supported evidence:</strong> ${escapeHtml(readableEvidence(row.evidence))}`;
+    const limitation = row.validation_status === 'DATA_LINKAGE_GAP' || row.validation_status === 'PARTIAL_MATCH' || row.validation_status === 'MANUAL_EVIDENCE_REQUIRED' || row.validation_status === 'DATA_EXCEPTION'
+      ? 'Review signal; bukan konfirmasi kesalahan user atau SOP.'
+      : 'Source confidence follows the rule result.';
+    inspectorConfidence.textContent = `${limitation} Confidence: ${row.confidence || 'Belum tersedia'}.`;
+    const destination = evidenceDestination(row);
+    inspectorRelated.innerHTML = destination
+      ? `${escapeHtml(evidenceDocument(row))}`
+      : `${escapeHtml(evidenceDocument(row))}. Exact destination belum tersedia untuk model ini.`;
+    inspectorAction.innerHTML = destination
+      ? `<a href="${escapeHtml(destination)}">Buka ${escapeHtml(row.destination_label || 'tracking view')}</a>`
+      : 'Tidak ada destination yang didukung untuk model dan bukti ini.';
+    setInspectorRawEvidence(row);
+    if (updateUrl) {
+      const url = new URL(window.location.href);
+      url.searchParams.set('selected_finding', selectedFindingId);
+      if (selectedProcessKey) url.searchParams.set('selected_process', selectedProcessKey);
+      else url.searchParams.delete('selected_process');
+      history.replaceState({}, '', url);
+    }
+  }
+  function selectFinding(finding, updateUrl = true) {
+    selectEvidence(finding, updateUrl);
+  }
+  function renderIntegratedFindings(rows, state = 'ready', total = findingsTotal) {
+    if (state === 'loading') {
+      activeFindingCategory.textContent = 'Memuat...';
+      reviewFindingCategory.textContent = 'Memuat...';
+      incompleteFindingCategory.textContent = 'Memuat...';
+      findingBadge.hidden = true;
+      integratedFindingList.innerHTML = '<div class="integrated-finding-card integrated-finding-card--loading">Memuat evidence...</div>';
+      return;
+    }
+    if (state === 'error') {
+      activeFindingCategory.textContent = 'Belum tersedia';
+      reviewFindingCategory.textContent = 'Belum tersedia';
+      incompleteFindingCategory.textContent = 'Belum tersedia';
+      findingBadge.hidden = true;
+      integratedFindingList.innerHTML = '<div class="integrated-finding-card integrated-finding-card--error">Evidence tidak dapat dimuat. <button class="finding-retry" id="integratedFindingRetry" type="button">Coba lagi</button></div>';
+      document.querySelector('#integratedFindingRetry').addEventListener('click', loadFindings);
+      return;
+    }
+    const matchingTotal = Number(total || 0);
+    renderCategoryCounts(currentEvidence || {});
+    if (!matchingTotal) {
+      integratedFindingList.innerHTML = selectedFindingId
+        ? '<div class="integrated-finding-card integrated-finding-card--empty">Evidence yang dipilih tidak ditemukan pada snapshot saat ini.</div>'
+        : `<div class="integrated-finding-card integrated-finding-card--empty">Tidak ada ${escapeHtml(presentationCategoryLabels[selectedPresentationCategory])} pada snapshot saat ini.</div>`;
+      if (selectedFindingId) inspectorState.textContent = 'Evidence yang dipilih tidak ditemukan pada snapshot saat ini.';
+      return;
+    }
+    const cards = rows.map(row => {
+      const id = evidenceKey(row);
+      const destination = evidenceDestination(row);
+      const status = sourceStatus(row);
+      return `<article class="integrated-finding-card" data-finding-id="${escapeHtml(id)}" role="button" tabindex="0" aria-label="Pilih ${escapeHtml(row.title || row.rule_id || 'Evidence')}" data-process-key="${escapeHtml(row.process_key || '')}">
+        <span class="status-badge">${escapeHtml(presentationCategoryLabels[row.presentation_category] || row.presentation_category)}</span>
+        <div class="finding-source-meta">${escapeHtml(row.rule_id || 'Rule tidak tersedia')} · ${escapeHtml(status)} · ${escapeHtml(row.severity || 'Severity belum tersedia')}</div>
+        <h3>${escapeHtml(row.title || row.rule_name || row.rule_id || 'Evidence')}</h3>
+        <p>${escapeHtml(row.evidence_wording || row.summary || 'Penjelasan evidence belum tersedia.')}</p>
+        <span class="finding-document">${escapeHtml(evidenceDocument(row))}</span>
+        ${destination ? `<a class="finding-document" href="${escapeHtml(destination)}">Buka ${escapeHtml(row.destination_label || 'destination')}</a>` : '<span class="finding-document">Destination belum tersedia</span>'}
+      </article>`;
+    }).join('');
+    const pagination = rows.length < matchingTotal
+      ? `<div class="integrated-finding-card integrated-finding-card--pagination"><span>${findingLoadMoreError || `Menampilkan ${rows.length} dari ${matchingTotal} evidence.`}</span><button class="finding-retry" id="integratedFindingLoadMore" type="button">${findingLoadMoreError ? 'Coba lagi' : 'Muat lagi'}</button></div>`
+      : `<div class="integrated-finding-card integrated-finding-card--pagination">Menampilkan ${rows.length} dari ${matchingTotal} evidence.</div>`;
+    integratedFindingList.innerHTML = cards + pagination;
+    document.querySelectorAll('[data-finding-id]').forEach(card => {
+      const row = rows.find(candidate => evidenceKey(candidate) === card.dataset.findingId);
+      card.addEventListener('click', event => { if (event.target.closest('a')) return; selectEvidence(row); });
+      card.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectEvidence(row); } });
+    });
+    document.querySelector('#integratedFindingLoadMore')?.addEventListener('click', loadMoreFindings);
+    if (selectedFindingId) {
+      const selected = rows.find(row => evidenceKey(row) === selectedFindingId);
+      if (selected) selectEvidence(selected, false);
+      else inspectorState.textContent = 'Evidence yang dipilih tidak ditemukan pada snapshot saat ini.';
+    }
+  }
+  function renderFindings(rows, total = findingsTotal) {
+    const matchingTotal = Number(total || 0);
+    if (!matchingTotal) {
+      findingList.innerHTML = '';
+      temuanStatus.textContent = `Tidak ada ${presentationCategoryLabels[selectedPresentationCategory]} pada snapshot saat ini.`;
+      return;
+    }
+    temuanStatus.textContent = `${presentationCategoryLabels[selectedPresentationCategory]}: ${matchingTotal}. Menampilkan ${rows.length} dari ${matchingTotal} evidence.`;
+    findingList.innerHTML = rows.map(row => {
+      const destination = evidenceDestination(row);
+      return `<article class="finding-card"><div class="finding-category">${escapeHtml(presentationCategoryLabels[row.presentation_category] || row.presentation_category)}</div><h2>${escapeHtml(row.title || row.rule_name || row.rule_id)}</h2><p class="finding-summary">${escapeHtml(row.evidence_wording || row.summary || 'Penjelasan evidence belum tersedia.')}</p><dl><dt>Rule</dt><dd>${escapeHtml(row.rule_id || 'Belum tersedia')}</dd><dt>Status</dt><dd>${escapeHtml(sourceStatus(row))}</dd><dt>Document</dt><dd>${escapeHtml(evidenceDocument(row))}</dd><dt>Action</dt><dd>${destination ? `<a href="${escapeHtml(destination)}">${escapeHtml(row.destination_label || 'Buka destination')}</a>` : 'Belum tersedia untuk model ini'}</dd></dl></article>`;
+    }).join('');
+  }
+  function evidenceQuery(offset = 0) {
+    return new URLSearchParams({ presentation_category: selectedPresentationCategory, limit: String(findingPageSize), offset: String(offset) }).toString();
+  }
+  async function loadFindings() {
+    currentFindings = [];
+    findingsTotal = 0;
+    findingLoadMoreError = '';
+    currentEvidence = null;
+    renderIntegratedFindings([], 'loading');
+    if (!temuanView.hidden) temuanStatus.textContent = 'Memuat evidence...';
+    try {
+      const response = await fetch(`/api/control-tower/evidence?${evidenceQuery(0)}`, { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
+      if (!response.ok) throw new Error('Request failed: ' + response.status);
+      const payload = await response.json();
+      currentEvidence = payload;
+      currentFindings = Array.isArray(payload.rows) ? payload.rows : [];
+      findingsTotal = Number(payload.total || 0);
+      renderIntegratedFindings(currentFindings, 'ready', findingsTotal);
+      renderFindings(currentFindings, findingsTotal);
+    } catch (error) {
+      currentFindings = [];
+      findingsTotal = 0;
+      currentEvidence = null;
+      renderIntegratedFindings([], 'error');
+      temuanStatus.textContent = 'Evidence tidak dapat dimuat.';
+      findingList.innerHTML = '<button class="finding-retry" type="button" id="temuanRetry">Coba lagi</button>';
+      document.querySelector('#temuanRetry').addEventListener('click', loadFindings);
+    }
+  }
+  async function loadMoreFindings() {
+    if (findingLoadingMore || currentFindings.length >= findingsTotal) return;
+    findingLoadingMore = true;
+    findingLoadMoreError = '';
+    const button = document.querySelector('#integratedFindingLoadMore');
+    if (button) { button.disabled = true; button.textContent = 'Memuat...'; }
+    try {
+      const response = await fetch(`/api/control-tower/evidence?${evidenceQuery(currentFindings.length)}`, { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
+      if (!response.ok) throw new Error('Request failed: ' + response.status);
+      const payload = await response.json();
+      currentEvidence = payload;
+      const nextRows = Array.isArray(payload.rows) ? payload.rows : [];
+      findingsTotal = Number(payload.total || findingsTotal);
+      currentFindings = currentFindings.concat(nextRows);
+      if (!nextRows.length && currentFindings.length < findingsTotal) findingLoadMoreError = 'Evidence tambahan tidak tersedia. Coba lagi.';
+      renderIntegratedFindings(currentFindings, 'ready', findingsTotal);
+      renderFindings(currentFindings, findingsTotal);
+    } catch (error) {
+      findingLoadMoreError = 'Evidence tambahan tidak dapat dimuat. Coba lagi.';
+      renderIntegratedFindings(currentFindings, 'ready', findingsTotal);
+      renderFindings(currentFindings, findingsTotal);
+    } finally {
+      findingLoadingMore = false;
+    }
+  }
+  function initializeView() {
+    const params = new URLSearchParams(window.location.search);
+    const isTemuan = params.get('view') === 'temuan';
+    const requestedCategory = params.get('presentation_category');
+    if (presentationCategories.includes(requestedCategory)) selectedPresentationCategory = requestedCategory;
+    else selectedPresentationCategory = 'MASALAH_AKTIF';
+    overviewView.hidden = isTemuan;
+    temuanView.hidden = !isTemuan;
+    viewNavigationLinks.forEach((link) => {
+      const active = (isTemuan && link.getAttribute('href') === '?view=temuan')
+        || (!isTemuan && link.getAttribute('href') === '?view=overview');
+      if (active) link.setAttribute('aria-current', 'page');
+      else link.removeAttribute('aria-current');
+    });
+    categoryRows.forEach(row => row.addEventListener('click', () => {
+      selectedPresentationCategory = row.dataset.presentationCategory;
+      const url = new URL(window.location.href);
+      url.searchParams.set('presentation_category', selectedPresentationCategory);
+      url.searchParams.delete('selected_finding');
+      history.replaceState({}, '', url);
+      selectedFindingId = null;
+      loadFindings();
+    }));
+    loadFindings();
+  }
+ function rect(key) {
     const a = document.querySelector(`[data-key="${key}"]`).getBoundingClientRect();
     const b = canvas.getBoundingClientRect();
     return { left: a.left - b.left, right: a.right - b.left, top: a.top - b.top, bottom: a.bottom - b.top, cx: a.left - b.left + a.width / 2, cy: a.top - b.top + a.height / 2 };
@@ -645,6 +923,43 @@
     const node = nodes.find(candidate => candidate.dataset.key === selectedProcessKey);
     if (node) selectProcessNode(node, false);
   }
+  function selectProcessNode(element, updateUrl = true) {
+    const processKey = element.dataset.processKey || element.dataset.key || 'process';
+    selectedProcessKey = processKey;
+    if (updateUrl) {
+      selectedFindingId = null;
+      document.querySelectorAll('[data-finding-id]').forEach(card => card.classList.remove('is-selected'));
+      const url = new URL(window.location.href);
+      url.searchParams.set('selected_process', processKey);
+      url.searchParams.delete('selected_finding');
+      history.replaceState({}, '', url);
+    }
+    processElements.forEach(candidate => candidate.classList.toggle('active', candidate === element || candidate.dataset.processKey === processKey));
+    const label = element.querySelector('strong')?.textContent || 'Proses';
+    const summary = processSummary(processKey);
+    const rules = summary?.rules?.map(rule => `${rule.rule_id} · ${rule.validation_status || 'status belum tersedia'} · ${rule.count}`).join('; ');
+    inspectorHeading.textContent = label;
+    inspectorState.textContent = `Proses dipilih: ${label}. ${summary ? `${categoryCountText(summary.count)} evidence pada kategori ${presentationCategoryLabels[selectedPresentationCategory]}.` : 'Tidak ada evidence aktif pada kategori ini.'}`;
+    inspectorPurpose.textContent = `Memahami peran ${label} dalam perjalanan proses dengan evidence snapshot yang tersedia.`;
+    inspectorClassification.textContent = summary ? `Mapping rule-to-process didukung untuk process key ${processKey}.` : 'Tidak ada mapping evidence aktif untuk kategori ini; tidak ada badge yang ditampilkan.';
+    inspectorExpected.innerHTML = '<li>Gunakan rule result dan evidence sumber sebelum menyimpulkan.</li><li>Healthy/PASS dan NOT_TESTED tidak ditampilkan sebagai temuan aktif.</li>';
+    inspectorChecks.textContent = rules || 'Tidak ada rule result non-healthy yang terpetakan pada kategori ini.';
+    inspectorRelated.textContent = `${label}; detail dokumen tersedia melalui Temuan saat result dipilih.`;
+    inspectorConfidence.textContent = 'Confidence mengikuti source rule result; review signals tetap memerlukan peninjauan manusia.';
+    inspectorAction.textContent = 'Pilih evidence di panel Temuan untuk membuka destination yang didukung.';
+    inspectorRawEvidence.hidden = true;
+  }
+  function restoreSelectedProcess() {
+    if (!selectedProcessKey || selectedFindingId) return;
+    const element = processElements.find(candidate => candidate.dataset.processKey === selectedProcessKey || candidate.dataset.key === selectedProcessKey);
+    if (element) selectProcessNode(element, false);
+  }
+  processElements.filter(element => !nodes.includes(element) && element.dataset.processKey).forEach(element => {
+    element.setAttribute('role', element.tagName === 'BUTTON' ? element.getAttribute('role') || 'button' : 'button');
+    element.setAttribute('tabindex', '0');
+    element.addEventListener('click', () => selectProcessNode(element));
+    element.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectProcessNode(element); } });
+  });
   nodes.forEach(node => {
     node.setAttribute('role', 'button');
     node.setAttribute('tabindex', '0');
@@ -653,7 +968,9 @@
   });
   findingBadge.addEventListener('click', event => {
     event.stopPropagation();
-    const selected = currentFindings.find(row => row.finding_id === selectedFindingId) || currentFindings[0];
+    const selected = currentFindings.find(row => evidenceKey(row) === selectedFindingId && row.process_key === 'sales-order')
+      || currentFindings.find(row => row.process_key === 'sales-order')
+      || currentFindings[0];
     if (selected) selectFinding(selected);
   });
   window.addEventListener('load', () => { apply('overview'); restoreSelectedProcess(); });

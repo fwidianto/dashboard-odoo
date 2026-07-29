@@ -5,11 +5,65 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Optional
+from urllib.parse import quote
 from uuid import UUID
 
 from sqlalchemy import text
 
 from src.clients.postgres_client import PostgresClient
+
+
+PRESENTATION_CATEGORIES = {
+    "MASALAH_AKTIF",
+    "PERLU_DITINJAU",
+    "DATA_BELUM_LENGKAP",
+}
+REVIEW_STATUSES = {
+    "DATA_LINKAGE_GAP",
+    "PARTIAL_MATCH",
+    "MANUAL_EVIDENCE_REQUIRED",
+    "DATA_EXCEPTION",
+}
+PROCESS_RULE_MAP = {
+    ("SO-PO-001", "sale.order"): "sales-order",
+    ("DH2-SALES-001", "sale.order"): "sales-order",
+    ("SO-SOURCE-001", "sale.order"): "sales-order",
+    ("SO-CANCEL-001", "sale.order"): "sales-order",
+    ("IO-PROD-001", "approval.request"): "internal-order",
+    ("IO-UTIL-001", "approval.request"): "internal-order",
+    ("SO-IO-MO-001", "mrp.production"): "manufacturing-order",
+    ("PO-CANCEL-001", "purchase.order"): "material-purchase-order",
+    ("PO-DRAFT-001", "purchase.order"): "material-purchase-order",
+}
+
+
+def presentation_category_for_status(status: Optional[str]) -> Optional[str]:
+    if status == "MISMATCH":
+        return "MASALAH_AKTIF"
+    if status in REVIEW_STATUSES:
+        return "PERLU_DITINJAU"
+    return None
+
+
+def process_key_for(rule_id: Optional[str], document_model: Optional[str]) -> Optional[str]:
+    return PROCESS_RULE_MAP.get((rule_id or "", document_model or ""))
+
+
+def supported_destination(
+    *,
+    affected_model: Optional[str],
+    document_id: Optional[int],
+    document_number: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    if affected_model == "sale.order" and document_id is not None:
+        return f"/dashboard/sales-orders?sales_order_id={document_id}", "Sales Order Traceability"
+    if affected_model == "approval.request" and document_number:
+        return (
+            "/dashboard/internal-order-rekap?internal_order_number="
+            + quote(str(document_number), safe=""),
+            "Order Material Tracking",
+        )
+    return None, None
 
 
 def json_safe(value: Any) -> Any:
@@ -175,6 +229,260 @@ class ControlTowerService:
             {where}
         """, params) or {"total": 0}
         return {"rows": rows, "total": total["total"], "limit": limit, "offset": offset}
+
+    def evidence(
+        self,
+        *,
+        presentation_category: str = "MASALAH_AKTIF",
+        limit: int = 200,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Return the current snapshot evidence grouped for the three-panel UI."""
+        if presentation_category not in PRESENTATION_CATEGORIES:
+            raise ValueError("Unsupported Control Tower presentation category.")
+
+        counts = self._row("""
+            SELECT
+                COUNT(*) FILTER (WHERE validation_status = 'MISMATCH') AS masalah_aktif,
+                COUNT(*) FILTER (
+                    WHERE validation_status IN (
+                        'DATA_LINKAGE_GAP', 'PARTIAL_MATCH',
+                        'MANUAL_EVIDENCE_REQUIRED', 'DATA_EXCEPTION'
+                    )
+                ) AS perlu_ditinjau,
+                (
+                    SELECT COUNT(*)
+                    FROM ct_finding finding
+                    CROSS JOIN vw_ct_current_run current_run
+                    WHERE finding.current_status = 'OPEN'
+                      AND finding.company_id = current_run.company_id
+                ) AS data_belum_lengkap
+            FROM mv_ct_exception_worklist
+        """) or {}
+        category_counts = {
+            "MASALAH_AKTIF": int(counts.get("masalah_aktif") or 0),
+            "PERLU_DITINJAU": int(counts.get("perlu_ditinjau") or 0),
+            "DATA_BELUM_LENGKAP": int(counts.get("data_belum_lengkap") or 0),
+        }
+
+        if presentation_category == "DATA_BELUM_LENGKAP":
+            rows = self._rows("""
+                SELECT
+                    finding.finding_id AS evidence_key,
+                    finding.finding_id,
+                    'ct_finding'::text AS source_kind,
+                    finding.category,
+                    'DATA_BELUM_LENGKAP'::text AS presentation_category,
+                    finding.rule_code,
+                    COALESCE(
+                        NULLIF(finding.evidence_payload ->> 'source_check', ''),
+                        finding.rule_code
+                    ) AS source_rule_id,
+                    finding.affected_model AS document_model,
+                    finding.affected_model AS affected_model,
+                    finding.affected_document_id AS document_id,
+                    finding.affected_document_id,
+                    finding.native_document_reference AS document_number,
+                    finding.native_document_reference,
+                    finding.title,
+                    finding.summary,
+                    finding.evidence_payload,
+                    source_result.expected_condition,
+                    source_result.actual_condition,
+                    source_result.evidence,
+                    source_result.validation_status,
+                    source_result.severity,
+                    source_result.confidence,
+                    finding.first_detected_time,
+                    finding.last_detected_time,
+                    finding.current_status,
+                    finding.destination_url
+                FROM ct_finding finding
+                CROSS JOIN vw_ct_current_run current_run
+                LEFT JOIN mv_ct_rule_results source_result
+                  ON source_result.rule_id = COALESCE(
+                         NULLIF(finding.evidence_payload ->> 'source_check', ''),
+                         finding.rule_code
+                     )
+                 AND source_result.document_model = finding.affected_model
+                 AND source_result.document_id = finding.affected_document_id
+                WHERE finding.current_status = 'OPEN'
+                  AND finding.company_id = current_run.company_id
+                ORDER BY finding.rule_code, finding.affected_model,
+                         finding.affected_document_id, finding.finding_id
+                LIMIT :limit OFFSET :offset
+            """, {"limit": limit, "offset": offset})
+            total = self._row("""
+                SELECT COUNT(*) AS total
+                FROM ct_finding finding
+                CROSS JOIN vw_ct_current_run current_run
+                WHERE finding.current_status = 'OPEN'
+                  AND finding.company_id = current_run.company_id
+            """) or {"total": 0}
+            grouped = self._rows("""
+                SELECT finding.rule_code, finding.affected_model AS document_model,
+                       COUNT(*) AS total
+                FROM ct_finding finding
+                CROSS JOIN vw_ct_current_run current_run
+                WHERE finding.current_status = 'OPEN'
+                  AND finding.company_id = current_run.company_id
+                GROUP BY finding.rule_code, finding.affected_model
+            """)
+        else:
+            status_where = (
+                "validation_status = 'MISMATCH'"
+                if presentation_category == "MASALAH_AKTIF"
+                else "validation_status IN ("
+                "'DATA_LINKAGE_GAP', 'PARTIAL_MATCH', "
+                "'MANUAL_EVIDENCE_REQUIRED', 'DATA_EXCEPTION')"
+            )
+            rows = self._rows(f"""
+                SELECT
+                    MD5(CONCAT_WS('|', issue_id, rule_id, document_model,
+                                  document_id::text, actual_condition::text,
+                                  evidence::text)) AS evidence_key,
+                    issue_id,
+                    'mv_ct_exception_worklist'::text AS source_kind,
+                    NULL::text AS category,
+                    '{presentation_category}'::text AS presentation_category,
+                    rule_id,
+                    rule_id AS source_rule_id,
+                    document_model,
+                    document_model AS affected_model,
+                    document_id,
+                    document_id AS affected_document_id,
+                    document_number,
+                    document_number AS native_document_reference,
+                    rule_name AS title,
+                    NULL::text AS summary,
+                    expected_condition,
+                    actual_condition,
+                    evidence,
+                    validation_status,
+                    severity,
+                    confidence,
+                    owner,
+                    detected_at,
+                    NULL::timestamptz AS first_detected_time,
+                    NULL::timestamptz AS last_detected_time,
+                    NULL::text AS current_status,
+                    NULL::text AS destination_url
+                FROM mv_ct_exception_worklist
+                WHERE {status_where}
+                ORDER BY severity_priority, rule_id, document_number NULLS LAST, document_id,
+                         evidence_key
+                LIMIT :limit OFFSET :offset
+            """, {"limit": limit, "offset": offset})
+            total = self._row(f"""
+                SELECT COUNT(*) AS total
+                FROM mv_ct_exception_worklist
+                WHERE {status_where}
+            """) or {"total": 0}
+            grouped = self._rows(f"""
+                SELECT rule_id, document_model, validation_status, COUNT(*) AS total
+                FROM mv_ct_exception_worklist
+                WHERE {status_where}
+                GROUP BY rule_id, document_model, validation_status
+            """)
+
+        process_totals: dict[str, dict[str, Any]] = {}
+        for group in grouped:
+            process_key = process_key_for(group.get("rule_id"), group.get("document_model"))
+            if not process_key:
+                continue
+            entry = process_totals.setdefault(
+                process_key,
+                {"process_key": process_key, "count": 0, "rules": []},
+            )
+            entry["count"] += int(group.get("total") or 0)
+            rule_entry = {
+                "rule_id": group.get("rule_id"),
+                "document_model": group.get("document_model"),
+                "validation_status": group.get("validation_status")
+                or ("OPEN" if presentation_category == "DATA_BELUM_LENGKAP" else None),
+                "count": int(group.get("total") or 0),
+            }
+            if rule_entry not in entry["rules"]:
+                entry["rules"].append(rule_entry)
+
+        available_tracking_numbers: set[str] = set()
+        tracking_candidates = {
+            str(row.get("native_document_reference"))
+            for row in rows
+            if row.get("source_kind") == "mv_ct_exception_worklist"
+            and row.get("affected_model") == "approval.request"
+            and row.get("native_document_reference")
+        }
+        if tracking_candidates:
+            tracking_params = {
+                f"tracking_number_{index}": number
+                for index, number in enumerate(sorted(tracking_candidates))
+            }
+            tracking_placeholders = ", ".join(f":{key}" for key in tracking_params)
+            available_tracking_numbers = {
+                str(item["internal_order_number"])
+                for item in self._rows(
+                    f"""
+                        SELECT internal_order_number
+                        FROM vw_internal_order_rekap_summary
+                        WHERE internal_order_number IN ({tracking_placeholders})
+                    """,
+                    tracking_params,
+                )
+                if item.get("internal_order_number")
+            }
+
+        for row in rows:
+            model = row.get("affected_model") or row.get("document_model")
+            row["presentation_category"] = presentation_category
+            row["process_key"] = process_key_for(
+                row.get("source_rule_id") or row.get("rule_id"), model
+            )
+            if row.get("source_kind") == "mv_ct_exception_worklist":
+                row["destination_url"], row["destination_label"] = supported_destination(
+                    affected_model=model,
+                    document_id=row.get("affected_document_id"),
+                    document_number=row.get("native_document_reference"),
+                )
+                if (
+                    model == "approval.request"
+                    and str(row.get("native_document_reference")) not in available_tracking_numbers
+                ):
+                    row["destination_url"] = None
+                    row["destination_label"] = None
+                status = row.get("validation_status") or "UNKNOWN"
+                row["evidence_wording"] = (
+                    f"Hasil validasi {status}; bukti sumber perlu dikonfirmasi oleh pemilik proses."
+                    if status == "MISMATCH"
+                    else f"Hasil validasi {status} adalah sinyal review, bukan konfirmasi kesalahan."
+                )
+            else:
+                row["destination_label"] = (
+                    "Sales Order Traceability" if row.get("destination_url") else None
+                )
+                row["evidence_wording"] = row.get("summary") or (
+                    "Finding lifecycle OPEN dari pemeriksaan SO-PO-001."
+                )
+
+        return {
+            "rows": rows,
+            "total": int(total.get("total") or 0),
+            "limit": limit,
+            "offset": offset,
+            "presentation_category": presentation_category,
+            "category_counts": category_counts,
+            "process_counts": list(process_totals.values()),
+            "rule_results": self.validation_summary(),
+            "meta": {
+                "source_views": [
+                    "mv_ct_sop_validation_summary",
+                    "mv_ct_exception_worklist",
+                    "ct_finding",
+                ],
+                "healthy_and_not_tested_excluded": True,
+                "review_signal_meaning": "Review signals are not confirmed user or SOP errors.",
+            },
+        }
 
     def po_cancellation_scope(
         self,
