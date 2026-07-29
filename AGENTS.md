@@ -74,6 +74,37 @@ Use these capability gates:
 
 A capability may be production-ready within a narrow boundary while other product areas remain incomplete. Do not imply unsupported breadth.
 
+## Approved baseline and meaningful capability gate
+
+Before implementation, every substantial task must identify:
+
+1. the exact owner-approved product baseline, including the route, file, branch, PR, prototype, or screenshot reference;
+2. the user-visible before and after state;
+3. the existing implementation that will be reused;
+4. whether the work is a capability release or an implementation subtask;
+5. whether the proposed result removes, simplifies, or regresses any approved capability.
+
+Do not replace an owner-approved baseline with a simpler implementation unless the owner explicitly approves that regression. The fact that a simpler version is already on `main` does not automatically make it the canonical product baseline.
+
+API filters, connectors, badges, fixtures, tests, SQL helpers, and internal foundations are normally implementation subtasks. Bundle them into the nearest complete user-visible capability rather than presenting each as a separate product release.
+
+A capability release must create a meaningful visible delta: the user should be able to complete or understand a materially improved workflow after the work. If the visible outcome is only one badge, one connector, one filter, or one technical endpoint, treat it as a subtask unless the owner explicitly defines it as the product milestone.
+
+Temporary gates must state their expiry condition. When that condition is met, re-anchor the next task to the canonical product roadmap and baseline before starting more implementation. Do not let a temporary validation branch, simplified shell, or interim workaround silently become the new product direction.
+
+For frontend work, obtain an early screenshot comparison against the approved baseline before completing the full run. Stop for owner review when the emerging result is materially smaller, less capable, or visually inconsistent with the approved baseline.
+
+Default usage-efficient execution pattern:
+
+```text
+one Luna implementation run
+→ all technical subtasks for one meaningful capability
+→ tests and screenshots
+→ one Terra independent review of the complete capability
+```
+
+Do not invoke independent review repeatedly for micro-changes that belong to the same capability.
+
 ## Shared non-negotiable boundaries
 
 - Odoo is **read-only**. Do not call Odoo `create`, `write`, or `unlink`, and do not execute raw SQL against Odoo.
@@ -119,9 +150,11 @@ Preserve these rules:
 - the dashboard must remain read-only until a separate approved write-back or ticket-governance milestone exists;
 - frontend Process Map work must not outrun reconciled graph and rule evidence.
 
-The current capability-based sequence is governed by:
+Current Control Tower business direction and canonical UI baseline are governed by:
 
-`docs/08_Control_Tower/INCREMENTAL_PRODUCTION_ROADMAP.md`
+`fwidianto/personal-OS/03_Projects/Odoo_Analytics/PROJECT_STATUS.md`
+
+The repository roadmap under `docs/08_Control_Tower/` is supporting implementation history and planning evidence. It must not override a newer owner-approved baseline or current milestone recorded in PersonalOS.
 
 ## Implementation discipline
 
