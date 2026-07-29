@@ -311,8 +311,13 @@
   const incompleteFindingCategory = document.querySelector('#incompleteFindingCategory strong');
   const findingBadge = document.querySelector('#salesOrderFindingBadge');
   const findingFilters = Object.freeze({ affected_model: 'sale.order', category: 'DATA_BELUM_LENGKAP', rule_code: 'DH2-SALES-001' });
+  const findingPageSize = 200;
   let currentFindings = [];
+  let findingsTotal = 0;
+  let findingLoadMoreError = '';
+  let findingLoadingMore = false;
   let selectedFindingId = new URLSearchParams(window.location.search).get('selected_finding');
+  let selectedProcessKey = new URLSearchParams(window.location.search).get('selected_process');
   let currentState = 'overview';
 
   const copy = {
@@ -335,17 +340,20 @@
     const parsed = new Date(value);
     return Number.isNaN(parsed.getTime()) ? '-' : parsed.toLocaleString('id-ID');
   }
-  function findingQuery() {
-    const query = new URLSearchParams({ ...findingFilters, limit: '200', offset: '0' });
+  function findingQuery(offset = 0) {
+    const query = new URLSearchParams({ ...findingFilters, limit: String(findingPageSize), offset: String(offset) });
     return query.toString();
   }
-  function returnContextUrl() {
-    return `${window.location.pathname}${window.location.search}`;
+  function returnContextUrl(findingId = '', processKey = selectedProcessKey) {
+    const url = new URL(window.location.href);
+    if (processKey) url.searchParams.set('selected_process', processKey);
+    if (findingId) url.searchParams.set('selected_finding', findingId);
+    return `${url.pathname}${url.search}`;
   }
   function exactFindingDestination(finding) {
     if (!finding.destination_url) return '';
     const url = new URL(finding.destination_url, window.location.origin);
-    url.searchParams.set('return_to', returnContextUrl());
+    url.searchParams.set('return_to', returnContextUrl(finding.finding_id, 'sales-order'));
     return `${url.pathname}${url.search}`;
   }
   function evidenceText(value) {
@@ -354,6 +362,7 @@
   function selectFinding(finding, updateUrl = true) {
     if (!finding) return;
     selectedFindingId = finding.finding_id;
+    selectedProcessKey = 'sales-order';
     document.querySelectorAll('[data-finding-id]').forEach(card => card.classList.toggle('is-selected', card.dataset.findingId === selectedFindingId));
     document.querySelector('[data-key="sales-order"]')?.classList.add('active');
     const evidence = finding.evidence_payload || {};
@@ -377,7 +386,7 @@
       ? `Sales Order <a href="${escapeHtml(destination)}">${escapeHtml(finding.native_document_reference || finding.affected_document_id)}</a><br>Detected: ${escapeHtml(findingTime(finding.first_detected_time))}`
       : 'Exact Sales Order destination tidak tersedia.';
   }
-  function renderIntegratedFindings(rows, state = 'ready') {
+  function renderIntegratedFindings(rows, state = 'ready', total = findingsTotal) {
     if (state === 'loading') {
       activeFindingCategory.textContent = 'Memuat...';
       incompleteFindingCategory.textContent = 'Memuat...';
@@ -393,41 +402,49 @@
       document.querySelector('#integratedFindingRetry').addEventListener('click', loadFindings);
       return;
     }
-    const total = rows.length;
+    const loaded = rows.length;
+    const matchingTotal = Math.max(Number(total) || 0, loaded);
     activeFindingCategory.textContent = 'Belum tersedia';
-    incompleteFindingCategory.textContent = String(total);
-    findingBadge.hidden = total === 0;
-    findingBadge.textContent = total ? `Data Belum Lengkap · ${total}` : '';
-    if (!total) {
+    incompleteFindingCategory.textContent = String(matchingTotal);
+    findingBadge.hidden = matchingTotal === 0;
+    findingBadge.textContent = matchingTotal ? `Data Belum Lengkap · ${matchingTotal}` : '';
+    if (!matchingTotal) {
       integratedFindingList.innerHTML = selectedFindingId
         ? '<div class="integrated-finding-card integrated-finding-card--empty">Temuan yang dipilih tidak ditemukan pada snapshot saat ini.</div>'
         : '<div class="integrated-finding-card integrated-finding-card--empty">Tidak ada temuan Data Belum Lengkap pada snapshot saat ini.</div>';
       if (selectedFindingId) inspectorState.textContent = 'Temuan yang dipilih tidak ditemukan pada snapshot saat ini.';
       return;
     }
-    integratedFindingList.innerHTML = rows.map(finding => `<article class="integrated-finding-card" data-finding-id="${escapeHtml(finding.finding_id)}" role="button" tabindex="0" aria-label="Pilih ${escapeHtml(finding.title || 'Temuan Sales Order')}">
+    const cards = rows.map(finding => `<article class="integrated-finding-card" data-finding-id="${escapeHtml(finding.finding_id)}" role="button" tabindex="0" aria-label="Pilih ${escapeHtml(finding.title || 'Temuan Sales Order')}">
       <span class="status-badge">${escapeHtml(finding.category || 'Kategori tidak tersedia')}</span>
       <h3>${escapeHtml(finding.title || 'Data Sales Order belum lengkap')}</h3>
       <p>${escapeHtml(finding.summary || 'Ringkasan temuan belum tersedia.')}</p>
       ${finding.destination_url ? `<a class="finding-document" href="${escapeHtml(exactFindingDestination(finding))}">${escapeHtml(finding.native_document_reference || finding.affected_document_id)}</a>` : '<span class="finding-document">Exact document unavailable</span>'}
     </article>`).join('');
+    const pagination = loaded < matchingTotal
+      ? `<div class="integrated-finding-card integrated-finding-card--pagination"><span>${findingLoadMoreError || `Menampilkan ${loaded} dari ${matchingTotal} temuan.`}</span><button class="finding-retry" id="integratedFindingLoadMore" type="button">${findingLoadMoreError ? 'Coba lagi' : 'Muat lagi'}</button></div>`
+      : `<div class="integrated-finding-card integrated-finding-card--pagination">Menampilkan ${loaded} dari ${matchingTotal} temuan.</div>`;
+    integratedFindingList.innerHTML = cards + pagination;
     document.querySelectorAll('[data-finding-id]').forEach(card => {
       const finding = rows.find(row => row.finding_id === card.dataset.findingId);
       card.addEventListener('click', event => { if (event.target.closest('a')) return; selectFinding(finding); });
       card.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectFinding(finding); } });
     });
+    document.querySelector('#integratedFindingLoadMore')?.addEventListener('click', loadMoreFindings);
     if (selectedFindingId) {
       const selected = rows.find(row => row.finding_id === selectedFindingId);
       if (selected) selectFinding(selected, false);
       else inspectorState.textContent = 'Temuan yang dipilih tidak ditemukan pada snapshot saat ini.';
     }
-  }  function renderFindings(rows) {
-    if (!rows.length) {
+  }
+  function renderFindings(rows, total = findingsTotal) {
+    const matchingTotal = Math.max(Number(total) || 0, rows.length);
+    if (!matchingTotal) {
       findingList.innerHTML = '';
       temuanStatus.textContent = 'Tidak ada Temuan Data Belum Lengkap pada snapshot saat ini.';
       return;
     }
-    temuanStatus.textContent = '';
+    temuanStatus.textContent = `Data Belum Lengkap: ${matchingTotal}. Menampilkan ${rows.length} dari ${matchingTotal} temuan.`;
     findingList.innerHTML = rows.map((finding) => [
       '<article class="finding-card">',
       '<div class="finding-category">Data Belum Lengkap</div>',
@@ -435,7 +452,7 @@
       '<p class="finding-summary">' + escapeHtml(finding.summary) + '</p>',
       '<dl>',
       '<dt>Sales Order</dt>',
-      '<dd><a href="' + escapeHtml(finding.destination_url) + '">' + escapeHtml(finding.native_document_reference || finding.affected_document_id) + '</a></dd>',
+      '<dd><a href="' + escapeHtml(exactFindingDestination(finding)) + '">' + escapeHtml(finding.native_document_reference || finding.affected_document_id) + '</a></dd>',
       '<dt>Terdeteksi pertama</dt>',
       '<dd>' + escapeHtml(findingTime(finding.first_detected_time)) + '</dd>',
       '<dt>Terdeteksi terakhir</dt>',
@@ -445,24 +462,55 @@
     ].join('')).join('');
   }
   async function loadFindings() {
+    currentFindings = [];
+    findingsTotal = 0;
+    findingLoadMoreError = '';
     renderIntegratedFindings([], 'loading');
     if (!temuanView.hidden) temuanStatus.textContent = 'Memuat Temuan...';
     try {
-      const response = await fetch(`/api/control-tower/findings?${findingQuery()}`, { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
+      const response = await fetch(`/api/control-tower/findings?${findingQuery(0)}`, { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
       if (!response.ok) throw new Error('Request failed: ' + response.status);
       const payload = await response.json();
-      currentFindings = payload.rows || [];
-      renderIntegratedFindings(currentFindings);
-      renderFindings(currentFindings);
+      currentFindings = Array.isArray(payload.rows) ? payload.rows : [];
+      findingsTotal = Number(payload.total ?? currentFindings.length) || 0;
+      renderIntegratedFindings(currentFindings, 'ready', findingsTotal);
+      renderFindings(currentFindings, findingsTotal);
     } catch (error) {
       currentFindings = [];
+      findingsTotal = 0;
       renderIntegratedFindings([], 'error');
       temuanStatus.textContent = 'Temuan tidak dapat dimuat.';
       findingList.innerHTML = '<button class="finding-retry" type="button" id="temuanRetry">Coba lagi</button>';
       document.querySelector('#temuanRetry').addEventListener('click', loadFindings);
     }
   }
-  function initializeView() {
+  async function loadMoreFindings() {
+    if (findingLoadingMore || currentFindings.length >= findingsTotal) return;
+    findingLoadingMore = true;
+    findingLoadMoreError = '';
+    const button = document.querySelector('#integratedFindingLoadMore');
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Memuat...';
+    }
+    try {
+      const response = await fetch(`/api/control-tower/findings?${findingQuery(currentFindings.length)}`, { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
+      if (!response.ok) throw new Error('Request failed: ' + response.status);
+      const payload = await response.json();
+      const nextRows = Array.isArray(payload.rows) ? payload.rows : [];
+      findingsTotal = Number(payload.total ?? findingsTotal) || findingsTotal;
+      currentFindings = currentFindings.concat(nextRows);
+      if (!nextRows.length && currentFindings.length < findingsTotal) findingLoadMoreError = 'Temuan tambahan tidak tersedia. Coba lagi.';
+      renderIntegratedFindings(currentFindings, 'ready', findingsTotal);
+      renderFindings(currentFindings, findingsTotal);
+    } catch (error) {
+      findingLoadMoreError = 'Temuan tambahan tidak dapat dimuat. Coba lagi.';
+      renderIntegratedFindings(currentFindings, 'ready', findingsTotal);
+      renderFindings(currentFindings, findingsTotal);
+    } finally {
+      findingLoadingMore = false;
+    }
+  }  function initializeView() {
     const isTemuan = new URLSearchParams(window.location.search).get('view') === 'temuan';
     overviewView.hidden = isTemuan;
     temuanView.hidden = !isTemuan;
@@ -559,6 +607,7 @@
       ['estimate', 'quotation', 'payment'].forEach(key => document.querySelector(`[data-key="${key}"]`).classList.add('dim'));
       ['sales-order', 'fulfilment', 'delivery', 'invoice'].forEach(key => document.querySelector(`[data-key="${key}"]`).classList.add('active'));
     }
+    if (selectedProcessKey) nodes.find(node => node.dataset.key === selectedProcessKey)?.classList.add('active');
     overviewControl.hidden = state === 'overview';
     fulfilmentControl.setAttribute('aria-expanded', String(state !== 'overview'));
     focusNoteTitle.textContent = state === 'stock-focused' ? 'From Stock / Internal Order' : 'Manufacturing Order journey';
@@ -572,30 +621,42 @@
   document.querySelector('[data-choice="stock"]').addEventListener('click', () => apply('stock-focused'));
   mapScroll.addEventListener('scroll', () => mapViewport.classList.toggle('has-scrolled', mapScroll.scrollLeft > 4));
   window.addEventListener('resize', () => { draw(); mapViewport.classList.toggle('has-overflow', mapScroll.scrollWidth > mapScroll.clientWidth + 1); });
+  function selectProcessNode(node, updateUrl = true) {
+    const processKey = node.dataset.key || 'process';
+    selectedProcessKey = processKey;
+    if (updateUrl) {
+      selectedFindingId = null;
+      document.querySelectorAll('[data-finding-id]').forEach(card => card.classList.remove('is-selected'));
+      const url = new URL(window.location.href);
+      url.searchParams.set('selected_process', processKey);
+      url.searchParams.delete('selected_finding');
+      history.replaceState({}, '', url);
+    }
+    node.classList.add('active');
+    const label = node.querySelector('strong')?.textContent || 'Proses';
+    inspectorHeading.textContent = label;
+    inspectorState.textContent = `Proses dipilih: ${label}. Inspector menampilkan konteks yang perlu diperiksa.`;
+    inspectorPurpose.textContent = label === 'Sales Order' ? 'Memastikan kebutuhan dan data Sales Order siap menjadi dasar fulfilment.' : `Memahami peran ${label} dalam perjalanan proses.`;
+    inspectorChecks.textContent = 'SOP checks dan exceptions memerlukan bukti snapshot yang sesuai.';
+    inspectorRelated.textContent = label === 'Sales Order' ? 'Dokumen Sales Order dan temuan terkait.' : 'Data terkait node ini belum dipilih.';
+  }
+  function restoreSelectedProcess() {
+    if (!selectedProcessKey || selectedFindingId) return;
+    const node = nodes.find(candidate => candidate.dataset.key === selectedProcessKey);
+    if (node) selectProcessNode(node, false);
+  }
   nodes.forEach(node => {
     node.setAttribute('role', 'button');
     node.setAttribute('tabindex', '0');
-    const selectNode = () => {
-      const label = node.querySelector('strong')?.textContent || 'Proses';
-      inspectorHeading.textContent = label;
-      inspectorState.textContent = `Proses dipilih: ${label}. Inspector menampilkan konteks yang perlu diperiksa.`;
-      inspectorPurpose.textContent = label === 'Sales Order' ? 'Memastikan kebutuhan dan data Sales Order siap menjadi dasar fulfilment.' : `Memahami peran ${label} dalam perjalanan proses.`;
-      inspectorChecks.textContent = 'SOP checks dan exceptions memerlukan bukti snapshot yang sesuai.';
-      inspectorRelated.textContent = label === 'Sales Order' ? 'Dokumen Sales Order dan temuan terkait.' : 'Data terkait node ini belum dipilih.';
-      const url = new URL(window.location.href);
-      url.searchParams.set('selected_process', node.dataset.key || 'process');
-      url.searchParams.delete('selected_finding');
-      history.replaceState({}, '', url);
-    };
-    node.addEventListener('click', selectNode);
-    node.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectNode(); } });
+    node.addEventListener('click', () => selectProcessNode(node));
+    node.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectProcessNode(node); } });
   });
   findingBadge.addEventListener('click', event => {
     event.stopPropagation();
     const selected = currentFindings.find(row => row.finding_id === selectedFindingId) || currentFindings[0];
     if (selected) selectFinding(selected);
   });
-  window.addEventListener('load', () => apply('overview'));
+  window.addEventListener('load', () => { apply('overview'); restoreSelectedProcess(); });
   initializeView();
 </script>
 </body>

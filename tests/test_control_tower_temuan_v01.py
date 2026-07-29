@@ -104,6 +104,24 @@ def test_findings_service_applies_bound_business_filters_to_rows_and_total():
     assert params["category"] == "DATA_BELUM_LENGKAP"
     assert params["rule_code"] == "DH2-SALES-001"
 
+def test_findings_service_preserves_authoritative_total_beyond_first_page():
+    service = ControlTowerService.__new__(ControlTowerService)
+    service._rows = Mock(side_effect=[
+        [{"finding_id": str(index)} for index in range(200)],
+        [{"total": 201}],
+    ])
+    result = service.findings(
+        affected_model="sale.order",
+        category="DATA_BELUM_LENGKAP",
+        rule_code="DH2-SALES-001",
+        limit=200,
+        offset=0,
+    )
+    assert len(result["rows"]) == 200
+    assert result["total"] == 201
+    assert result["limit"] == 200
+
+
 def test_findings_api_requires_authentication():
     with pytest.raises(Exception) as error:
         require_dashboard_auth(type("Request", (), {"cookies": {}})())
