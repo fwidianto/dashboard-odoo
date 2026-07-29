@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/control-tower/control-tower.css?v=20260722-v03-final">
 <title>Control Tower Operasional - Process Map</title>
 <style>
   :root {
@@ -116,6 +117,7 @@
   .map-scroll::after { content: none !important; display: none !important; }
   .scroll-cue { display: none; position: absolute; right: 12px; top: 50%; z-index: 5; padding: 7px 10px; border: 1px solid #d9be94; border-radius: 999px; background: rgba(255, 253, 249, .94); color: var(--amber-dark); font-size: 10px; font-weight: 700; box-shadow: 0 5px 14px rgba(67, 48, 27, .08); pointer-events: none; transform: translateY(-50%); }
   @media (max-width: 1200px) { .map-viewport.has-overflow:not(.has-scrolled) .scroll-cue { display: block; } }
+
   .temuan-view { padding: 22px; border: 1px solid var(--border); border-radius: 18px; background: var(--surface); box-shadow: var(--shadow); }
   .temuan-head h1 { margin: 0; font-size: 24px; }
   .temuan-head p { margin: 7px 0 0; color: var(--muted); font-size: 12px; }
@@ -131,10 +133,68 @@
   .finding-card a { color: var(--amber-dark); font-weight: 750; }
   .finding-retry { margin-top: 12px; border: 1px solid var(--border); border-radius: 999px; padding: 7px 11px; color: var(--amber-dark); background: var(--surface); font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
   .finding-retry:focus-visible, .finding-card a:focus-visible { outline: 3px solid var(--amber); outline-offset: 3px; }
+  /* Phase A integrated three-panel shell: canonical Warm Amber direction, current Process Map remains the center source. */
+  .integrated-three-panel { max-width: 1680px; display: grid; grid-template-columns: 252px minmax(0, 1fr) 292px; gap: 16px; align-items: start; }
+  .integrated-three-panel > .control-tower-header,
+  .integrated-three-panel > .view-navigation,
+  .integrated-three-panel > #overviewView,
+  .integrated-three-panel > #temuanView { grid-column: 2; }
+  .integrated-three-panel > .temuan-panel { grid-column: 1; grid-row: 1 / span 4; }
+  .integrated-three-panel > .inspector-panel { grid-column: 3; grid-row: 1 / span 4; }
+  .temuan-panel, .inspector-panel { position: sticky; top: 18px; padding: 18px; border: 1px solid var(--border); border-radius: 18px; background: var(--surface); box-shadow: var(--shadow); }
+  .integrated-eyebrow { margin: 0 0 5px; color: var(--amber-dark); font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+  .temuan-panel h2, .inspector-panel h2 { margin: 0; font-size: 18px; letter-spacing: -.025em; }
+  .panel-caption { margin: 7px 0 16px; color: var(--muted); font-size: 11px; line-height: 1.45; }
+  .finding-categories { display: grid; gap: 7px; margin-bottom: 16px; }
+  .finding-category-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 10px; color: var(--text-soft); background: var(--surface-soft); font-size: 11px; font-weight: 700; }
+  .finding-category-row strong { color: var(--muted); font-size: 10px; }
+  .finding-category-row.is-active { border-color: #d99b48; color: var(--amber-dark); background: var(--amber-pale); }
+  .integrated-finding-card { padding: 13px; border: 1px solid #dfceb5; border-radius: 13px; background: var(--surface-soft); }
+  .integrated-finding-card .status-badge { display: inline-flex; padding: 4px 7px; border-radius: 999px; color: var(--amber-dark); background: var(--amber-pale); font-size: 9px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+  .integrated-finding-card h3 { margin: 9px 0 0; font-size: 13px; }
+  .integrated-finding-card p { margin: 7px 0 12px; color: var(--muted); font-size: 11px; line-height: 1.45; }
+  .integrated-finding-card a { color: var(--amber-dark); font-size: 11px; font-weight: 800; }
+  .inspector-panel { min-height: 430px; }
+  .inspector-state { margin: 14px 0; padding: 9px 10px; border-left: 3px solid var(--amber); color: var(--muted); background: var(--surface-soft); font-size: 11px; line-height: 1.45; }
+  .inspector-section { padding: 13px 0; border-top: 1px solid var(--border); }
+  .inspector-section h3 { margin: 0 0 6px; font-size: 11px; color: var(--amber-dark); text-transform: uppercase; letter-spacing: .06em; }
+  .inspector-section p { margin: 0; color: var(--text-soft); font-size: 11px; line-height: 1.5; }
+  .inspector-section ul { margin: 0; padding-left: 17px; color: var(--text-soft); font-size: 11px; line-height: 1.55; }
+  .integrated-three-panel .node[role="button"] { cursor: pointer; }
+  .integrated-three-panel .node[role="button"]:focus-visible { outline: 3px solid var(--amber); outline-offset: 3px; }
+  .integrated-finding-list { display: grid; gap: 10px; }
+  .integrated-finding-card--loading, .integrated-finding-card--empty, .integrated-finding-card--error { color: var(--muted); font-size: 11px; line-height: 1.45; }
+  .integrated-finding-card[data-finding-id] { cursor: pointer; }
+  .integrated-finding-card[data-finding-id]:hover, .integrated-finding-card[data-finding-id]:focus-visible, .integrated-finding-card.is-selected { border-color: var(--amber); background: var(--amber-pale); outline: none; }
+  .integrated-finding-card .finding-document { display: inline-block; margin-top: 8px; color: var(--amber-dark); font-size: 11px; font-weight: 800; }
+  .integrated-finding-card .finding-retry { margin-top: 10px; }
+  .sales-order-finding-badge { display: block; width: max-content; max-width: 100%; margin-top: 7px; padding: 4px 7px; border: 1px solid rgba(125, 75, 14, .25); border-radius: 999px; color: #7f470c; background: #fff3de; font-size: 8px; font-weight: 800; line-height: 1; }  @media (max-width: 1200px) {
+    .integrated-three-panel { grid-template-columns: minmax(0, 1fr); }
+    .integrated-three-panel > .temuan-panel,
+    .integrated-three-panel > .control-tower-header,
+    .integrated-three-panel > .view-navigation,
+    .integrated-three-panel > #overviewView,
+    .integrated-three-panel > #temuanView,
+    .integrated-three-panel > .inspector-panel { grid-column: 1; grid-row: auto; }
+    .temuan-panel, .inspector-panel { position: static; }
+  }
 </style>
 </head>
 <body>
-<a class="skip-link" href="#controlTowerContent">Lewati ke konten utama</a><main class="app control-tower-dashboard" id="controlTowerContent" tabindex="-1"><header class="control-tower-header"><div><h1>Control Tower Operasional</h1><p>Process Map operasional untuk gambaran proses yang mudah dipindai.</p></div><div class="header-actions" aria-label="Navigasi dashboard"><a href="/dashboard/control-tower" aria-current="page">Control Tower</a><a href="/dashboard/internal-orders">Internal Orders</a><a href="/dashboard/sales-orders">Sales Orders</a><a href="/dashboard/internal-order-rekap">Order Material Tracking</a><a href="/logout">Keluar</a></div></header><nav class="view-navigation" aria-label="Bagian Control Tower"><a href="?view=overview">Process Map</a><a href="?view=tracking">Tracking</a><a href="?view=temuan">Temuan</a></nav>
+<a class="skip-link" href="#controlTowerContent">Lewati ke konten utama</a><main class="app control-tower-dashboard integrated-three-panel" id="controlTowerContent" tabindex="-1">
+<aside class="temuan-panel" aria-labelledby="integratedTemuanHeading">
+  <p class="integrated-eyebrow">Temuan</p>
+  <h2 id="integratedTemuanHeading">Masalah Aktif</h2>
+  <p class="panel-caption">Prioritas yang perlu dipahami dan ditinjau dari snapshot terakhir.</p>
+  <div class="finding-categories" aria-label="Kategori temuan">
+    <div class="finding-category-row is-active" id="activeFindingCategory"><span>Masalah Aktif</span><strong>Memuat...</strong></div>
+    <div class="finding-category-row"><span>Perlu Ditinjau</span><strong>Belum dimuat</strong></div>
+    <div class="finding-category-row" id="incompleteFindingCategory"><span>Data Belum Lengkap</span><strong>Memuat...</strong></div>
+  </div>
+  <div id="integratedFindingList" class="integrated-finding-list" aria-live="polite">
+    <div class="integrated-finding-card integrated-finding-card--loading" aria-label="Ringkasan temuan">Memuat temuan...</div>
+  </div>
+</aside><header class="control-tower-header"><div><h1>Control Tower Operasional</h1><p>Process Map operasional untuk gambaran proses yang mudah dipindai.</p></div><div class="header-actions" aria-label="Navigasi dashboard"><a href="/dashboard/control-tower" aria-current="page">Control Tower</a><a href="/dashboard/internal-orders">Internal Orders</a><a href="/dashboard/sales-orders">Sales Orders</a><a href="/dashboard/internal-order-rekap">Order Material Tracking</a><a href="/logout">Keluar</a></div></header><nav class="view-navigation" aria-label="Bagian Control Tower"><a href="?view=overview">Process Map</a><a href="?view=tracking">Tracking</a><a href="?view=temuan">Temuan</a></nav>
 <div id="overviewView">
   <header class="page-head">
     <div>
@@ -158,7 +218,7 @@
 
         <article class="node" data-key="estimate"><strong>Estimasi / RKB Kasar</strong><small>Di luar Odoo</small></article>
         <article class="node" data-key="quotation"><strong>Quotation</strong><small>Penawaran</small></article>
-        <article class="node" data-key="sales-order"><strong>Sales Order</strong><small>SO</small></article>
+        <article class="node" data-key="sales-order" role="button" tabindex="0" aria-label="Sales Order"><strong>Sales Order</strong><small>SO</small><span class="sales-order-finding-badge" id="salesOrderFindingBadge" hidden></span></article>
         <button class="node fulfilment" data-key="fulfilment" type="button" aria-expanded="false" aria-controls="fulfilment-choices" aria-label="Tampilkan pilihan Fulfilment"><strong>Fulfilment</strong><small>MO atau From Stock / IO</small></button>
         <article class="node" data-key="delivery"><strong>Delivery</strong><small>DO</small></article>
         <article class="node" data-key="invoice"><strong>Invoice</strong><small>INV</small></article>
@@ -213,12 +273,26 @@
     <div class="temuan-status" id="temuanStatus" role="status" aria-live="polite">Memuat Temuan...</div>
     <div class="finding-list" id="findingList"></div>
   </section>
+<aside class="inspector-panel" aria-labelledby="inspectorHeading">
+  <p class="integrated-eyebrow">Process Inspector</p>
+  <h2 id="inspectorHeading">Belum ada pilihan</h2>
+  <div class="inspector-state" id="inspectorState">Pilih proses atau temuan untuk melihat konteks yang didukung bukti.</div>
+  <section class="inspector-section"><h3>Tujuan proses</h3><p id="inspectorPurpose">Menjaga alur kerja tetap terbaca dari Sales Order hingga fulfilment.</p></section>
+  <section class="inspector-section"><h3>Ekspektasi kerja</h3><ul id="inspectorExpected"><li>Periksa kondisi proses yang dipilih.</li><li>Gunakan bukti sumber sebelum menyimpulkan.</li></ul></section>
+  <section class="inspector-section"><h3>SOP checks &amp; exceptions</h3><p id="inspectorChecks">Belum ada node atau temuan yang dipilih.</p></section>
+  <section class="inspector-section"><h3>Related data</h3><p id="inspectorRelated">Relasi dan dokumen terkait akan ditampilkan saat tersedia.</p></section>
+</aside>
 </main>
 
 <script>
   const canvas = document.querySelector('#canvas');
   const svg = document.querySelector('#routes');
   const nodes = [...document.querySelectorAll('.node')];
+  const inspectorHeading = document.querySelector('#inspectorHeading');
+  const inspectorState = document.querySelector('#inspectorState');
+  const inspectorPurpose = document.querySelector('#inspectorPurpose');
+  const inspectorChecks = document.querySelector('#inspectorChecks');
+  const inspectorRelated = document.querySelector('#inspectorRelated');
   const choices = [...document.querySelectorAll('.choice')];
   const stateName = document.querySelector('#state-name');
   const stateDescription = document.querySelector('#state-description');
@@ -232,7 +306,13 @@
   const temuanView = document.querySelector('#temuanView');
   const temuanStatus = document.querySelector('#temuanStatus');
   const findingList = document.querySelector('#findingList');
-  const viewNavigationLinks = [...document.querySelectorAll('.view-navigation a')];
+  const viewNavigationLinks = [...document.querySelectorAll('.view-navigation a')];  const integratedFindingList = document.querySelector('#integratedFindingList');
+  const activeFindingCategory = document.querySelector('#activeFindingCategory strong');
+  const incompleteFindingCategory = document.querySelector('#incompleteFindingCategory strong');
+  const findingBadge = document.querySelector('#salesOrderFindingBadge');
+  const findingFilters = Object.freeze({ affected_model: 'sale.order', category: 'DATA_BELUM_LENGKAP', rule_code: 'DH2-SALES-001' });
+  let currentFindings = [];
+  let selectedFindingId = new URLSearchParams(window.location.search).get('selected_finding');
   let currentState = 'overview';
 
   const copy = {
@@ -255,7 +335,93 @@
     const parsed = new Date(value);
     return Number.isNaN(parsed.getTime()) ? '-' : parsed.toLocaleString('id-ID');
   }
-  function renderFindings(rows) {
+  function findingQuery() {
+    const query = new URLSearchParams({ ...findingFilters, limit: '200', offset: '0' });
+    return query.toString();
+  }
+  function returnContextUrl() {
+    return `${window.location.pathname}${window.location.search}`;
+  }
+  function exactFindingDestination(finding) {
+    if (!finding.destination_url) return '';
+    const url = new URL(finding.destination_url, window.location.origin);
+    url.searchParams.set('return_to', returnContextUrl());
+    return `${url.pathname}${url.search}`;
+  }
+  function evidenceText(value) {
+    return value === null || value === undefined || value === '' ? 'Belum tersedia' : String(value);
+  }
+  function selectFinding(finding, updateUrl = true) {
+    if (!finding) return;
+    selectedFindingId = finding.finding_id;
+    document.querySelectorAll('[data-finding-id]').forEach(card => card.classList.toggle('is-selected', card.dataset.findingId === selectedFindingId));
+    document.querySelector('[data-key="sales-order"]')?.classList.add('active');
+    const evidence = finding.evidence_payload || {};
+    const missing = Array.isArray(evidence.missing_fields) && evidence.missing_fields.length ? evidence.missing_fields.join(', ') : 'Tidak ada field yang ditandai hilang.';
+    const actualEvidence = `Customer Reference: ${evidence.client_order_ref || 'Belum tersedia'}; Customer PO Date: ${evidence.customer_po_date || 'Belum tersedia'}; State: ${evidence.state || 'Belum tersedia'}; Date Order: ${evidence.date_order || 'Belum tersedia'}`;
+    inspectorHeading.textContent = finding.title || 'Data Sales Order belum lengkap';
+    inspectorState.textContent = `${finding.category || 'Kategori tidak tersedia'} · ${finding.current_status || 'Status tidak tersedia'}`;
+    inspectorPurpose.textContent = 'Memastikan data Sales Order yang diperlukan tersedia sebelum proses berlanjut.';
+    document.querySelector('#inspectorExpected').innerHTML = '<li>Customer Reference tersedia.</li><li>Customer PO Date tersedia.</li>';
+    inspectorChecks.textContent = `${finding.rule_code || 'Rule tidak tersedia'} · Field yang perlu diperiksa: ${missing}. Actual evidence: ${actualEvidence}`;
+    if (updateUrl) {
+      const url = new URL(window.location.href);
+      url.searchParams.set('selected_finding', finding.finding_id);
+      url.searchParams.set('selected_process', 'sales-order');
+      history.replaceState({}, '', url);
+    }
+    const destination = exactFindingDestination(finding);
+    const selectedCardLink = document.querySelector(`[data-finding-id="${CSS.escape(finding.finding_id)}"] a`);
+    if (selectedCardLink && destination) selectedCardLink.href = destination;
+    inspectorRelated.innerHTML = destination
+      ? `Sales Order <a href="${escapeHtml(destination)}">${escapeHtml(finding.native_document_reference || finding.affected_document_id)}</a><br>Detected: ${escapeHtml(findingTime(finding.first_detected_time))}`
+      : 'Exact Sales Order destination tidak tersedia.';
+  }
+  function renderIntegratedFindings(rows, state = 'ready') {
+    if (state === 'loading') {
+      activeFindingCategory.textContent = 'Memuat...';
+      incompleteFindingCategory.textContent = 'Memuat...';
+      findingBadge.hidden = true;
+      integratedFindingList.innerHTML = '<div class="integrated-finding-card integrated-finding-card--loading">Memuat temuan...</div>';
+      return;
+    }
+    if (state === 'error') {
+      activeFindingCategory.textContent = 'Belum tersedia';
+      incompleteFindingCategory.textContent = 'Belum tersedia';
+      findingBadge.hidden = true;
+      integratedFindingList.innerHTML = '<div class="integrated-finding-card integrated-finding-card--error">Temuan tidak dapat dimuat. <button class="finding-retry" id="integratedFindingRetry" type="button">Coba lagi</button></div>';
+      document.querySelector('#integratedFindingRetry').addEventListener('click', loadFindings);
+      return;
+    }
+    const total = rows.length;
+    activeFindingCategory.textContent = 'Belum tersedia';
+    incompleteFindingCategory.textContent = String(total);
+    findingBadge.hidden = total === 0;
+    findingBadge.textContent = total ? `Data Belum Lengkap · ${total}` : '';
+    if (!total) {
+      integratedFindingList.innerHTML = selectedFindingId
+        ? '<div class="integrated-finding-card integrated-finding-card--empty">Temuan yang dipilih tidak ditemukan pada snapshot saat ini.</div>'
+        : '<div class="integrated-finding-card integrated-finding-card--empty">Tidak ada temuan Data Belum Lengkap pada snapshot saat ini.</div>';
+      if (selectedFindingId) inspectorState.textContent = 'Temuan yang dipilih tidak ditemukan pada snapshot saat ini.';
+      return;
+    }
+    integratedFindingList.innerHTML = rows.map(finding => `<article class="integrated-finding-card" data-finding-id="${escapeHtml(finding.finding_id)}" role="button" tabindex="0" aria-label="Pilih ${escapeHtml(finding.title || 'Temuan Sales Order')}">
+      <span class="status-badge">${escapeHtml(finding.category || 'Kategori tidak tersedia')}</span>
+      <h3>${escapeHtml(finding.title || 'Data Sales Order belum lengkap')}</h3>
+      <p>${escapeHtml(finding.summary || 'Ringkasan temuan belum tersedia.')}</p>
+      ${finding.destination_url ? `<a class="finding-document" href="${escapeHtml(exactFindingDestination(finding))}">${escapeHtml(finding.native_document_reference || finding.affected_document_id)}</a>` : '<span class="finding-document">Exact document unavailable</span>'}
+    </article>`).join('');
+    document.querySelectorAll('[data-finding-id]').forEach(card => {
+      const finding = rows.find(row => row.finding_id === card.dataset.findingId);
+      card.addEventListener('click', event => { if (event.target.closest('a')) return; selectFinding(finding); });
+      card.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectFinding(finding); } });
+    });
+    if (selectedFindingId) {
+      const selected = rows.find(row => row.finding_id === selectedFindingId);
+      if (selected) selectFinding(selected, false);
+      else inspectorState.textContent = 'Temuan yang dipilih tidak ditemukan pada snapshot saat ini.';
+    }
+  }  function renderFindings(rows) {
     if (!rows.length) {
       findingList.innerHTML = '';
       temuanStatus.textContent = 'Tidak ada Temuan Data Belum Lengkap pada snapshot saat ini.';
@@ -279,14 +445,18 @@
     ].join('')).join('');
   }
   async function loadFindings() {
-    findingList.innerHTML = '';
-    temuanStatus.textContent = 'Memuat Temuan...';
+    renderIntegratedFindings([], 'loading');
+    if (!temuanView.hidden) temuanStatus.textContent = 'Memuat Temuan...';
     try {
-      const response = await fetch('/api/control-tower/findings', { headers: { Accept: 'application/json' } });
+      const response = await fetch(`/api/control-tower/findings?${findingQuery()}`, { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
       if (!response.ok) throw new Error('Request failed: ' + response.status);
       const payload = await response.json();
-      renderFindings(payload.rows || []);
+      currentFindings = payload.rows || [];
+      renderIntegratedFindings(currentFindings);
+      renderFindings(currentFindings);
     } catch (error) {
+      currentFindings = [];
+      renderIntegratedFindings([], 'error');
       temuanStatus.textContent = 'Temuan tidak dapat dimuat.';
       findingList.innerHTML = '<button class="finding-retry" type="button" id="temuanRetry">Coba lagi</button>';
       document.querySelector('#temuanRetry').addEventListener('click', loadFindings);
@@ -302,7 +472,7 @@
       if (active) link.setAttribute('aria-current', 'page');
       else link.removeAttribute('aria-current');
     });
-    if (isTemuan) loadFindings();
+    loadFindings();
   }
 
   function rect(key) {
@@ -351,8 +521,9 @@
         });
       } else {
         const stockChoice = elementRect(document.querySelector('[data-choice="stock"]'));
-        const stockSteps = [...document.querySelectorAll('.stock-step')].map(elementRect);
-        route(`M ${stockChoice.cx} ${stockChoice.bottom} V ${stockSteps[0].top}`, 'route reference', false);
+        const internalOrder = elementRect(document.querySelector('.stock-step'));
+        const elbowY = internalOrder.top - 16;
+        route(`M ${stockChoice.cx} ${stockChoice.bottom} V ${elbowY} H ${internalOrder.cx} V ${internalOrder.top}`, 'route reference', false);
       }
       if (currentState === 'focused' || currentState === 'stock-focused') {
         const productionSteps = [...document.querySelectorAll('.production-step')].map(elementRect);
@@ -401,6 +572,29 @@
   document.querySelector('[data-choice="stock"]').addEventListener('click', () => apply('stock-focused'));
   mapScroll.addEventListener('scroll', () => mapViewport.classList.toggle('has-scrolled', mapScroll.scrollLeft > 4));
   window.addEventListener('resize', () => { draw(); mapViewport.classList.toggle('has-overflow', mapScroll.scrollWidth > mapScroll.clientWidth + 1); });
+  nodes.forEach(node => {
+    node.setAttribute('role', 'button');
+    node.setAttribute('tabindex', '0');
+    const selectNode = () => {
+      const label = node.querySelector('strong')?.textContent || 'Proses';
+      inspectorHeading.textContent = label;
+      inspectorState.textContent = `Proses dipilih: ${label}. Inspector menampilkan konteks yang perlu diperiksa.`;
+      inspectorPurpose.textContent = label === 'Sales Order' ? 'Memastikan kebutuhan dan data Sales Order siap menjadi dasar fulfilment.' : `Memahami peran ${label} dalam perjalanan proses.`;
+      inspectorChecks.textContent = 'SOP checks dan exceptions memerlukan bukti snapshot yang sesuai.';
+      inspectorRelated.textContent = label === 'Sales Order' ? 'Dokumen Sales Order dan temuan terkait.' : 'Data terkait node ini belum dipilih.';
+      const url = new URL(window.location.href);
+      url.searchParams.set('selected_process', node.dataset.key || 'process');
+      url.searchParams.delete('selected_finding');
+      history.replaceState({}, '', url);
+    };
+    node.addEventListener('click', selectNode);
+    node.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectNode(); } });
+  });
+  findingBadge.addEventListener('click', event => {
+    event.stopPropagation();
+    const selected = currentFindings.find(row => row.finding_id === selectedFindingId) || currentFindings[0];
+    if (selected) selectFinding(selected);
+  });
   window.addEventListener('load', () => apply('overview'));
   initializeView();
 </script>

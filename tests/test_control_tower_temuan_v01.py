@@ -91,6 +91,19 @@ def test_findings_service_exposes_contract_and_deterministic_order():
     assert "ORDER BY finding.rule_code, finding.affected_model" in service._rows.call_args_list[0].args[0]
 
 
+def test_findings_service_applies_bound_business_filters_to_rows_and_total():
+    service = ControlTowerService.__new__(ControlTowerService)
+    service._rows = Mock(side_effect=[[], [{"total": 0}]])
+    result = service.findings(affected_model="sale.order", category="DATA_BELUM_LENGKAP", rule_code="DH2-SALES-001")
+    assert result["total"] == 0
+    sql, params = service._rows.call_args_list[0].args
+    assert "finding.affected_model = :affected_model" in sql
+    assert "finding.category = :category" in sql
+    assert "finding.rule_code = :rule_code" in sql
+    assert params["affected_model"] == "sale.order"
+    assert params["category"] == "DATA_BELUM_LENGKAP"
+    assert params["rule_code"] == "DH2-SALES-001"
+
 def test_findings_api_requires_authentication():
     with pytest.raises(Exception) as error:
         require_dashboard_auth(type("Request", (), {"cookies": {}})())
