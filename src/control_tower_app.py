@@ -5,7 +5,3 @@ Jalankan:
 """
 
 from src.api import app
-from src.control_tower.router import router as control_tower_router
-
-
-app.include_router(control_tower_router)
