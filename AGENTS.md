@@ -105,6 +105,23 @@ one Luna implementation run
 
 Do not invoke independent review repeatedly for micro-changes that belong to the same capability.
 
+## Post-run priority judgment
+
+After any Codex implementation, independent review, test, CI result, or tool report, re-anchor to the PersonalOS project goal, current meaningful capability, approved baseline, and current readiness stage before accepting the report's proposed next task.
+
+Classify every material issue as:
+
+- **BLOCKER** — continuing would make the current outcome unsafe, materially incorrect, misleading, unrecoverable, or impossible.
+- **MUST DO NOW** — necessary to complete the current meaningful capability or its agreed owner review path.
+- **IMPORTANT LATER** — matters for production, scale, reliability, monitoring, maintainability, or completeness, but postponement does not materially harm the current stage.
+- **LOW PRIORITY** — technically valid, but not worth current time, complexity, or Codex usage.
+
+Only **BLOCKER** and **MUST DO NOW** may interrupt the active capability. Contain urgent but low-value technical problems with the smallest safe fix, then return to the important work. Record **IMPORTANT LATER** items in the relevant project authority or implementation backlog when actionable; do not turn them into a release or review cycle by default.
+
+A Codex or reviewer recommendation is technical evidence, not roadmap authority. Explain the business or user impact, consequence of postponement, and recommended classification in plain language. Do not require the owner to decide technical severity without a recommendation. Production hardening, observability, broad regression coverage, deployment automation, concurrency, and scalability normally remain **IMPORTANT LATER** until the declared stage requires them, unless they currently threaten correctness, security, company isolation, data integrity, recoverability, or the agreed user outcome.
+
+Codex must report discovered issues but must not begin a follow-up task unless the active prompt authorizes it.
+
 ## Shared non-negotiable boundaries
 
 - Odoo is **read-only**. Do not call Odoo `create`, `write`, or `unlink`, and do not execute raw SQL against Odoo.
@@ -233,8 +250,8 @@ Every substantial Codex run must finish with:
 2. **Implementation** — the smallest relevant schema, API, files, or architecture changed.
 3. **Safety** — authentication, company scope, migration, rollback, and read-only evidence when applicable.
 4. **Readiness** — the narrowest justified capability gate and label.
-5. **Limitations** — incomplete, uncertain, deferred, or unsafe areas.
+5. **Limitations and findings** — incomplete, uncertain, deferred, or unsafe areas, with each material issue classified as `BLOCKER`, `MUST DO NOW`, `IMPORTANT LATER`, or `LOW PRIORITY`.
 6. **Repository status** — branch, commit, push, PR, and uncommitted state.
-7. **Next task** — one bounded recommendation only.
+7. **Next task** — one bounded recommendation only after re-anchoring it to the approved goal and current meaningful capability.
 
 Lead with the product or business outcome, not a list of changed files.
