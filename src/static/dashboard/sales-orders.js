@@ -70,6 +70,7 @@ const state = {
 
 const els = {
   refreshButton: document.getElementById("refreshButton"),
+  returnToControlTower: document.getElementById("returnToControlTower"),
   clearFiltersButton: document.getElementById("clearFiltersButton"),
   clearToolbarFiltersButton: document.getElementById("clearToolbarFiltersButton"),
   clearSortButton: document.getElementById("clearSortButton"),
@@ -153,6 +154,25 @@ const followUpOrder = ["CANCELLED_RECORD", "UNKNOWN_SOURCE", "DELAYED_DELIVERY",
 const reviewSignalOrder = ["Healthy", "Watchlist", "Needs Review", "Supplier Follow-up", "Operational Follow-up"];
 
 let columnController = null;
+
+function safeReturnPath(raw) {
+  if (typeof raw !== "string" || !raw.startsWith("/") || raw.startsWith("//") || raw.includes("\\") || /^[a-z][a-z\d+.-]*:/i.test(raw)) return "";
+  try {
+    const parsed = new URL(raw, window.location.origin);
+    if (parsed.origin !== window.location.origin || parsed.pathname !== "/dashboard/control-tower") return "";
+    decodeURIComponent(parsed.pathname + parsed.search + parsed.hash);
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return "";
+  }
+}
+
+function configureReturnAction() {
+  const safePath = safeReturnPath(new URLSearchParams(window.location.search).get("return_to"));
+  if (!safePath || !els.returnToControlTower) return;
+  els.returnToControlTower.href = safePath;
+  els.returnToControlTower.hidden = false;
+}
 
 function isCancelStatusValue(value) {
   return ["cancel", "cancelled"].includes(String(value || "").toLowerCase());
@@ -1473,5 +1493,6 @@ columnController = DashboardTableTools.createColumnController({
 
 updateSortIndicators();
 initReviewSignalsCollapsed();
+configureReturnAction();
 loadDashboard();
 
