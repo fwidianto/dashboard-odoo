@@ -1,7 +1,7 @@
-﻿@import url("/static/dashboard/dashboard-common.css");
+@import url("/static/dashboard/dashboard-common.css");
 
 .sales-dashboard {
-  width: min(100%, 1760px);
+  width: min(100%, 1600px);`n  padding: 28px;
 }
 
 .sales-dashboard .kpi-grid {

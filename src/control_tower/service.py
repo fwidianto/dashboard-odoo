@@ -121,13 +121,30 @@ class ControlTowerService:
         """, params) or {"total": 0}
         return {"rows": rows, "total": total["total"], "limit": limit, "offset": offset}
 
-    def findings(self, *, limit: int = 200, offset: int = 0) -> dict[str, Any]:
+    def findings(
+        self,
+        *,
+        affected_model: Optional[str] = None,
+        category: Optional[str] = None,
+        rule_code: Optional[str] = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> dict[str, Any]:
         """Return current-company OPEN Temuan findings only."""
         params: dict[str, Any] = {"limit": limit, "offset": offset}
-        where = """
-            WHERE finding.current_status = 'OPEN'
-              AND finding.company_id = current_run.company_id
-        """
+        conditions = [
+            "finding.current_status = 'OPEN'",
+            "finding.company_id = current_run.company_id",
+        ]
+        for key, value in (
+            ("affected_model", affected_model),
+            ("category", category),
+            ("rule_code", rule_code),
+        ):
+            if value:
+                conditions.append(f"finding.{key} = :{key}")
+                params[key] = value
+        where = "WHERE " + " AND ".join(conditions)
         rows = self._rows(f"""
             SELECT
                 finding.finding_id,
