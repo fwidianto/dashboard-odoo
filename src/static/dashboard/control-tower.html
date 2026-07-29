@@ -55,6 +55,8 @@
   .node { appearance: none; color: inherit; font: inherit; text-align: left; cursor: pointer; display: flex; flex-direction: column; justify-content: center; padding: 13px; transition: opacity .2s ease, border-color .2s ease, box-shadow .2s ease, transform .2s ease; }
   .node:focus-visible { outline: 3px solid var(--amber); outline-offset: 3px; }
   .node strong, .choice strong { display: block; font-size: 12px; line-height: 1.28; letter-spacing: -.01em; }
+  .node-badge { display: none; width: fit-content; margin-top: 7px; border: 1px solid #e5bb79; border-radius: 999px; padding: 3px 6px; color: var(--amber-dark); background: var(--amber-pale); font-size: 8px; font-weight: 800; line-height: 1.1; }
+  .node-badge.is-visible { display: inline-flex; }
   .node small, .choice small { display: block; margin-top: 5px; color: var(--muted); font-size: 9px; line-height: 1.35; }
   .node.fulfilment { border-color: #c97819; color: #2e1f0e; background: linear-gradient(150deg, #efbb68, #d98e26); }
   .node.fulfilment small { color: rgba(46, 31, 14, .72); }
@@ -158,7 +160,7 @@
 
         <article class="node" data-key="estimate"><strong>Estimasi / RKB Kasar</strong><small>Di luar Odoo</small></article>
         <article class="node" data-key="quotation"><strong>Quotation</strong><small>Penawaran</small></article>
-        <article class="node" data-key="sales-order"><strong>Sales Order</strong><small>SO</small></article>
+        <button class="node" data-key="sales-order" id="salesOrderNode" type="button" aria-label="Buka Temuan Sales Order"><strong>Sales Order</strong><small>SO</small><span class="node-badge" id="salesOrderFindingBadge" role="status" aria-live="polite"></span></button>
         <button class="node fulfilment" data-key="fulfilment" type="button" aria-expanded="false" aria-controls="fulfilment-choices" aria-label="Tampilkan pilihan Fulfilment"><strong>Fulfilment</strong><small>MO atau From Stock / IO</small></button>
         <article class="node" data-key="delivery"><strong>Delivery</strong><small>DO</small></article>
         <article class="node" data-key="invoice"><strong>Invoice</strong><small>INV</small></article>
@@ -234,6 +236,19 @@
   const findingList = document.querySelector('#findingList');
   const viewNavigationLinks = [...document.querySelectorAll('.view-navigation a')];
   let currentState = 'overview';
+  const findingFilters = { affected_model: 'sale.order', category: 'DATA_BELUM_LENGKAP', rule_code: 'DH2-SALES-001' };
+  function findingQuery(filters = {}) { return '?' + new URLSearchParams({ ...filters, limit: '200', offset: '0' }).toString(); }
+  function findingApiUrl(filters = findingFilters) { return '/api/control-tower/findings' + findingQuery(filters); }
+  function findingDestination() { return '/dashboard/control-tower' + findingQuery({ view: 'temuan', ...findingFilters }); }
+  async function loadSalesOrderFindingBadge() {
+    const badge = document.querySelector('#salesOrderFindingBadge');
+    try {
+      const response = await fetch(findingApiUrl({ ...findingFilters, limit: '1' }), { headers: { Accept: 'application/json' } });
+      if (!response.ok) throw new Error('Request failed: ' + response.status);
+      const total = Number((await response.json()).total);
+      if (Number.isFinite(total) && total > 0) { badge.textContent = `Data Belum Lengkap · ${total}`; badge.classList.add('is-visible'); }
+    } catch (error) { badge.classList.remove('is-visible'); }
+  }
 
   const copy = {
     overview: ['Gambaran besar', 'Primary spine yang tenang dan mudah dipindai.'],
@@ -282,10 +297,11 @@
     findingList.innerHTML = '';
     temuanStatus.textContent = 'Memuat Temuan...';
     try {
-      const response = await fetch('/api/control-tower/findings', { headers: { Accept: 'application/json' } });
+      const response = await fetch(findingApiUrl(Object.fromEntries(['affected_model', 'category', 'rule_code'].filter((key) => new URLSearchParams(window.location.search).get(key)).map((key) => [key, new URLSearchParams(window.location.search).get(key)]))), { headers: { Accept: 'application/json' } });
       if (!response.ok) throw new Error('Request failed: ' + response.status);
       const payload = await response.json();
       renderFindings(payload.rows || []);
+      if (payload.total) temuanStatus.textContent = `Data Belum Lengkap · ${payload.total} temuan aktif`;
     } catch (error) {
       temuanStatus.textContent = 'Temuan tidak dapat dimuat.';
       findingList.innerHTML = '<button class="finding-retry" type="button" id="temuanRetry">Coba lagi</button>';
@@ -303,6 +319,7 @@
       else link.removeAttribute('aria-current');
     });
     if (isTemuan) loadFindings();
+    else loadSalesOrderFindingBadge();
   }
 
   function rect(key) {
@@ -351,8 +368,9 @@
         });
       } else {
         const stockChoice = elementRect(document.querySelector('[data-choice="stock"]'));
-        const stockSteps = [...document.querySelectorAll('.stock-step')].map(elementRect);
-        route(`M ${stockChoice.cx} ${stockChoice.bottom} V ${stockSteps[0].top}`, 'route reference', false);
+        const internalOrder = elementRect(document.querySelector('.stock-step'));
+        const elbowY = internalOrder.top - 16;
+        route(`M ${stockChoice.cx} ${stockChoice.bottom} V ${elbowY} H ${internalOrder.cx} V ${internalOrder.top}`, 'route reference', false);
       }
       if (currentState === 'focused' || currentState === 'stock-focused') {
         const productionSteps = [...document.querySelectorAll('.production-step')].map(elementRect);
@@ -399,6 +417,7 @@
   fulfilmentControl.addEventListener('click', () => apply(currentState === 'overview' ? 'expanded' : 'overview'));
   document.querySelector('[data-choice="manufacturing"]').addEventListener('click', () => apply('focused'));
   document.querySelector('[data-choice="stock"]').addEventListener('click', () => apply('stock-focused'));
+  document.querySelector('#salesOrderNode').addEventListener('click', () => { window.location.href = findingDestination(); });
   mapScroll.addEventListener('scroll', () => mapViewport.classList.toggle('has-scrolled', mapScroll.scrollLeft > 4));
   window.addEventListener('resize', () => { draw(); mapViewport.classList.toggle('has-overflow', mapScroll.scrollWidth > mapScroll.clientWidth + 1); });
   window.addEventListener('load', () => apply('overview'));

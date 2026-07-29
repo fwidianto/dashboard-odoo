@@ -15,6 +15,10 @@ test('Temuan view has loading, empty, error, and finding contracts', () => {
   assert.match(controlTower, /Tidak ada Temuan Data Belum Lengkap/);
   assert.match(controlTower, /Temuan tidak dapat dimuat/);
   assert.match(controlTower, /\/api\/control-tower\/findings/);
+  assert.match(controlTower, /affected_model/);
+  assert.match(controlTower, /category/);
+  assert.match(controlTower, /rule_code/);
+  assert.match(controlTower, /payload.total/);
 });
 
 test('Temuan uses the exact native Sales Order destination and view switch', () => {
