@@ -6,7 +6,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
-from src.api import is_authenticated
+from src.dashboard_auth import is_authenticated
 from src.control_tower.service import ControlTowerService
 
 

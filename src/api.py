@@ -6,9 +6,6 @@ Designed for production deployment with uvicorn.
 
 from datetime import date, datetime
 from io import BytesIO
-import base64
-import hashlib
-import hmac
 import json
 from decimal import Decimal
 from html import escape
@@ -30,6 +27,13 @@ from src.engine.sync_engine import SyncEngine
 from src.engine.scheduler import SyncScheduler
 from src.state.state_manager import StateManager
 from src.clients.postgres_client import PostgresClient
+from src.control_tower.router import router as control_tower_router
+from src.dashboard_auth import (
+    DASHBOARD_SESSION_COOKIE,
+    is_authenticated,
+    read_dashboard_session,
+    sign_dashboard_session,
+)
 from src.utils.logging import get_logger, setup_logging
 from src.utils.settings import get_settings
 
@@ -40,14 +44,9 @@ logger = get_logger("api")
 APP_SETTINGS = get_settings()
 DASHBOARD_USERNAME = APP_SETTINGS.dashboard_username
 DASHBOARD_PASSWORD = APP_SETTINGS.dashboard_password
-SESSION_SECRET = APP_SETTINGS.session_secret or "dashboard-dev-session-secret"
-if not APP_SETTINGS.session_secret:
-    logger.warning("SESSION_SECRET missing; using local development fallback secret for demo auth.")
-
 DEFAULT_DASHBOARD_PATH = "/dashboard/internal-order-rekap"
 PROTECTED_PAGE_PATHS = {"/", "/dashboard/internal-orders", "/dashboard/sales-orders", "/dashboard/internal-order-rekap", "/dashboard/control-tower"}
 PROTECTED_API_PREFIX = "/api/dashboard/"
-DASHBOARD_SESSION_COOKIE = "dashboard_session"
 DASHBOARD_SESSION_TTL_SECONDS = 60 * 60 * 24 * 7
 
 # Create FastAPI app
@@ -67,35 +66,6 @@ app.add_middleware(
 )
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-def sign_dashboard_session(payload: dict) -> str:
-    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    encoded = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
-    signature = hmac.new(SESSION_SECRET.encode("utf-8"), encoded.encode("ascii"), hashlib.sha256).hexdigest()
-    return f"{encoded}.{signature}"
-
-
-def read_dashboard_session(raw_value: Optional[str]) -> Optional[dict]:
-    if not raw_value or "." not in raw_value:
-        return None
-    encoded, signature = raw_value.rsplit(".", 1)
-    expected = hmac.new(SESSION_SECRET.encode("utf-8"), encoded.encode("ascii"), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(signature, expected):
-        return None
-    padded = encoded + "=" * (-len(encoded) % 4)
-    try:
-        decoded = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
-        payload = json.loads(decoded)
-    except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
-        return None
-    if isinstance(payload, dict) and payload.get("dashboard_authenticated"):
-        return payload
-    return None
-
-
-def is_authenticated(request: Request) -> bool:
-    return read_dashboard_session(request.cookies.get(DASHBOARD_SESSION_COOKIE)) is not None
-
 
 def safe_next_path(value: Optional[str]) -> str:
     candidate = (value or "").strip()
@@ -348,6 +318,7 @@ async def logout(request: Request):
 
 
 # Global instances
+app.include_router(control_tower_router)
 _scheduler: Optional[SyncScheduler] = None
 
 
