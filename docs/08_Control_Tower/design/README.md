@@ -1,6 +1,6 @@
 # Control Tower UI Unification — Design Specification Index
 
-**Status:** Owner-approved design direction; implementation not started  
+**Status:** Design direction retained; renewed owner visual acceptance required before further broad UI implementation  
 **Approved:** 2026-07-30  
 **Implementation repository:** `fwidianto/dashboard-odoo`  
 **Applies to:** Office Pilot Readiness and the shared operational dashboard experience
@@ -30,17 +30,54 @@ The Control Tower remains the overview and process-map surface. Temuan remains t
 3. [`02_PAGE_TEMPLATES_AND_ACCEPTANCE.md`](02_PAGE_TEMPLATES_AND_ACCEPTANCE.md)  
    Per-page requirements, office and desk modes, implementation sequence, validation matrix, and owner acceptance gates.
 
-## Authority and precedence
+## Visual design authority and precedence
 
-For frontend implementation within this redesign, use the following precedence:
+For frontend implementation, use this precedence:
 
-1. frozen business rules, data semantics, and safety requirements;
-2. this design specification set;
-3. accepted current Control Tower behavior;
-4. existing dashboard conventions that do not conflict with this set;
-5. model-generated recommendations and implementation preferences.
+1. latest owner-approved golden-screen image or browser-rendered prototype stored as a durable project artifact;
+2. owner-approved annotated layout, dimensions, panel states, and interaction notes;
+3. frozen business rules, process structure, terminology, data semantics, and safety requirements;
+4. this design specification set;
+5. accepted implementation behavior that does not conflict with the above;
+6. external visual references;
+7. model-generated recommendations and implementation preferences.
+
+External references are **modifiers, not replacements**. A reference may improve only a named property such as spacing, density, panel collapse behavior, typography, table treatment, or motion. It must not replace the approved Control Tower identity, process structure, terminology, information hierarchy, or composition without explicit owner approval.
+
+The earliest owner-approved Control Tower design remains the visual lineage until a later golden screen is explicitly approved as its successor. A new session, agent, model, reference, or generated concept does not reset that lineage.
 
 This specification does not authorize changes to validation rules, SQL meaning, document relationships, authentication, company isolation, refresh safety, or Odoo read-only behavior.
+
+## Current baseline gate
+
+The repository does not yet contain one owner-approved golden-screen artifact that can serve as the precise visual comparison target for the next Control Tower implementation pass.
+
+Therefore:
+
+- do not begin another broad Control Tower redesign;
+- first recover or recreate the owner-approved visual lineage as one bounded golden screen;
+- use real approved process structure and terminology;
+- obtain owner approval of the rendered golden screen;
+- store the approved artifact durably in this design folder or another explicitly named canonical path;
+- only then implement or propagate the design.
+
+Generated images may support mood or composition discussion, but they are not precise UI specifications and must not become the canonical baseline.
+
+## Required Control Tower golden-screen states
+
+The next authoritative Control Tower visual baseline must cover at least:
+
+- viewport: `1920 × 1080`, browser zoom `100%`;
+- left Temuan rail expanded and collapsed;
+- right Inspector expanded and collapsed;
+- both panels collapsed in focus mode;
+- the complete approved Process Map centered within the currently available canvas;
+- the Process Map proportionally resizing or reflowing when either panel changes state;
+- no large unexplained dead space;
+- no generic `Fulfilment` replacement for the approved production, stock, procurement, warehouse/QC, and finance structure;
+- no invented labels, counts, stages, or relationships.
+
+The Process Map is the primary workspace. The left rail answers what needs attention; the right Inspector explains the current selection. Neither supporting panel may visually overpower the map.
 
 ## Core decisions already approved
 
@@ -57,15 +94,44 @@ This specification does not authorize changes to validation rules, SQL meaning, 
 - Context must be preserved when moving from Control Tower to Temuan and specialist tracking pages.
 - Office-screen readability and normal desk investigation are both first-class use cases.
 
+## Required frontend preflight
+
+Before changing UI code, Codex must record:
+
+```text
+Frontend visual preflight
+- Authoritative baseline:
+- Exact screen and viewport:
+- Elements that must remain unchanged:
+- One visual problem being solved:
+- Allowed reference influence:
+- Explicit non-scope:
+- Required rendered states:
+- Owner acceptance path:
+- Stop condition:
+```
+
+If the authoritative baseline is missing, contradictory, or not recoverable, stop in Design and obtain owner approval before editing production UI.
+
 ## Codex operating rule
 
 Before changing UI code, Codex must:
 
-1. read all three specification files;
-2. state the active page or component package;
-3. identify user-visible before and after states;
-4. list exact non-scope;
-5. preserve current data and navigation behavior;
-6. stop after the authorized bounded package for owner visual review.
+1. read all three specification files and this README;
+2. identify the authoritative golden-screen artifact;
+3. state the active page or component package;
+4. identify user-visible before and after states;
+5. list exact non-scope;
+6. preserve current data and navigation behavior;
+7. render the representative page at the required viewport;
+8. compare it side by side with the approved baseline;
+9. stop after the authorized bounded package for owner visual review.
 
-Passing unit tests does not equal design acceptance. Each representative page must be rendered and visually reviewed at the required viewport before it is considered complete.
+Passing unit tests, DOM inspection, accessibility checks, or overflow checks does not equal design acceptance.
+
+Every material frontend package must report both:
+
+- **Technical:** `COMPLETE`, `PARTIAL`, or `BLOCKED`;
+- **Visual:** `APPROVED`, `UNVERIFIED`, or `REJECTED`.
+
+A frontend package is complete only when `Technical = COMPLETE` and `Visual = APPROVED`. When screenshot or rendered inspection fails, the visual status must remain `UNVERIFIED` or `BLOCKED` and implementation must stop for owner review rather than continue to the next page.
