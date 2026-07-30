@@ -1,13 +1,19 @@
-"""FastAPI router untuk Control Tower SOP Validation v0.1."""
+"""FastAPI router for the read-only Control Tower office pilot."""
 
 from __future__ import annotations
 
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import JSONResponse
 
-from src.dashboard_auth import is_authenticated
-from src.control_tower.service import ControlTowerService
+from src.control_tower.refresh import REFRESH_COORDINATOR, RefreshAlreadyRunning
+from src.control_tower.service import (
+    COMPANY_ID,
+    ControlTowerDatabaseUnavailable,
+    ControlTowerService,
+)
+from src.dashboard_auth import is_admin, is_authenticated, session_payload
 
 
 router = APIRouter(prefix="/api/control-tower", tags=["Control Tower"])
@@ -18,6 +24,15 @@ def require_dashboard_auth(request: Request) -> None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required.",
+        )
+
+
+def require_dashboard_admin(request: Request) -> None:
+    require_dashboard_auth(request)
+    if not is_admin(request):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrator permission required for refresh.",
         )
 
 
@@ -32,6 +47,46 @@ def service_dependency():
 @router.get("/health", dependencies=[Depends(require_dashboard_auth)])
 def control_tower_health(service: ControlTowerService = Depends(service_dependency)):
     return service.health()
+
+
+@router.get("/refresh", dependencies=[Depends(require_dashboard_auth)])
+def control_tower_refresh_status(
+    request: Request,
+    service: ControlTowerService = Depends(service_dependency),
+):
+    health = service.health()
+    coordinator = REFRESH_COORDINATOR.status()
+    attempt_status = health.get("latest_refresh_attempt_status")
+    candidate_pending = attempt_status == "READY_FOR_PUBLISH"
+    stale_attempt = bool(health.get("latest_refresh_attempt_stale"))
+    active = coordinator["active_request"] or (attempt_status == "RUNNING" and not stale_attempt)
+    return {
+        "company_id": COMPANY_ID,
+        "active": active,
+        "can_refresh": is_admin(request) and not candidate_pending and not stale_attempt,
+        "candidate_pending": candidate_pending,
+        "stale_attempt": stale_attempt,
+        "coordinator": coordinator,
+        "latest_attempt": health.get("latest_attempt"),
+        "latest_trusted_run_id": health.get("latest_trusted_run_id"),
+        "serving_older_trusted_snapshot": health.get("serving_older_trusted_snapshot"),
+    }
+
+
+@router.post("/refresh", status_code=status.HTTP_202_ACCEPTED)
+def trigger_control_tower_refresh(
+    request: Request,
+    _: None = Depends(require_dashboard_admin),
+):
+    payload = session_payload(request) or {}
+    requested_by = str(payload.get("dashboard_username") or "administrator")[:80]
+    try:
+        return REFRESH_COORDINATOR.start(
+            requested_by=requested_by,
+            company_id=COMPANY_ID,
+        )
+    except RefreshAlreadyRunning as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
 @router.get("/sop-validation", dependencies=[Depends(require_dashboard_auth)])
@@ -94,6 +149,31 @@ def evidence(
     try:
         return service.evidence(
             presentation_category=presentation_category,
+            limit=limit,
+            offset=offset,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/temuan", dependencies=[Depends(require_dashboard_auth)])
+def temuan(
+    presentation_category: Optional[str] = Query(default=None),
+    process_key: Optional[str] = Query(default=None),
+    rule_id: Optional[str] = Query(default=None),
+    severity: Optional[str] = Query(default=None),
+    sort: str = Query(default="attention"),
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    service: ControlTowerService = Depends(service_dependency),
+):
+    try:
+        return service.temuan(
+            presentation_category=presentation_category,
+            process_key=process_key,
+            rule_id=rule_id,
+            severity=severity,
+            sort=sort,
             limit=limit,
             offset=offset,
         )

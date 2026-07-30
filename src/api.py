@@ -1,4 +1,4 @@
-﻿"""FastAPI integration for Odoo-PostgreSQL sync service.
+"""FastAPI integration for Odoo-PostgreSQL sync service.
 
 This module provides a REST API for managing synchronization tasks.
 Designed for production deployment with uvicorn.
@@ -11,7 +11,7 @@ from decimal import Decimal
 from html import escape
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,6 +28,7 @@ from src.engine.scheduler import SyncScheduler
 from src.state.state_manager import StateManager
 from src.clients.postgres_client import PostgresClient
 from src.control_tower.router import router as control_tower_router
+from src.control_tower.service import ControlTowerDatabaseUnavailable
 from src.dashboard_auth import (
     DASHBOARD_SESSION_COOKIE,
     is_authenticated,
@@ -35,17 +36,26 @@ from src.dashboard_auth import (
     sign_dashboard_session,
 )
 from src.utils.logging import get_logger, setup_logging
-from src.utils.settings import get_settings
-
-# Initialize logging
-setup_logging()
-logger = get_logger("api")
+from src.utils.settings import get_settings, validate_read_only_mode
 
 APP_SETTINGS = get_settings()
+setup_logging(APP_SETTINGS.log_level, APP_SETTINGS.log_file)
+logger = get_logger("api")
+validate_read_only_mode()
+
 DASHBOARD_USERNAME = APP_SETTINGS.dashboard_username
 DASHBOARD_PASSWORD = APP_SETTINGS.dashboard_password
+DASHBOARD_ADMIN_USERNAME = APP_SETTINGS.dashboard_admin_username
+DASHBOARD_ADMIN_PASSWORD = APP_SETTINGS.dashboard_admin_password
 DEFAULT_DASHBOARD_PATH = "/dashboard/internal-order-rekap"
-PROTECTED_PAGE_PATHS = {"/", "/dashboard/internal-orders", "/dashboard/sales-orders", "/dashboard/internal-order-rekap", "/dashboard/control-tower"}
+PROTECTED_PAGE_PATHS = {
+    "/",
+    "/dashboard/internal-orders",
+    "/dashboard/sales-orders",
+    "/dashboard/internal-order-rekap",
+    "/dashboard/control-tower",
+    "/dashboard/control-tower/temuan",
+}
 PROTECTED_API_PREFIX = "/api/dashboard/"
 DASHBOARD_SESSION_TTL_SECONDS = 60 * 60 * 24 * 7
 
@@ -64,13 +74,26 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(ControlTowerDatabaseUnavailable)
+async def control_tower_database_unavailable_handler(request: Request, exc: ControlTowerDatabaseUnavailable):
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"detail": "Control Tower data service is unavailable."},
+    )
+
+
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 def safe_next_path(value: Optional[str]) -> str:
     candidate = (value or "").strip()
-    if candidate in PROTECTED_PAGE_PATHS and candidate != "/":
-        return candidate
+    parsed = urlsplit(candidate)
+    if parsed.scheme or parsed.netloc or not parsed.path:
+        return DEFAULT_DASHBOARD_PATH
+    if parsed.path in PROTECTED_PAGE_PATHS and parsed.path != "/":
+        return parsed.path + (f"?{parsed.query}" if parsed.query else "")
     return DEFAULT_DASHBOARD_PATH
 
 
@@ -286,11 +309,22 @@ async def login_submit(
 ):
     """Authenticate the local demo user and create a signed session."""
     next_path = safe_next_path(next)
-    if username == DASHBOARD_USERNAME and password == DASHBOARD_PASSWORD:
+    is_admin_login = (
+        DASHBOARD_ADMIN_USERNAME
+        and DASHBOARD_ADMIN_PASSWORD
+        and username == DASHBOARD_ADMIN_USERNAME
+        and password == DASHBOARD_ADMIN_PASSWORD
+    )
+    is_user_login = username == DASHBOARD_USERNAME and password == DASHBOARD_PASSWORD
+    if is_admin_login or is_user_login:
         response = RedirectResponse(url=next_path, status_code=status.HTTP_303_SEE_OTHER)
         response.set_cookie(
             key=DASHBOARD_SESSION_COOKIE,
-            value=sign_dashboard_session({"dashboard_authenticated": True, "dashboard_username": username}),
+            value=sign_dashboard_session({
+                "dashboard_authenticated": True,
+                "dashboard_username": username,
+                "dashboard_role": "admin" if is_admin_login else "user",
+            }),
             max_age=DASHBOARD_SESSION_TTL_SECONDS,
             httponly=True,
             secure=False,
@@ -550,6 +584,12 @@ async def dashboard_home():
 async def control_tower_dashboard_page():
     """Serve the static Control Tower Process Map review shell."""
     return FileResponse(STATIC_DIR / "dashboard" / "control-tower.html")
+
+
+@app.get("/dashboard/control-tower/temuan", include_in_schema=False)
+async def control_tower_temuan_page():
+    """Serve the dedicated server-filtered Control Tower Temuan worklist."""
+    return FileResponse(STATIC_DIR / "dashboard" / "temuan.html")
 
 
 @app.get("/dashboard/internal-orders", include_in_schema=False)

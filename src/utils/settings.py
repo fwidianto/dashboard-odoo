@@ -190,6 +190,8 @@ class Settings(BaseSettings):
     # Local demo dashboard authentication
     dashboard_username: str = Field(default="vp_demo", description="Local dashboard login username")
     dashboard_password: str = Field(default="change_this_password", description="Local dashboard login password")
+    dashboard_admin_username: Optional[str] = Field(default=None, description="Optional administrator username")
+    dashboard_admin_password: Optional[str] = Field(default=None, description="Optional administrator password")
     session_secret: Optional[str] = Field(default=None, description="Signed session secret for dashboard login")
 
     @property

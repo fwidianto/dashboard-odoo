@@ -19,14 +19,24 @@
 
 CREATE OR REPLACE VIEW vw_ct_current_run AS
 SELECT
-    run_id,
-    started_at,
-    completed_at,
-    company_id,
-    model_counts
-FROM ct_extraction_run
-WHERE status = 'COMPLETED'
-ORDER BY completed_at DESC, started_at DESC
+    run.run_id,
+    run.started_at,
+    run.completed_at,
+    run.company_id,
+    run.model_counts
+FROM ct_extraction_run run
+LEFT JOIN ct_published_snapshot pointer
+  ON pointer.company_id = run.company_id
+WHERE run.status = 'COMPLETED'
+  AND (
+      pointer.run_id = run.run_id
+      OR NOT EXISTS (
+          SELECT 1
+          FROM ct_published_snapshot existing_pointer
+          WHERE existing_pointer.company_id = run.company_id
+      )
+  )
+ORDER BY run.completed_at DESC NULLS LAST, run.started_at DESC
 LIMIT 1;
 
 CREATE OR REPLACE VIEW vw_ct_native_record_snapshot_current AS

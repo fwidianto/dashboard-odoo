@@ -163,6 +163,7 @@
   .integrated-three-panel .node[role="button"] { cursor: pointer; }
   .integrated-three-panel .node[role="button"]:focus-visible { outline: 3px solid var(--amber); outline-offset: 3px; }
   .integrated-finding-list { display: grid; gap: 10px; }
+  .integrated-three-panel .integrated-finding-list { max-height: 460px; overflow: auto; }
   .integrated-finding-card--loading, .integrated-finding-card--empty, .integrated-finding-card--error { color: var(--muted); font-size: 11px; line-height: 1.45; }
   .integrated-finding-card[data-finding-id] { cursor: pointer; }
   .integrated-finding-card[data-finding-id]:hover, .integrated-finding-card[data-finding-id]:focus-visible, .integrated-finding-card.is-selected { border-color: var(--amber); background: var(--amber-pale); outline: none; }
@@ -182,6 +183,46 @@
     .integrated-three-panel > .inspector-panel { grid-column: 1; grid-row: auto; }
     .temuan-panel, .inspector-panel { position: static; }
   }
+  .control-tower-header { display: grid; grid-template-columns: 1fr; gap: 12px; }
+  .header-main { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+  .control-tower-freshness { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 11px 13px; border: 1px solid var(--border); border-left: 4px solid var(--amber); border-radius: 12px; background: var(--surface-soft); }
+  .control-tower-freshness[data-state="STALE"] { border-left-color: #c77d1a; }
+  .control-tower-freshness[data-state="CRITICALLY_STALE"], .control-tower-freshness[data-state="FAILED"] { border-left-color: #a94b2b; }
+  .control-tower-freshness[data-state="REFRESHING"] { border-left-color: #5c7c9a; }
+  .control-tower-freshness-label { color: var(--amber-dark); font-size: 9px; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
+  .control-tower-freshness-title { display: block; margin-top: 3px; font-size: 13px; font-weight: 800; }
+  .control-tower-freshness-details { margin: 3px 0 0; color: var(--muted); font-size: 10px; line-height: 1.45; }
+  .control-tower-refresh-button[hidden] { display: none; }
+  .control-tower-refresh-button { flex: 0 0 auto; border: 1px solid #d99b48; border-radius: 999px; padding: 7px 10px; color: var(--amber-dark); background: var(--amber-pale); font: inherit; font-size: 10px; font-weight: 800; cursor: pointer; }
+  .control-tower-refresh-button:disabled { cursor: wait; opacity: .6; }
+  .map-focus-control[aria-pressed="true"] { border-color: #d99b48; color: var(--amber-dark); background: var(--amber-pale); }
+  .integrated-three-panel.is-map-focus { grid-template-columns: minmax(0, 1fr); }
+  .integrated-three-panel.is-map-focus > .temuan-panel,
+  .integrated-three-panel.is-map-focus > .inspector-panel { display: none; }
+  .integrated-three-panel.is-map-focus > .control-tower-header,
+  .integrated-three-panel.is-map-focus > .view-navigation,
+  .integrated-three-panel.is-map-focus > #overviewView,
+  .integrated-three-panel.is-map-focus > #temuanView { grid-column: 1; }
+  .integrated-three-panel.is-map-focus .map-scroll { overflow-x: hidden; }
+  @media (min-width: 1800px) {
+    .integrated-three-panel:not(.is-map-focus) .map-scroll { overflow-x: hidden; }
+    .integrated-three-panel:not(.is-map-focus) .canvas { width: 1040px; }
+    .integrated-three-panel:not(.is-map-focus) .node { width: 132px; }
+    .integrated-three-panel:not(.is-map-focus) .node[data-key="estimate"] { left: 4px; }
+    .integrated-three-panel:not(.is-map-focus) .node[data-key="quotation"] { left: 155px; }
+    .integrated-three-panel:not(.is-map-focus) .node[data-key="sales-order"] { left: 306px; }
+    .integrated-three-panel:not(.is-map-focus) .node[data-key="fulfilment"] { left: 457px; }
+    .integrated-three-panel:not(.is-map-focus) .node[data-key="delivery"] { left: 608px; }
+    .integrated-three-panel:not(.is-map-focus) .node[data-key="invoice"] { left: 759px; }
+    .integrated-three-panel:not(.is-map-focus) .node[data-key="payment"] { left: 910px; }
+    .integrated-three-panel:not(.is-map-focus) .fulfilment-zone { left: 410px; width: 430px; }
+    .integrated-three-panel:not(.is-map-focus) .material-zone { left: 195px; width: 620px; }
+    .integrated-three-panel:not(.is-map-focus) .stock-journey-zone { left: 457px; }
+    .integrated-three-panel:not(.is-map-focus) .production-zone { left: 315px; width: 600px; }
+    .integrated-three-panel:not(.is-map-focus) .focus-note { left: 780px; width: 240px; }
+  }
+  @media (max-width: 700px) { .header-main, .control-tower-freshness { align-items: flex-start; flex-direction: column; } }
+  @media (prefers-reduced-motion: reduce) { .control-tower-freshness, .map-focus-control, .control-tower-refresh-button { transition: none !important; } }
 </style>
 </head>
 <body>
@@ -198,7 +239,7 @@
   <div id="integratedFindingList" class="integrated-finding-list" aria-live="polite">
     <div class="integrated-finding-card integrated-finding-card--loading" aria-label="Ringkasan temuan">Memuat temuan...</div>
   </div>
-</aside><header class="control-tower-header"><div><h1>Control Tower Operasional</h1><p>Process Map operasional untuk gambaran proses yang mudah dipindai.</p></div><div class="header-actions" aria-label="Navigasi dashboard"><a href="/dashboard/control-tower" aria-current="page">Control Tower</a><a href="/dashboard/internal-orders">Internal Orders</a><a href="/dashboard/sales-orders">Sales Orders</a><a href="/dashboard/internal-order-rekap">Order Material Tracking</a><a href="/logout">Keluar</a></div></header><nav class="view-navigation" aria-label="Bagian Control Tower"><a href="?view=overview">Process Map</a><a href="?view=tracking">Tracking</a><a href="?view=temuan">Temuan</a></nav>
+</aside><header class="control-tower-header"><div class="header-main"><div><h1>Control Tower Operasional</h1><p>Process Map operasional untuk gambaran proses yang mudah dipindai.</p></div><div class="header-actions" aria-label="Navigasi dashboard"><a href="/dashboard/control-tower" aria-current="page">Control Tower</a><a href="/dashboard/internal-orders">Internal Orders</a><a href="/dashboard/sales-orders">Sales Orders</a><a href="/dashboard/internal-order-rekap">Order Material Tracking</a><a href="/logout">Keluar</a></div></div><section class="control-tower-freshness" id="controlTowerFreshness" data-state="LOADING" aria-live="polite"><div><span class="control-tower-freshness-label" id="controlTowerFreshnessLabel">Status data</span><strong class="control-tower-freshness-title" id="controlTowerFreshnessTitle">Memeriksa freshness...</strong><p class="control-tower-freshness-details" id="controlTowerFreshnessDetails">Timestamp trusted snapshot akan ditampilkan setelah health berhasil dibaca.</p></div><button class="control-tower-refresh-button" id="controlTowerRefreshButton" type="button" hidden>Refresh sekarang</button></section></header><nav class="view-navigation" aria-label="Bagian Control Tower"><a href="?view=overview">Process Map</a><a href="?view=tracking">Tracking</a><a href="?view=temuan">Temuan</a></nav>
 <div id="overviewView">
   <header class="page-head">
     <div>
@@ -211,7 +252,7 @@
   <section class="shell" aria-label="Control Tower Process Map prototype">
     <div class="toolbar">
   <div class="toolbar-title">Control Tower · Process Map</div>
-  <button class="state-control back-control" id="overview-control" type="button" hidden>Kembali ke gambaran besar</button>
+  <div class="header-actions"><button class="state-control back-control" id="overview-control" type="button" hidden>Kembali ke gambaran besar</button><button class="state-control map-focus-control" id="map-focus-control" type="button" aria-pressed="false">Fokus Process Map</button></div>
 </div>
 <div class="map-viewport">
     <div class="map-scroll" tabindex="0" aria-label="Scrollable process map canvas">
@@ -314,6 +355,13 @@
   const overviewControl = document.querySelector('#overview-control');
   const mapScroll = document.querySelector('.map-scroll');
   const mapViewport = document.querySelector('.map-viewport');
+  const pageShell = document.querySelector('#controlTowerContent');
+  const mapFocusControl = document.querySelector('#map-focus-control');
+  const controlTowerFreshness = document.querySelector('#controlTowerFreshness');
+  const controlTowerFreshnessLabel = document.querySelector('#controlTowerFreshnessLabel');
+  const controlTowerFreshnessTitle = document.querySelector('#controlTowerFreshnessTitle');
+  const controlTowerFreshnessDetails = document.querySelector('#controlTowerFreshnessDetails');
+  const controlTowerRefreshButton = document.querySelector('#controlTowerRefreshButton');
   const fulfilmentControl = document.querySelector('[data-key="fulfilment"]');
   const focusNoteTitle = document.querySelector('#focus-note-title');
   const focusNoteCopy = document.querySelector('#focus-note-copy');
@@ -338,6 +386,8 @@
   let selectedFindingId = new URLSearchParams(window.location.search).get('selected_finding');
   let selectedProcessKey = new URLSearchParams(window.location.search).get('selected_process');
   let currentState = 'overview';
+  const controlTowerRefreshState = { health: null, refresh: null };
+  let idleResetTimer;
 
   const copy = {
     overview: ['Gambaran besar', 'Primary spine yang tenang dan mudah dipindai.'],
@@ -353,6 +403,87 @@
       .replaceAll('>', '&gt;')
       .replaceAll('"', '&quot;')
       .replaceAll("'", '&#39;');
+  }
+  function freshnessTime(value) {
+    if (!value) return 'belum tersedia';
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleString('id-ID');
+  }
+  function controlTowerFreshnessStatus(health, refresh) {
+    const attempt = health?.latest_refresh_attempt_status;
+    if (refresh?.active || (attempt === 'RUNNING' && !refresh?.stale_attempt)) return 'REFRESHING';
+    if (refresh?.candidate_pending || refresh?.stale_attempt || ['FAILED', 'ABORTED'].includes(attempt)) return 'FAILED';
+    return health?.freshness_classification?.state || health?.freshness || 'FAILED';
+  }
+  function renderControlTowerFreshness(health, refresh, error = '') {
+    if (error || !health) {
+      controlTowerFreshness.dataset.state = 'FAILED';
+      controlTowerFreshnessLabel.textContent = 'FAILED';
+      controlTowerFreshnessTitle.textContent = 'Status data tidak dapat dimuat';
+      controlTowerFreshnessDetails.textContent = error || 'Control Tower data service unavailable.';
+      controlTowerRefreshButton.hidden = true;
+      return;
+    }
+    const status = controlTowerFreshnessStatus(health, refresh);
+    const titles = {
+      CURRENT: 'Snapshot trusted masih current',
+      STALE: 'Snapshot trusted mulai tertinggal',
+      CRITICALLY_STALE: 'Snapshot trusted sangat tertinggal',
+      REFRESHING: 'Refresh sedang berjalan',
+      FAILED: 'Refresh terakhir gagal'
+    };
+    const trusted = health.latest_trusted_completed_at ? `Trusted snapshot selesai ${freshnessTime(health.latest_trusted_completed_at)}.` : 'Belum ada trusted snapshot yang selesai.';
+    const age = health.data_age_hours === null || health.data_age_hours === undefined ? '' : ` Umur data ${health.data_age_hours} jam.`;
+    const failure = health.latest_failure_message ? ` Refresh terakhir: ${health.latest_failure_message}` : '';
+    controlTowerFreshness.dataset.state = status;
+    controlTowerFreshnessLabel.textContent = status;
+    controlTowerFreshnessTitle.textContent = titles[status] || 'Status data tidak tersedia';
+    controlTowerFreshnessDetails.textContent = status === 'REFRESHING'
+      ? `${trusted} Snapshot trusted sebelumnya tetap ditampilkan.`
+      : status === 'FAILED'
+        ? `${trusted}${failure || (refresh?.candidate_pending ? ' Kandidat refresh menunggu publikasi atau recovery administrator.' : ' Periksa log administrator sebelum mencoba kembali.')}`
+        : `${trusted}${age}`;
+    controlTowerRefreshButton.hidden = !refresh?.can_refresh || status === 'REFRESHING';
+  }
+  async function fetchControlTowerJson(url, options = {}) {
+    const response = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json' }, ...options });
+    let payload = {};
+    try { payload = await response.json(); } catch {}
+    if (!response.ok) throw new Error(payload.detail || `Request gagal (${response.status}).`);
+    return payload;
+  }
+  async function loadControlTowerFreshness() {
+    const results = await Promise.allSettled([
+      fetchControlTowerJson('/api/control-tower/health'),
+      fetchControlTowerJson('/api/control-tower/refresh')
+    ]);
+    if (results[0].status === 'rejected') {
+      controlTowerRefreshState.health = null;
+      controlTowerRefreshState.refresh = results[1].status === 'fulfilled' ? results[1].value : null;
+      renderControlTowerFreshness(null, null, results[0].reason?.message || 'Control Tower data service unavailable.');
+      return false;
+    }
+    controlTowerRefreshState.health = results[0].value;
+    controlTowerRefreshState.refresh = results[1].status === 'fulfilled' ? results[1].value : null;
+    renderControlTowerFreshness(controlTowerRefreshState.health, controlTowerRefreshState.refresh);
+    return Boolean(controlTowerRefreshState.refresh?.active);
+  }
+  async function pollControlTowerRefresh(attempt = 0) {
+    const active = await loadControlTowerFreshness();
+    if (active && attempt < 20) window.setTimeout(() => pollControlTowerRefresh(attempt + 1), 3000);
+  }
+  async function requestControlTowerRefresh() {
+    controlTowerRefreshButton.disabled = true;
+    controlTowerRefreshState.refresh = { ...(controlTowerRefreshState.refresh || {}), active: true };
+    renderControlTowerFreshness(controlTowerRefreshState.health, controlTowerRefreshState.refresh);
+    try {
+      await fetchControlTowerJson('/api/control-tower/refresh', { method: 'POST' });
+      await pollControlTowerRefresh();
+    } catch (error) {
+      renderControlTowerFreshness(controlTowerRefreshState.health, { ...(controlTowerRefreshState.refresh || {}), active: false }, error.message);
+    } finally {
+      controlTowerRefreshButton.disabled = false;
+    }
   }
   function findingTime(value) {
     if (!value) return '-';
@@ -791,13 +922,15 @@
       else link.removeAttribute('aria-current');
     });
     categoryRows.forEach(row => row.addEventListener('click', () => {
-      selectedPresentationCategory = row.dataset.presentationCategory;
-      const url = new URL(window.location.href);
-      url.searchParams.set('presentation_category', selectedPresentationCategory);
-      url.searchParams.delete('selected_finding');
-      history.replaceState({}, '', url);
-      selectedFindingId = null;
-      loadFindings();
+      const category = row.dataset.presentationCategory;
+      const returnUrl = new URL(window.location.href);
+      returnUrl.searchParams.set('view', 'overview');
+      returnUrl.searchParams.set('presentation_category', category);
+      returnUrl.searchParams.delete('selected_finding');
+      const destination = new URL('/dashboard/control-tower/temuan', window.location.origin);
+      destination.searchParams.set('presentation_category', category);
+      destination.searchParams.set('return_to', `${returnUrl.pathname}${returnUrl.search}`);
+      window.location.assign(`${destination.pathname}${destination.search}`);
     }));
     loadFindings();
   }
@@ -895,6 +1028,13 @@
   }
   overviewControl.addEventListener('click', () => apply('overview'));
   fulfilmentControl.addEventListener('click', () => apply(currentState === 'overview' ? 'expanded' : 'overview'));
+  mapFocusControl.addEventListener('click', () => {
+    const focused = !pageShell.classList.contains('is-map-focus');
+    pageShell.classList.toggle('is-map-focus', focused);
+    mapFocusControl.setAttribute('aria-pressed', String(focused));
+    mapFocusControl.textContent = focused ? 'Kembali ke 3 panel' : 'Fokus Process Map';
+    requestAnimationFrame(() => { draw(); mapViewport.classList.toggle('has-overflow', mapScroll.scrollWidth > mapScroll.clientWidth + 1); });
+  });
   document.querySelector('[data-choice="manufacturing"]').addEventListener('click', () => apply('focused'));
   document.querySelector('[data-choice="stock"]').addEventListener('click', () => apply('stock-focused'));
   mapScroll.addEventListener('scroll', () => mapViewport.classList.toggle('has-scrolled', mapScroll.scrollLeft > 4));
@@ -973,8 +1113,15 @@
       || currentFindings[0];
     if (selected) selectFinding(selected);
   });
-  window.addEventListener('load', () => { apply('overview'); restoreSelectedProcess(); });
+  function armIdleReset() {
+    window.clearTimeout(idleResetTimer);
+    idleResetTimer = window.setTimeout(() => window.location.assign('/dashboard/control-tower?view=overview'), 120000);
+  }
+  ['pointerdown', 'keydown', 'scroll', 'touchstart'].forEach(eventName => window.addEventListener(eventName, armIdleReset, { passive: true }));
+  controlTowerRefreshButton.addEventListener('click', requestControlTowerRefresh);
+  window.addEventListener('load', () => { apply('overview'); restoreSelectedProcess(); armIdleReset(); });
   initializeView();
+  loadControlTowerFreshness();
 </script>
 </body>
 </html>

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/control-tower/control-tower.css?v=20260722-v03-final">
+<title>Temuan - Control Tower</title>
+<style>
+:root { --page:#f4eee5; --surface:#fffdf9; --surface-soft:#fbf6ee; --ink:#30291f; --muted:#7d7161; --line:#ddcfbb; --amber:#d98e26; --amber-dark:#a96312; --amber-pale:#fff3de; --shadow:0 18px 42px rgba(67,48,27,.10),0 2px 6px rgba(67,48,27,.04); }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--page); color:var(--ink); font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+button,select { font:inherit; }
+.app { max-width:1660px; min-height:100vh; margin:0 auto; padding:28px; }
+.topbar { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; padding-bottom:16px; border-bottom:1px solid var(--line); }
+h1 { margin:0; font-size:clamp(28px,2.4vw,38px); line-height:1.1; letter-spacing:-.035em; }
+h2 { margin:0; font-size:20px; }
+p { line-height:1.45; }
+.muted { color:var(--muted); font-size:12px; }
+.nav { display:flex; flex-wrap:wrap; gap:7px; }
+.nav a,.button { border:1px solid var(--line); border-radius:999px; padding:8px 12px; color:var(--muted); background:var(--surface); font-size:11px; font-weight:750; text-decoration:none; cursor:pointer; }
+.nav a[aria-current=page],.button.primary { border-color:#d99b48; color:var(--amber-dark); background:var(--amber-pale); }
+.freshness-banner { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin:18px 0; padding:14px 16px; border:1px solid var(--line); border-left:5px solid var(--amber); border-radius:14px; background:var(--surface); box-shadow:var(--shadow); }
+.freshness-banner[data-state=STALE] { border-left-color:#c77d1a; }
+.freshness-banner[data-state=CRITICALLY_STALE],.freshness-banner[data-state=FAILED] { border-left-color:#a94b2b; }
+.freshness-banner[data-state=REFRESHING] { border-left-color:#5c7c9a; }
+.freshness-label { color:var(--amber-dark); font-size:10px; font-weight:850; letter-spacing:.08em; text-transform:uppercase; }
+.freshness-title { margin-top:4px; font-size:16px; font-weight:800; }
+.freshness-details { margin:4px 0 0; color:var(--muted); font-size:11px; }
+.refresh-button[hidden] { display:none; }
+.filters { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)) auto; gap:10px; padding:16px; border:1px solid var(--line); border-radius:16px; background:var(--surface-soft); }
+.filter label { display:block; margin-bottom:5px; color:var(--muted); font-size:10px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
+.filter select { width:100%; min-height:36px; border:1px solid var(--line); border-radius:9px; padding:7px 9px; color:var(--ink); background:var(--surface); font-size:12px; }
+.filter-actions { display:flex; align-items:flex-end; }
+.worklist-layout { display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:16px; margin-top:16px; }
+.panel { min-width:0; padding:18px; border:1px solid var(--line); border-radius:18px; background:var(--surface); box-shadow:var(--shadow); }
+.status-line { margin:10px 0 14px; color:var(--muted); font-size:12px; }
+.status-line[data-state=error] { color:#9b4225; }
+.status-line[data-state=empty] { color:var(--muted); }
+.finding-list { display:grid; gap:10px; }
+.finding-card { padding:14px; border:1px solid var(--line); border-radius:13px; background:var(--surface-soft); }
+.finding-card[data-selected=true] { border-color:var(--amber); background:var(--amber-pale); }
+.finding-select { display:block; width:100%; border:0; padding:0; color:inherit; background:transparent; text-align:left; cursor:pointer; }
+.finding-select:focus-visible { outline:2px solid var(--amber); outline-offset:4px; }
+.finding-card .category { color:var(--amber-dark); font-size:10px; font-weight:850; letter-spacing:.07em; text-transform:uppercase; }
+.finding-title { display:block; margin:6px 0 5px; font-size:14px; font-weight:800; }
+.finding-summary { display:block; color:var(--muted); font-size:12px; line-height:1.45; }
+.finding-meta { display:flex; flex-wrap:wrap; gap:6px 12px; margin-top:10px; color:var(--muted); font-size:10px; }
+.finding-meta strong { color:var(--ink); }
+.finding-card a { display:inline-block; margin-top:10px; color:var(--amber-dark); font-size:11px; font-weight:800; }
+.pagination { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:14px; color:var(--muted); font-size:11px; }
+.pagination button:disabled { cursor:not-allowed; opacity:.45; }
+.inspector { position:sticky; top:18px; align-self:start; min-height:480px; }
+.inspector-state { margin:14px 0; padding:10px; border-left:3px solid var(--amber); color:var(--muted); background:var(--surface-soft); font-size:12px; line-height:1.5; }
+.inspector dl { display:grid; grid-template-columns:max-content 1fr; gap:7px 12px; margin:0; font-size:11px; }
+.inspector dt { color:var(--muted); }
+.inspector dd { margin:0; overflow-wrap:anywhere; }
+.inspector-section { padding:13px 0; border-top:1px solid var(--line); }
+.inspector-section h3 { margin:0 0 6px; color:var(--amber-dark); font-size:10px; letter-spacing:.07em; text-transform:uppercase; }
+.inspector-section p { margin:0; font-size:12px; }
+.inspector a { color:var(--amber-dark); font-weight:800; }
+.raw-evidence { max-height:220px; overflow:auto; white-space:pre-wrap; color:var(--muted); font:10px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; }
+.empty,.error,.loading { padding:26px 14px; border:1px dashed var(--line); border-radius:12px; color:var(--muted); font-size:12px; line-height:1.5; }
+.error { border-color:#d7a18d; color:#9b4225; background:#fff8f4; }
+.retry { margin-top:10px; }
+@media (max-width:1200px) { .filters { grid-template-columns:repeat(2,minmax(0,1fr)); } .worklist-layout { grid-template-columns:1fr; } .inspector { position:static; } }
+@media (max-width:700px) { .app { padding:16px; } .topbar,.freshness-banner { flex-direction:column; } .filters { grid-template-columns:1fr; } }
+@media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto !important; transition:none !important; animation:none !important; } }
+</style>
+</head>
+<body>
+<main class="app" id="temuanApp">
+<header class="topbar">
+  <div><p class="freshness-label">Control Tower / Temuan</p><h1>Temuan</h1><p class="muted">Worklist berbasis evidence snapshot. Kategori presentasi tidak menggantikan klasifikasi rule asli.</p></div>
+  <nav class="nav" aria-label="Navigasi Control Tower"><a id="backLink" href="/dashboard/control-tower">Kembali ke Control Tower</a><a href="/dashboard/internal-orders">Internal Order Traceability</a><a href="/dashboard/sales-orders">Sales Order Traceability</a><a href="/dashboard/internal-order-rekap">Order Material Tracking</a><a href="/logout">Keluar</a></nav>
+</header>
+<section class="freshness-banner" id="freshnessBanner" data-state="LOADING" aria-live="polite">
+  <div><div class="freshness-label" id="freshnessLabel">Status data</div><div class="freshness-title" id="freshnessTitle">Memeriksa freshness...</div><p class="freshness-details" id="freshnessDetails">Timestamp trusted snapshot akan ditampilkan setelah health berhasil dibaca.</p></div>
+  <button class="button primary refresh-button" id="refreshButton" type="button" hidden>Refresh sekarang</button>
+</section>
+<section class="filters" aria-label="Filter Temuan">
+  <div class="filter"><label for="categoryFilter">Kategori</label><select id="categoryFilter"></select></div>
+  <div class="filter"><label for="processFilter">Proses</label><select id="processFilter"></select></div>
+  <div class="filter"><label for="ruleFilter">Rule</label><select id="ruleFilter"></select></div>
+  <div class="filter"><label for="severityFilter">Severity</label><select id="severityFilter"></select></div>
+  <div class="filter"><label for="sortFilter">Urutan</label><select id="sortFilter"></select></div>
+  <div class="filter-actions"><button class="button" id="clearFilters" type="button">Bersihkan</button></div>
+</section>
+<section class="panel" aria-label="Ringkasan Temuan" style="margin-top:16px"><div class="status-line" id="categorySummary">Memuat ringkasan kategori...</div></section>
+<section class="worklist-layout">
+  <section class="panel" aria-labelledby="worklistHeading"><h2 id="worklistHeading">Daftar Temuan</h2><div class="status-line" id="worklistStatus" role="status" aria-live="polite">Memuat...</div><div class="finding-list" id="findingList"></div><div class="pagination"><button class="button" id="previousPage" type="button">Sebelumnya</button><span id="paginationStatus">-</span><button class="button" id="nextPage" type="button">Berikutnya</button></div></section>
+  <aside class="panel inspector" aria-labelledby="inspectorHeading"><h2 id="inspectorHeading">Process Inspector</h2><div class="inspector-state" id="inspectorState">Pilih result untuk melihat evidence.</div><div id="inspectorBody" hidden><dl><dt>Presentation</dt><dd id="inspectorPresentation"></dd><dt>Rule asli</dt><dd id="inspectorRule"></dd><dt>Status</dt><dd id="inspectorStatus"></dd><dt>Severity</dt><dd id="inspectorSeverity"></dd><dt>Confidence</dt><dd id="inspectorConfidence"></dd><dt>Model / document</dt><dd id="inspectorDocument"></dd></dl><section class="inspector-section"><h3>Penjelasan</h3><p id="inspectorExplanation"></p></section><section class="inspector-section"><h3>Evidence didukung</h3><p id="inspectorEvidence"></p></section><section class="inspector-section"><h3>Limitation</h3><p id="inspectorLimitation"></p></section><section class="inspector-section"><h3>Destination</h3><p id="inspectorDestination"></p></section><details class="inspector-section"><summary>Bukti mentah (sekunder)</summary><pre class="raw-evidence" id="inspectorRaw"></pre></details></div></aside>
+</section>
+</main>
+<script src="/static/dashboard/temuan.js?v=20260729-office-pilot"></script>
+</body>
+</html>

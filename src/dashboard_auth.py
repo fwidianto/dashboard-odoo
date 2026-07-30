@@ -46,5 +46,14 @@ def read_dashboard_session(raw_value: Optional[str]) -> Optional[dict]:
     return None
 
 
+def session_payload(request: Request) -> Optional[dict]:
+    return read_dashboard_session(request.cookies.get(DASHBOARD_SESSION_COOKIE))
+
+
 def is_authenticated(request: Request) -> bool:
-    return read_dashboard_session(request.cookies.get(DASHBOARD_SESSION_COOKIE)) is not None
+    return session_payload(request) is not None
+
+
+def is_admin(request: Request) -> bool:
+    payload = session_payload(request)
+    return bool(payload and payload.get("dashboard_role") == "admin")

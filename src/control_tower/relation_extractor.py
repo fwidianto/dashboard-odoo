@@ -368,6 +368,10 @@ class ControlTowerRelationExtractor:
         finally:
             raw.close()
 
+        from src.control_tower.refresh import ensure_refresh_schema
+
+        ensure_refresh_schema(self.pg)
+
     def _available_fields(self, spec: ModelSpec) -> tuple[list[str], dict[str, dict]]:
         metadata = self.odoo.get_model_fields(spec.model)
         available = [field for field in spec.fields if field in metadata]
@@ -646,20 +650,51 @@ class ControlTowerRelationExtractor:
                 )
         return len(unique)
 
-    def run(self) -> dict[str, Any]:
-        """Jalankan extraction lengkap dan publish hanya ketika run COMPLETED."""
-        self.ensure_schema()
+    def run(
+        self,
+        *,
+        lock_held: bool = False,
+        trigger: str = "manual",
+        requested_by: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Extract one candidate; publication is a separate safe transaction."""
+        from src.control_tower.refresh import advisory_refresh_lock
+
+        if lock_held:
+            self.ensure_schema()
+            return self._run_unlocked(trigger=trigger, requested_by=requested_by)
+
+        with advisory_refresh_lock(self.pg):
+            self.ensure_schema()
+            return self._run_unlocked(trigger=trigger, requested_by=requested_by)
+
+    def _run_unlocked(
+        self,
+        *,
+        trigger: str,
+        requested_by: Optional[str],
+    ) -> dict[str, Any]:
         run_id = str(uuid4())
         started_at = datetime.now(timezone.utc)
+        started_clock = datetime.now(timezone.utc)
         model_counts: dict[str, int] = {}
 
         with self.pg.engine.begin() as conn:
             conn.execute(
                 text("""
-                    INSERT INTO ct_extraction_run (run_id, started_at, status, company_id)
-                    VALUES (CAST(:run_id AS UUID), :started_at, 'RUNNING', :company_id)
+                    INSERT INTO ct_extraction_run
+                        (run_id, started_at, status, company_id, trigger, requested_by)
+                    VALUES
+                        (CAST(:run_id AS UUID), :started_at, 'RUNNING',
+                         :company_id, :trigger, :requested_by)
                 """),
-                {"run_id": run_id, "started_at": started_at, "company_id": self.company_id},
+                {
+                    "run_id": run_id,
+                    "started_at": started_at,
+                    "company_id": self.company_id,
+                    "trigger": trigger,
+                    "requested_by": requested_by,
+                },
             )
 
         try:
@@ -678,49 +713,88 @@ class ControlTowerRelationExtractor:
                 *self._iter_inferred_links(all_snapshots, name_index),
             ]
             link_count = self._insert_links(links, run_id, started_at)
+            finished_at = datetime.now(timezone.utc)
+            stage_timings = {
+                "extraction_seconds": round((finished_at - started_clock).total_seconds(), 3),
+            }
 
-            completed_at = datetime.now(timezone.utc)
             with self.pg.engine.begin() as conn:
                 conn.execute(
                     text("""
                         UPDATE ct_extraction_run
-                        SET completed_at = :completed_at,
-                            status = 'COMPLETED',
-                            model_counts = CAST(:model_counts AS JSONB)
+                        SET status = 'READY_FOR_PUBLISH',
+                            finished_at = :finished_at,
+                            duration_seconds = EXTRACT(EPOCH FROM (:finished_at - started_at)),
+                            model_counts = CAST(:model_counts AS JSONB),
+                            stage_timings = CAST(:stage_timings AS JSONB)
                         WHERE run_id = CAST(:run_id AS UUID)
                     """),
                     {
-                        "completed_at": completed_at,
+                        "finished_at": finished_at,
                         "model_counts": json.dumps({**model_counts, "document_links": link_count}),
+                        "stage_timings": json.dumps(stage_timings),
                         "run_id": run_id,
                     },
                 )
 
             return {
                 "run_id": run_id,
-                "status": "COMPLETED",
+                "status": "READY_FOR_PUBLISH",
                 "company_id": self.company_id,
                 "model_counts": model_counts,
                 "document_links": link_count,
                 "started_at": started_at.isoformat(),
-                "completed_at": completed_at.isoformat(),
+                "finished_at": finished_at.isoformat(),
             }
+        except (KeyboardInterrupt, SystemExit) as exc:
+            finished_at = datetime.now(timezone.utc)
+            try:
+                with self.pg.engine.begin() as conn:
+                    conn.execute(
+                        text("""
+                            UPDATE ct_extraction_run
+                            SET status = 'ABORTED',
+                                finished_at = :finished_at,
+                                duration_seconds = EXTRACT(EPOCH FROM (:finished_at - started_at)),
+                                model_counts = CAST(:model_counts AS JSONB),
+                                error_message = :error_message
+                            WHERE run_id = CAST(:run_id AS UUID)
+                              AND status = 'RUNNING'
+                        """),
+                        {
+                            "finished_at": finished_at,
+                            "model_counts": json.dumps(model_counts),
+                            "error_message": f"ABORTED: {type(exc).__name__}",
+                            "run_id": run_id,
+                        },
+                    )
+            except Exception:
+                self.logger.exception("Could not finalize interrupted Control Tower run")
+            raise
         except Exception as exc:
-            completed_at = datetime.now(timezone.utc)
+            finished_at = datetime.now(timezone.utc)
+            try:
+                from src.control_tower.refresh import sanitize_diagnostic
+
+                error_message = sanitize_diagnostic(exc)
+            except Exception:
+                error_message = str(exc)[:300]
             with self.pg.engine.begin() as conn:
                 conn.execute(
                     text("""
                         UPDATE ct_extraction_run
-                        SET completed_at = :completed_at,
-                            status = 'FAILED',
+                        SET status = 'FAILED',
+                            finished_at = :finished_at,
+                            duration_seconds = EXTRACT(EPOCH FROM (:finished_at - started_at)),
                             model_counts = CAST(:model_counts AS JSONB),
                             error_message = :error_message
                         WHERE run_id = CAST(:run_id AS UUID)
+                          AND status = 'RUNNING'
                     """),
                     {
-                        "completed_at": completed_at,
+                        "finished_at": finished_at,
                         "model_counts": json.dumps(model_counts),
-                        "error_message": str(exc),
+                        "error_message": error_message,
                         "run_id": run_id,
                     },
                 )
