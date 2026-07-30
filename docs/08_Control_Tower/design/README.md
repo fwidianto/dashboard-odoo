@@ -30,6 +30,25 @@ The Control Tower remains the overview and process-map surface. Temuan remains t
 3. [`02_PAGE_TEMPLATES_AND_ACCEPTANCE.md`](02_PAGE_TEMPLATES_AND_ACCEPTANCE.md)  
    Per-page requirements, office and desk modes, implementation sequence, validation matrix, and owner acceptance gates.
 
+4. [`03_FRONTEND_RECOVERY_ROADMAP.md`](03_FRONTEND_RECOVERY_ROADMAP.md)  
+   Seven-phase recovery workflow, comparable-product lessons, tool responsibilities, phase gates, anti-failure controls, artifact structure, and current starting point.
+
+## Recovery roadmap authority
+
+The recovery roadmap controls the order of work until the representative Control Tower frontend is visually approved and stabilized.
+
+Current state:
+
+```text
+Global lifecycle: Design
+Current milestone: Control Tower frontend recovery
+Current phase: Phase 1 — Establish visual evidence
+Production UI changes: Blocked until golden-screen approval
+Other-page propagation: Blocked until Control Tower approval
+```
+
+No phase may silently continue into the next. The roadmap does not replace frozen business rules or this design specification set; it controls how the frontend work is diagnosed, prototyped, approved, implemented, and expanded.
+
 ## Visual design authority and precedence
 
 For frontend implementation, use this precedence:
@@ -120,15 +139,15 @@ If the authoritative baseline is missing, contradictory, or not recoverable, sto
 
 Before changing UI code, Codex must:
 
-1. read all three specification files and this README;
-2. identify the authoritative golden-screen artifact;
+1. read all three specification files, this README, and the frontend recovery roadmap;
+2. identify the current recovery phase and authoritative visual evidence;
 3. state the active page or component package;
 4. identify user-visible before and after states;
 5. list exact non-scope;
 6. preserve current data and navigation behavior;
 7. render the representative page at the required viewport;
-8. compare it side by side with the approved baseline;
-9. stop after the authorized bounded package for owner visual review.
+8. compare it side by side with the approved baseline when one exists;
+9. stop after the authorized bounded phase or package for owner review.
 
 Passing unit tests, DOM inspection, accessibility checks, or overflow checks does not equal design acceptance.
 
