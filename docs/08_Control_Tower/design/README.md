@@ -42,9 +42,11 @@ For frontend implementation, use this precedence:
 6. external visual references;
 7. model-generated recommendations and implementation preferences.
 
-External references are **modifiers, not replacements**. A reference may improve only a named property such as spacing, density, panel collapse behavior, typography, table treatment, or motion. It must not replace the approved Control Tower identity, process structure, terminology, information hierarchy, or composition without explicit owner approval.
+External references are controlled inputs, not automatic redesign authority. They may improve named properties such as spacing, density, panel behavior, typography, table treatment, motion, or overall composition. Their relevance must be verified against the actual Control Tower before adoption.
 
-The earliest owner-approved Control Tower design remains the visual lineage until a later golden screen is explicitly approved as its successor. A new session, agent, model, reference, or generated concept does not reset that lineage.
+The current implementation is the working base for the next design pass unless the owner explicitly chooses another starting point. Earlier designs may be used as comparative evidence where they demonstrate more mature composition or hierarchy. No historical design is permanently immutable: a revised golden screen becomes the new authority only after explicit owner approval.
+
+A new session, agent, model, reference, or generated concept must not silently reset the design direction.
 
 This specification does not authorize changes to validation rules, SQL meaning, document relationships, authentication, company isolation, refresh safety, or Odoo read-only behavior.
 
@@ -55,11 +57,12 @@ The repository does not yet contain one owner-approved golden-screen artifact th
 Therefore:
 
 - do not begin another broad Control Tower redesign;
-- first recover or recreate the owner-approved visual lineage as one bounded golden screen;
-- use real approved process structure and terminology;
+- polish the existing Control Tower as one bounded golden-screen exercise;
+- compare it against the earlier, more mature design and selected external references only for clearly identified improvements;
+- preserve the approved process structure, terminology, panel behavior, navigation behavior, and data meaning;
 - obtain owner approval of the rendered golden screen;
 - store the approved artifact durably in this design folder or another explicitly named canonical path;
-- only then implement or propagate the design.
+- only then implement broadly or propagate the design to other pages.
 
 Generated images may support mood or composition discussion, but they are not precise UI specifications and must not become the canonical baseline.
 
