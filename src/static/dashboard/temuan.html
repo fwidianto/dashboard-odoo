@@ -66,12 +66,34 @@ p { line-height:1.45; }
 @media (max-width:700px) { .app { padding:16px; } .topbar,.freshness-banner { flex-direction:column; } .filters { grid-template-columns:1fr; } }
 @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto !important; transition:none !important; animation:none !important; } }
 </style>
+<link rel="stylesheet" href="/static/dashboard/control-tower-shell.css?v=20260730-ui-unification-6">
 </head>
-<body>
+<body data-ct-page="temuan">
+<header class="ct-app-header" data-ct-shell-header>
+  <a class="ct-brand" href="/dashboard/control-tower">
+    <span class="ct-brand-mark" aria-hidden="true">CT</span>
+    <span class="ct-brand-copy"><strong>Control Tower Operasional</strong><small>Evidence-led operations workspace</small></span>
+  </a>
+  <nav class="ct-primary-nav" aria-label="Navigasi utama">
+    <a data-ct-route="control-tower" href="/dashboard/control-tower">Control Tower</a>
+    <a data-ct-route="temuan" href="/dashboard/control-tower/temuan">Temuan</a>
+    <a data-ct-route="sales-orders" href="/dashboard/sales-orders">Sales Orders</a>
+    <a data-ct-route="internal-orders" href="/dashboard/internal-orders">Internal Orders</a>
+    <a data-ct-route="internal-order-rekap" href="/dashboard/internal-order-rekap">Order Material Tracking</a>
+  </nav>
+  <div class="ct-header-tools">
+    <div class="ct-freshness-compact" data-ct-freshness data-state="LOADING" title="Memeriksa status data" aria-live="polite">
+      <span class="ct-freshness-state" data-ct-freshness-state>LOADING</span>
+      <span class="ct-freshness-time" data-ct-freshness-time>Memeriksa data...</span>
+    </div>
+    <a class="ct-exit" href="/logout">Keluar</a>
+  </div>
+</header>
 <main class="app" id="temuanApp">
-<header class="topbar">
+<a class="ct-context-return" id="backLink" data-ct-context-return href="/dashboard/control-tower">Kembali ke Control Tower</a>
+<header class="page-header ct-legacy-page-header">
   <div><p class="freshness-label">Control Tower / Temuan</p><h1>Temuan</h1><p class="muted">Worklist berbasis evidence snapshot. Kategori presentasi tidak menggantikan klasifikasi rule asli.</p></div>
-  <nav class="nav" aria-label="Navigasi Control Tower"><a id="backLink" href="/dashboard/control-tower">Kembali ke Control Tower</a><a href="/dashboard/internal-orders">Internal Order Traceability</a><a href="/dashboard/sales-orders">Sales Order Traceability</a><a href="/dashboard/internal-order-rekap">Order Material Tracking</a><a href="/logout">Keluar</a></nav>
+  <nav class="nav" aria-label="Navigasi lama"></nav>
 </header>
 <section class="freshness-banner" id="freshnessBanner" data-state="LOADING" aria-live="polite">
   <div><div class="freshness-label" id="freshnessLabel">Status data</div><div class="freshness-title" id="freshnessTitle">Memeriksa freshness...</div><p class="freshness-details" id="freshnessDetails">Timestamp trusted snapshot akan ditampilkan setelah health berhasil dibaca.</p></div>
@@ -88,9 +110,10 @@ p { line-height:1.45; }
 <section class="panel" aria-label="Ringkasan Temuan" style="margin-top:16px"><div class="status-line" id="categorySummary">Memuat ringkasan kategori...</div></section>
 <section class="worklist-layout">
   <section class="panel" aria-labelledby="worklistHeading"><h2 id="worklistHeading">Daftar Temuan</h2><div class="status-line" id="worklistStatus" role="status" aria-live="polite">Memuat...</div><div class="finding-list" id="findingList"></div><div class="pagination"><button class="button" id="previousPage" type="button">Sebelumnya</button><span id="paginationStatus">-</span><button class="button" id="nextPage" type="button">Berikutnya</button></div></section>
-  <aside class="panel inspector" aria-labelledby="inspectorHeading"><h2 id="inspectorHeading">Process Inspector</h2><div class="inspector-state" id="inspectorState">Pilih result untuk melihat evidence.</div><div id="inspectorBody" hidden><dl><dt>Presentation</dt><dd id="inspectorPresentation"></dd><dt>Rule asli</dt><dd id="inspectorRule"></dd><dt>Status</dt><dd id="inspectorStatus"></dd><dt>Severity</dt><dd id="inspectorSeverity"></dd><dt>Confidence</dt><dd id="inspectorConfidence"></dd><dt>Model / document</dt><dd id="inspectorDocument"></dd></dl><section class="inspector-section"><h3>Penjelasan</h3><p id="inspectorExplanation"></p></section><section class="inspector-section"><h3>Evidence didukung</h3><p id="inspectorEvidence"></p></section><section class="inspector-section"><h3>Limitation</h3><p id="inspectorLimitation"></p></section><section class="inspector-section"><h3>Destination</h3><p id="inspectorDestination"></p></section><details class="inspector-section"><summary>Bukti mentah (sekunder)</summary><pre class="raw-evidence" id="inspectorRaw"></pre></details></div></aside>
+  <aside class="panel inspector" aria-labelledby="inspectorHeading"><h2 id="inspectorHeading">Process Inspector</h2><div class="inspector-state" id="inspectorState">Pilih result untuk melihat evidence.</div><div id="inspectorBody" hidden><dl><dt>Presentation</dt><dd id="inspectorPresentation"></dd><dt>Process</dt><dd id="inspectorProcess"></dd><dt>Rule asli</dt><dd id="inspectorRule"></dd><dt>Status</dt><dd id="inspectorStatus"></dd><dt>Severity</dt><dd id="inspectorSeverity"></dd><dt>Confidence</dt><dd id="inspectorConfidence"></dd><dt>Model / document</dt><dd id="inspectorDocument"></dd></dl><section class="inspector-section"><h3>Penjelasan</h3><p id="inspectorExplanation"></p></section><section class="inspector-section"><h3>Evidence didukung</h3><p id="inspectorEvidence"></p></section><section class="inspector-section"><h3>Limitation</h3><p id="inspectorLimitation"></p></section><section class="inspector-section"><h3>Destination</h3><p id="inspectorDestination"></p></section><details class="inspector-section"><summary>Bukti mentah (sekunder)</summary><pre class="raw-evidence" id="inspectorRaw"></pre></details></div></aside>
 </section>
 </main>
-<script src="/static/dashboard/temuan.js?v=20260729-office-pilot"></script>
+<script src="/static/dashboard/control-tower-shell.js?v=20260730-ui-unification-2"></script>
+<script src="/static/dashboard/temuan.js?v=20260730-ui-unification-2"></script>
 </body>
 </html>

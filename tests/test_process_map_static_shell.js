@@ -2,31 +2,34 @@ const fs = require("node:fs");
 "use strict";
 const assert = require("node:assert/strict");
 const page = fs.readFileSync("src/static/dashboard/control-tower.html", "utf8");
+const shell = fs.readFileSync("src/static/dashboard/control-tower-shell.js", "utf8");
 const api = fs.readFileSync("src/api.py", "utf8");
-assert.deepEqual([...new Set([...page.matchAll(/data-choice="([^"]+)"/g)].map((match) => match[1]))], ["manufacturing", "stock"]);
 assert.doesNotMatch(page, /[\u00c2\u00c3]/);
-assert.doesNotMatch(page, /const entry|salesOrder\.cx.*stockSteps/);
-for (const label of ["Estimasi / RKB Kasar", "Quotation", "Sales Order", "Fulfilment", "Delivery", "Invoice", "Payment", "Manufacturing Order", "From Stock / Internal Order", "RKB Pekerjaan", "Cek Stock", "ROP", "Purchase Order", "Receipt &amp; QC", "Internal Order", "Stock Material", "Manufacture", "Finished Goods", "Kembali ke gambaran besar", "opsional sebelum SO", "bukan syarat From Stock"]) assert.ok(page.includes(label), label);
-assert.doesNotMatch(page, /owner visual review|Review flow|1\. Overview|2\. Fulfilment expanded|3\. MO journey|4\. Stock \/ IO journey/);
-assert.match(page, /route reference/);
-assert.match(page, /stockChoice/);
-assert.match(page, /data-key="fulfilment".*?addEventListener/s);
-assert.match(page, /prefers-reduced-motion/);
-assert.match(page, /id="controlTowerFreshness"/);
-for (const state of ["CURRENT", "STALE", "CRITICALLY_STALE", "REFRESHING", "FAILED"]) assert.ok(page.includes(state), state);
-assert.match(page, /id="map-focus-control"/);
-assert.match(page, /is-map-focus/);
-assert.match(page, /120000/);
-assert.match(page, /\/dashboard\/control-tower\/temuan/);
-assert.match(page, /overflow-x: auto/);
-assert.match(page, /Geser untuk melihat alur/);
-assert.match(page, /<button class="node fulfilment"[^>]*type="button"[^>]*aria-expanded="false"[^>]*aria-controls="fulfilment-choices"[^>]*aria-label="Tampilkan pilihan Fulfilment"/);
-assert.match(page, /<div class="choices" id="fulfilment-choices">/);
-assert.match(page, /fulfilmentControl\.setAttribute\('aria-expanded', String\(state !== 'overview'\)\)/);
-assert.match(page, /fulfilmentControl\.addEventListener\('click', \(\) => apply\(currentState === 'overview' \? 'expanded' : 'overview'\)\)/);
-assert.doesNotMatch(page, /fulfilmentControl\.addEventListener\('(keydown|keyup)'/);
-assert.match(page, /<div class="map-viewport">\s*<div class="map-scroll"[\s\S]*?<\/div>\s*<div class="scroll-cue"[^>]*>Geser untuk melihat alur/);
-assert.match(page, /mapViewport\.classList\.toggle\('has-overflow', mapScroll\.scrollWidth > mapScroll\.clientWidth \+ 1\)/);
-assert.match(page, /mapScroll\.addEventListener\('scroll', \(\) => mapViewport\.classList\.toggle\('has-scrolled', mapScroll\.scrollLeft > 4\)\)/);
+assert.match(page, /class="ct-immersive-page"/);
+for (const attribute of [
+  "data-ct-freshness",
+  "data-ct-refresh",
+  "data-ct-mode-toggle",
+  "data-ct-temuan",
+  "data-ct-inspector",
+  "data-ct-open-documents",
+  "data-ct-map-scroll",
+  "data-ct-scroll-cue"
+]) assert.match(page, new RegExp(attribute), attribute);
+for (const key of ["sales-order", "manufacturing-order", "internal-order", "material-purchase-order"]) {
+  assert.match(page, new RegExp('data-process-key="' + key + '"'), key);
+}
+for (const category of ["MASALAH_AKTIF", "PERLU_DITINJAU", "DATA_BELUM_LENGKAP"]) {
+  assert.match(page, new RegExp('data-ct-category-count="' + category + '"'), category);
+  assert.match(page, new RegExp('data-ct-inspector-count="' + category + '"'), category);
+}
+assert.match(page, /data-ct-process-node/);
+assert.match(shell, /function evidenceStateForNode/);
+assert.match(shell, /coverage\.state !== "MAPPED"/);
+assert.match(shell, /function coverageMessageForNode/);
+assert.match(shell, /function formatCount/);
+assert.match(shell, /Promise\.allSettled/);
+assert.match(shell, /categoryDestination/);
+assert.match(shell, /\/dashboard\/control-tower\/temuan/);
 assert.match(api, /@app\.get\("\/dashboard\/control-tower"/);
-console.log("Integrated Process Map correction checks passed");
+console.log("Immersive Process Map static contracts passed");

@@ -3,22 +3,39 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sales Order Traceability Dashboard</title>
+  <title>Sales Orders - Control Tower Operasional</title>
   <link rel="stylesheet" href="/static/dashboard/sales-orders.css?v=20260703-review-ui">
+  <link rel="stylesheet" href="/static/dashboard/control-tower-shell.css?v=20260730-ui-unification-6">
 </head>
-<body>
+<body data-ct-page="sales-orders">
+  <header class="ct-app-header" data-ct-shell-header>
+    <a class="ct-brand" href="/dashboard/control-tower">
+      <span class="ct-brand-mark" aria-hidden="true">CT</span>
+      <span class="ct-brand-copy"><strong>Control Tower Operasional</strong><small>Evidence-led operations workspace</small></span>
+    </a>
+    <nav class="ct-primary-nav" aria-label="Navigasi utama">
+      <a data-ct-route="control-tower" href="/dashboard/control-tower">Control Tower</a>
+      <a data-ct-route="temuan" href="/dashboard/control-tower/temuan">Temuan</a>
+      <a data-ct-route="sales-orders" href="/dashboard/sales-orders">Sales Orders</a>
+      <a data-ct-route="internal-orders" href="/dashboard/internal-orders">Internal Orders</a>
+      <a data-ct-route="internal-order-rekap" href="/dashboard/internal-order-rekap">Order Material Tracking</a>
+    </nav>
+    <div class="ct-header-tools">
+      <div class="ct-freshness-compact" data-ct-freshness data-state="LOADING" title="Memeriksa status data" aria-live="polite">
+        <span class="ct-freshness-state" data-ct-freshness-state>LOADING</span>
+        <span class="ct-freshness-time" data-ct-freshness-time>Memeriksa data...</span>
+      </div>
+      <a class="ct-exit" href="/logout">Keluar</a>
+    </div>
+  </header>
   <main class="page-shell sales-dashboard">
+    <a class="ct-context-return" id="returnToControlTower" data-ct-context-return href="#" hidden>Kembali ke Control Tower</a>
     <header class="page-header">
       <div>
         <h1>Sales Order Traceability</h1>
         <p>Sales Order -> source -> production -> delivery progress -> invoice progress</p>
       </div>
       <div class="header-actions">
-        <a class="secondary-button" id="returnToControlTower" href="#" hidden>Return to Control Tower</a>
-        <a class="secondary-button" href="/dashboard/internal-orders">Internal Orders</a>
-        <a class="secondary-button is-current" href="/dashboard/sales-orders" aria-current="page">Sales Orders</a>
-        <a class="secondary-button" href="/dashboard/internal-order-rekap">Order Material Tracking</a>
-        <a class="secondary-button" href="/logout">Logout</a>
         <button class="icon-button" id="refreshButton" type="button" title="Refresh data" aria-label="Refresh data">
           <span aria-hidden="true">R</span>
         </button>
@@ -199,7 +216,8 @@
 
   <script src="/static/dashboard/dashboard-table-tools.js"></script>
   <script src="/static/dashboard/dashboard-export.js"></script>
-  <script src="/static/dashboard/sales-orders.js?v=20260703-review-ui"></script>
+  <script src="/static/dashboard/control-tower-shell.js?v=20260730-ui-unification-2"></script>
+  <script src="/static/dashboard/sales-orders.js?v=20260730-ui-unification"></script>
 </body>
 </html>
 

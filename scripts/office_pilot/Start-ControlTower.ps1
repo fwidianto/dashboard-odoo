@@ -2,7 +2,7 @@
 param(
     [string]$ProjectRoot,
     [string]$PythonPath,
-    [string]$Host = '127.0.0.1',
+    [string]$HostAddress = '127.0.0.1',
     [int]$Port = 8000,
     [string]$LogDirectory,
     [switch]$Foreground
@@ -25,7 +25,18 @@ if (Test-Path -LiteralPath $pidPath) {
     Remove-Item -LiteralPath $pidPath -Force
 }
 
-$arguments = @('-m', 'uvicorn', 'src.api:app', '--host', $Host, '--port', [string]$Port)
+$healthUrl = 'http://' + $HostAddress + ':' + $Port + '/health'
+try {
+    $response = Invoke-WebRequest -UseBasicParsing -Uri $healthUrl -TimeoutSec 2
+    $payload = $response.Content | ConvertFrom-Json
+    $healthFields = @($payload.PSObject.Properties.Name)
+    if ($response.StatusCode -eq 200 -and $healthFields -contains 'status' -and $healthFields -contains 'odoo_connected' -and $healthFields -contains 'postgres_connected') {
+        Write-Output ('Control Tower already responding at ' + $healthUrl + '.')
+        exit 0
+    }
+} catch { }
+
+$arguments = @('-m', 'uvicorn', 'src.api:app', '--host', $HostAddress, '--port', [string]$Port)
 if ($Foreground) {
     Push-Location $ProjectRoot
     try {

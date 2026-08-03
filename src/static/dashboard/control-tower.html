@@ -1,1127 +1,242 @@
-<!doctype html>
+<!DOCTYPE html>
+
 <html lang="id">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="/static/control-tower/control-tower.css?v=20260722-v03-final">
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<link href="/static/control-tower/control-tower.css?v=20260722-v03-final" rel="stylesheet"/>
+<link href="/static/dashboard/control-tower-shell.css?v=20260731-phase7-data-trust-1" rel="stylesheet"/>
 <title>Control Tower Operasional - Process Map</title>
-<style>
-  :root {
-    --page: #f4eee5;
-    --surface: #fffdf9;
-    --surface-soft: #fbf6ee;
-    --ink: #30291f;
-    --muted: #7d7161;
-    --line: #cbb895;
-    --line-soft: #d8c9b2;
-    --amber: #d98e26;
-    --amber-dark: #a96312;
-    --amber-pale: #fff3de;
-    --border: #ddcfbb;
-    --shadow: 0 18px 42px rgba(67, 48, 27, .10), 0 2px 6px rgba(67, 48, 27, .04);
-  }
-
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--page); color: var(--ink); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-  button { font: inherit; }
-
-  .app { max-width: 1600px; min-height: 100vh; margin: 0 auto; padding: 28px; }
-  .page-head { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin: 0 0 18px; }
-  h1 { margin: 0; font-size: clamp(26px, 2.2vw, 32px); line-height: 1.1; letter-spacing: -.035em; }
-  .subhead { margin: 8px 0 0; font-size: 13px; color: var(--muted); }
-  .state-text { color: var(--muted); font-size: 12px; text-align: right; }
-  .state-text strong { display: block; color: var(--amber-dark); font-size: 11px; letter-spacing: .045em; text-transform: uppercase; }
-
-  .shell { overflow: hidden; border: 1px solid var(--border); border-radius: 20px; background: var(--surface); box-shadow: var(--shadow); }
-  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 62px; padding: 12px 18px; border-bottom: 1px solid #e8ddcd; background: var(--surface-soft); }
-  .toolbar-title { font-size: 12px; font-weight: 750; letter-spacing: .01em; }
-  .states { display: flex; flex-wrap: wrap; justify-content: end; gap: 7px; }
-  .state-control { appearance: none; cursor: pointer; border: 1px solid transparent; border-radius: 999px; padding: 7px 11px; color: #6f6252; background: transparent; font-size: 11px; font-weight: 650; transition: background .18s ease, color .18s ease, border-color .18s ease; }
-  .state-control:hover { border-color: #d9be94; background: #fffaf2; }
-  .state-control[aria-pressed="true"] { border-color: #d99b48; color: #7f470c; background: var(--amber-pale); }
-
-  .map-scroll { overflow-x: auto; overscroll-behavior-inline: contain; }
-  .map-scroll:focus-visible { outline: 2px solid var(--amber); outline-offset: -2px; }
-  .canvas { position: relative; width: 1420px; height: 760px; overflow: hidden; background: radial-gradient(circle at 51% 10%, #fffefa 0, #fffdf9 47%, #fcf7ef 100%); }
-  .canvas::after { content: ""; position: absolute; right: 0; bottom: 0; left: 0; height: 90px; pointer-events: none; background: linear-gradient(to bottom, transparent, rgba(251, 246, 238, .55)); }
-  svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 1; }
-  .route { fill: none; stroke: var(--line); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
-  .route.support { stroke: #c7ad81; stroke-width: 1; stroke-dasharray: 3 5; }
-  .route.focus { stroke: var(--amber); stroke-width: 1.8; }
-  .motion { fill: none; stroke: #efb25b; stroke-width: 2.1; stroke-linecap: round; stroke-dasharray: 2 10; animation: journey 2.4s linear infinite; vector-effect: non-scaling-stroke; will-change: stroke-dashoffset; }
-  @keyframes journey { to { stroke-dashoffset: -24; } }
-  @media (prefers-reduced-motion: reduce) { .motion { animation: none; } .node, .choice { transition: none !important; } }
-
-  .node, .choice { position: absolute; z-index: 2; width: 146px; min-height: 84px; border: 1px solid #d8cab6; border-radius: 13px; background: var(--surface); box-shadow: 0 6px 16px rgba(54, 42, 25, .055); }
-  .node { appearance: none; color: inherit; font: inherit; text-align: left; cursor: pointer; display: flex; flex-direction: column; justify-content: center; padding: 13px; transition: opacity .2s ease, border-color .2s ease, box-shadow .2s ease, transform .2s ease; }
-  .node:focus-visible { outline: 3px solid var(--amber); outline-offset: 3px; }
-  .node strong, .choice strong { display: block; font-size: 12px; line-height: 1.28; letter-spacing: -.01em; }
-  .node small, .choice small { display: block; margin-top: 5px; color: var(--muted); font-size: 9px; line-height: 1.35; }
-  .node.fulfilment { border-color: #c97819; color: #2e1f0e; background: linear-gradient(150deg, #efbb68, #d98e26); }
-  .node.fulfilment small { color: rgba(46, 31, 14, .72); }
-  .node.active { border-color: var(--amber); box-shadow: 0 0 0 4px rgba(217, 142, 38, .13), 0 7px 18px rgba(128, 76, 18, .10); }
-  .node.dim { opacity: .30; }
-  .node[data-key="estimate"] { left: 50px; top: 84px; }
-  .node[data-key="quotation"] { left: 250px; top: 84px; }
-  .node[data-key="sales-order"] { left: 450px; top: 84px; }
-  .node[data-key="fulfilment"] { left: 650px; top: 84px; }
-  .node[data-key="delivery"] { left: 850px; top: 84px; }
-  .node[data-key="invoice"] { left: 1050px; top: 84px; }
-  .node[data-key="payment"] { left: 1250px; top: 84px; }
-
-  .branch-zone { position: absolute; z-index: 2; opacity: 0; pointer-events: none; transform: translateY(-6px); transition: opacity .2s ease, transform .2s ease; }
-  .canvas.is-expanded .fulfilment-zone,
-  .canvas.is-focused .fulfilment-zone,
-  .canvas.is-stock-focused .fulfilment-zone,
-  .canvas.is-expanded .material-zone,
-  .canvas.is-focused .material-zone,
-  .canvas.is-focused .production-zone,
-  .canvas.is-stock-focused .stock-journey-zone,
-  .canvas.is-stock-focused .production-zone { opacity: 1; pointer-events: auto; transform: translateY(0); }
-  .fulfilment-zone { left: 544px; top: 262px; width: 440px; padding: 14px; border: 1px dashed #cfb78d; border-radius: 16px; background: rgba(255, 253, 249, .86); }
-  .zone-label { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 1px 11px; }
-  .zone-label h2 { margin: 0; font-size: 12px; letter-spacing: -.01em; }
-  .zone-label span { color: var(--amber-dark); font-size: 8px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
-  .choices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .choice { position: static; width: auto; min-height: 88px; padding: 12px; text-align: left; cursor: pointer; transition: border-color .18s ease, box-shadow .18s ease, background .18s ease; }
-  .choice:hover, .choice:focus-visible { border-color: var(--amber); background: #fffaf1; outline: none; }
-  .choice.active { border-color: var(--amber); background: var(--amber-pale); box-shadow: 0 0 0 3px rgba(217, 142, 38, .10); }
-
-  .material-zone { left: 264px; top: 456px; width: 742px; padding: 14px 15px 15px; border: 1px solid #dfceb5; border-radius: 16px; background: rgba(251, 246, 237, .92); }
-  .material-flow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
-  .material-step { position: relative; min-height: 55px; padding: 10px; border: 1px solid #d9cbb8; border-radius: 10px; background: var(--surface); }
-  .material-step strong { display: block; font-size: 9px; line-height: 1.25; }
-  .material-step small { display: block; margin-top: 3px; color: var(--muted); font-size: 7.5px; }
-  .stock-journey-zone { left: 450px; top: 456px; width: 260px; padding: 14px 15px 15px; border: 1px solid #dfceb5; border-radius: 16px; background: rgba(251, 246, 237, .94); }
-  .stock-flow { display: grid; grid-template-columns: 1fr; }
-  .stock-step { min-height: 58px; padding: 11px; border: 1px solid #d9cbb8; border-radius: 10px; background: var(--surface); }
-  .stock-step strong { display: block; font-size: 9px; line-height: 1.25; }
-  .stock-step small { display: block; margin-top: 4px; color: var(--muted); font-size: 7.5px; line-height: 1.3; }
-  .production-zone { left: 378px; top: 604px; width: 628px; padding: 14px 15px 15px; border: 1px solid #d6bc93; border-radius: 16px; background: rgba(255, 250, 241, .96); }
-  .canvas.is-stock-focused .production-zone { top: 590px; }
-  .production-flow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; }
-  .production-step { min-height: 58px; padding: 11px; border: 1px solid #d9cbb8; border-radius: 10px; background: var(--surface); }
-  .production-step strong { display: block; font-size: 9px; line-height: 1.25; }
-  .production-step small { display: block; margin-top: 4px; color: var(--muted); font-size: 7.5px; line-height: 1.3; }
-  .focus-note { position: absolute; z-index: 3; left: 1040px; top: 280px; width: 276px; padding: 15px 16px; border: 1px solid #e1cfb4; border-radius: 14px; background: rgba(255, 250, 241, .94); color: var(--muted); opacity: 0; transform: translateY(-5px); transition: opacity .2s ease, transform .2s ease; box-shadow: 0 8px 22px rgba(67, 48, 27, .05); }
-  .focus-note::before { content: ""; position: absolute; top: 16px; left: -6px; width: 1px; height: 34px; background: var(--amber); }
-  .focus-note strong { display: block; color: var(--ink); font-size: 11px; }
-  .focus-note span { display: block; margin-top: 5px; font-size: 9px; line-height: 1.45; }
-  .canvas.is-focused .focus-note { opacity: 1; transform: none; }
-
-  .review-bar { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 13px 18px; border-top: 1px solid #e8ddcd; background: var(--surface-soft); color: var(--muted); font-size: 11px; }
-  .review-bar strong { color: var(--ink); }
-  .tracking-note { text-align: right; }
-  @media (max-width: 700px) { .app { padding: 16px; } .page-head, .toolbar, .review-bar { align-items: flex-start; flex-direction: column; } .state-text, .tracking-note { text-align: left; } .states { justify-content: flex-start; } }
-  .map-scroll { position: relative; } .map-scroll::after { content: "Geser untuk melihat alur →"; display: none; position: absolute; right: 12px; top: 50%; z-index: 5; padding: 7px 10px; border: 1px solid #d9be94; border-radius: 999px; background: rgba(255, 253, 249, .94); color: var(--amber-dark); font-size: 10px; font-weight: 700; box-shadow: 0 5px 14px rgba(67, 48, 27, .08); pointer-events: none; } @media (max-width: 1100px) { .map-scroll.has-overflow::after { display: block; } } .route.reference { stroke: #bca27a; stroke-dasharray: 2 4; } .back-control[hidden] { display: none; } .control-tower-header { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; margin:0 0 14px; padding-bottom:16px; border-bottom:1px solid var(--border); } .control-tower-header h1 { margin:0; font-size:24px; } .control-tower-header p { margin:6px 0 0; color:var(--muted); font-size:12px; } .header-actions, .view-navigation { display:flex; align-items:center; gap:7px; flex-wrap:wrap; } .header-actions a, .view-navigation a { border:1px solid var(--border); border-radius:999px; padding:7px 10px; color:var(--muted); background:var(--surface); font-size:11px; font-weight:700; text-decoration:none; } .header-actions a[aria-current="page"], .view-navigation a[aria-current="page"] { border-color:#d99b48; color:var(--amber-dark); background:var(--amber-pale); } .view-navigation { margin:0 0 14px; padding:5px; border:1px solid var(--border); border-radius:12px; background:var(--surface-soft); } .view-navigation a { border-color:transparent; } .skip-link { position:absolute; left:-9999px; } .skip-link:focus { left:12px; top:12px; z-index:20; padding:8px; background:var(--surface); }   .map-viewport { position: relative; }
-  .map-scroll::after { content: none !important; display: none !important; }
-  .scroll-cue { display: none; position: absolute; right: 12px; top: 50%; z-index: 5; padding: 7px 10px; border: 1px solid #d9be94; border-radius: 999px; background: rgba(255, 253, 249, .94); color: var(--amber-dark); font-size: 10px; font-weight: 700; box-shadow: 0 5px 14px rgba(67, 48, 27, .08); pointer-events: none; transform: translateY(-50%); }
-  @media (max-width: 1200px) { .map-viewport.has-overflow:not(.has-scrolled) .scroll-cue { display: block; } }
-
-  .temuan-view { padding: 22px; border: 1px solid var(--border); border-radius: 18px; background: var(--surface); box-shadow: var(--shadow); }
-  .temuan-head h1 { margin: 0; font-size: 24px; }
-  .temuan-head p { margin: 7px 0 0; color: var(--muted); font-size: 12px; }
-  .temuan-status { margin: 18px 0 0; color: var(--muted); font-size: 12px; }
-  .finding-list { display: grid; gap: 12px; margin-top: 18px; }
-  .finding-card { padding: 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-soft); }
-  .finding-category { color: var(--amber-dark); font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
-  .finding-card h2 { margin: 7px 0 0; font-size: 15px; }
-  .finding-summary { margin: 7px 0 14px; color: var(--muted); font-size: 12px; line-height: 1.45; }
-  .finding-card dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 12px; margin: 0; font-size: 11px; }
-  .finding-card dt { color: var(--muted); }
-  .finding-card dd { margin: 0; }
-  .finding-card a { color: var(--amber-dark); font-weight: 750; }
-  .finding-retry { margin-top: 12px; border: 1px solid var(--border); border-radius: 999px; padding: 7px 11px; color: var(--amber-dark); background: var(--surface); font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
-  .finding-retry:focus-visible, .finding-card a:focus-visible { outline: 3px solid var(--amber); outline-offset: 3px; }
-  /* Phase A integrated three-panel shell: canonical Warm Amber direction, current Process Map remains the center source. */
-  .integrated-three-panel { max-width: 1680px; display: grid; grid-template-columns: 252px minmax(0, 1fr) 292px; gap: 16px; align-items: start; }
-  .integrated-three-panel > .control-tower-header,
-  .integrated-three-panel > .view-navigation,
-  .integrated-three-panel > #overviewView,
-  .integrated-three-panel > #temuanView { grid-column: 2; }
-  .integrated-three-panel > .temuan-panel { grid-column: 1; grid-row: 1 / span 4; }
-  .integrated-three-panel > .inspector-panel { grid-column: 3; grid-row: 1 / span 4; }
-  .temuan-panel, .inspector-panel { position: sticky; top: 18px; padding: 18px; border: 1px solid var(--border); border-radius: 18px; background: var(--surface); box-shadow: var(--shadow); }
-  .integrated-eyebrow { margin: 0 0 5px; color: var(--amber-dark); font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
-  .temuan-panel h2, .inspector-panel h2 { margin: 0; font-size: 18px; letter-spacing: -.025em; }
-  .panel-caption { margin: 7px 0 16px; color: var(--muted); font-size: 11px; line-height: 1.45; }
-  .finding-categories { display: grid; gap: 7px; margin-bottom: 16px; }
-  .finding-category-row { display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 8px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 10px; color: var(--text-soft); background: var(--surface-soft); font: inherit; font-size: 11px; font-weight: 700; text-align: left; cursor: pointer; }
-  .finding-category-row strong { color: var(--muted); font-size: 10px; }
-  .finding-category-row.is-active { border-color: #d99b48; color: var(--amber-dark); background: var(--amber-pale); }
-  .integrated-finding-card { padding: 13px; border: 1px solid #dfceb5; border-radius: 13px; background: var(--surface-soft); }
-  .integrated-finding-card .status-badge { display: inline-flex; padding: 4px 7px; border-radius: 999px; color: var(--amber-dark); background: var(--amber-pale); font-size: 9px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
-  .integrated-finding-card h3 { margin: 9px 0 0; font-size: 13px; }
-  .integrated-finding-card p { margin: 7px 0 12px; color: var(--muted); font-size: 11px; line-height: 1.45; }
-  .integrated-finding-card a { color: var(--amber-dark); font-size: 11px; font-weight: 800; }
-  .inspector-panel { min-height: 430px; }
-  .inspector-state { margin: 14px 0; padding: 9px 10px; border-left: 3px solid var(--amber); color: var(--muted); background: var(--surface-soft); font-size: 11px; line-height: 1.45; }
-  .inspector-section { padding: 13px 0; border-top: 1px solid var(--border); }
-  .inspector-section h3 { margin: 0 0 6px; font-size: 11px; color: var(--amber-dark); text-transform: uppercase; letter-spacing: .06em; }
-  .inspector-section p { margin: 0; color: var(--text-soft); font-size: 11px; line-height: 1.5; }
-  .inspector-section ul { margin: 0; padding-left: 17px; color: var(--text-soft); font-size: 11px; line-height: 1.55; }
-  .integrated-three-panel .node[role="button"] { cursor: pointer; }
-  .integrated-three-panel .node[role="button"]:focus-visible { outline: 3px solid var(--amber); outline-offset: 3px; }
-  .integrated-finding-list { display: grid; gap: 10px; }
-  .integrated-three-panel .integrated-finding-list { max-height: 460px; overflow: auto; }
-  .integrated-finding-card--loading, .integrated-finding-card--empty, .integrated-finding-card--error { color: var(--muted); font-size: 11px; line-height: 1.45; }
-  .integrated-finding-card[data-finding-id] { cursor: pointer; }
-  .integrated-finding-card[data-finding-id]:hover, .integrated-finding-card[data-finding-id]:focus-visible, .integrated-finding-card.is-selected { border-color: var(--amber); background: var(--amber-pale); outline: none; }
-  .integrated-finding-card .finding-document { display: inline-block; margin-top: 8px; color: var(--amber-dark); font-size: 11px; font-weight: 800; }
-  .integrated-finding-card .finding-retry { margin-top: 10px; }
-  .sales-order-finding-badge, .process-evidence-badge { display: block; width: max-content; max-width: 100%; margin-top: 7px; padding: 4px 7px; border: 1px solid rgba(125, 75, 14, .25); border-radius: 999px; color: #7f470c; background: #fff3de; font-size: 8px; font-weight: 800; line-height: 1; }
-  .sales-order-finding-badge[hidden], .process-evidence-badge[hidden] { display: none; }
-  .inspector-section summary { color: var(--amber-dark); cursor: pointer; font-size: 11px; font-weight: 750; }
-  .inspector-section pre { max-height: 180px; overflow: auto; margin: 9px 0 0; color: var(--muted); font: 10px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; }
-  @media (max-width: 1200px) {
-    .integrated-three-panel { grid-template-columns: minmax(0, 1fr); }
-    .integrated-three-panel > .temuan-panel,
-    .integrated-three-panel > .control-tower-header,
-    .integrated-three-panel > .view-navigation,
-    .integrated-three-panel > #overviewView,
-    .integrated-three-panel > #temuanView,
-    .integrated-three-panel > .inspector-panel { grid-column: 1; grid-row: auto; }
-    .temuan-panel, .inspector-panel { position: static; }
-  }
-  .control-tower-header { display: grid; grid-template-columns: 1fr; gap: 12px; }
-  .header-main { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
-  .control-tower-freshness { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 11px 13px; border: 1px solid var(--border); border-left: 4px solid var(--amber); border-radius: 12px; background: var(--surface-soft); }
-  .control-tower-freshness[data-state="STALE"] { border-left-color: #c77d1a; }
-  .control-tower-freshness[data-state="CRITICALLY_STALE"], .control-tower-freshness[data-state="FAILED"] { border-left-color: #a94b2b; }
-  .control-tower-freshness[data-state="REFRESHING"] { border-left-color: #5c7c9a; }
-  .control-tower-freshness-label { color: var(--amber-dark); font-size: 9px; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
-  .control-tower-freshness-title { display: block; margin-top: 3px; font-size: 13px; font-weight: 800; }
-  .control-tower-freshness-details { margin: 3px 0 0; color: var(--muted); font-size: 10px; line-height: 1.45; }
-  .control-tower-refresh-button[hidden] { display: none; }
-  .control-tower-refresh-button { flex: 0 0 auto; border: 1px solid #d99b48; border-radius: 999px; padding: 7px 10px; color: var(--amber-dark); background: var(--amber-pale); font: inherit; font-size: 10px; font-weight: 800; cursor: pointer; }
-  .control-tower-refresh-button:disabled { cursor: wait; opacity: .6; }
-  .map-focus-control[aria-pressed="true"] { border-color: #d99b48; color: var(--amber-dark); background: var(--amber-pale); }
-  .integrated-three-panel.is-map-focus { grid-template-columns: minmax(0, 1fr); }
-  .integrated-three-panel.is-map-focus > .temuan-panel,
-  .integrated-three-panel.is-map-focus > .inspector-panel { display: none; }
-  .integrated-three-panel.is-map-focus > .control-tower-header,
-  .integrated-three-panel.is-map-focus > .view-navigation,
-  .integrated-three-panel.is-map-focus > #overviewView,
-  .integrated-three-panel.is-map-focus > #temuanView { grid-column: 1; }
-  .integrated-three-panel.is-map-focus .map-scroll { overflow-x: hidden; }
-  @media (min-width: 1800px) {
-    .integrated-three-panel:not(.is-map-focus) .map-scroll { overflow-x: hidden; }
-    .integrated-three-panel:not(.is-map-focus) .canvas { width: 1040px; }
-    .integrated-three-panel:not(.is-map-focus) .node { width: 132px; }
-    .integrated-three-panel:not(.is-map-focus) .node[data-key="estimate"] { left: 4px; }
-    .integrated-three-panel:not(.is-map-focus) .node[data-key="quotation"] { left: 155px; }
-    .integrated-three-panel:not(.is-map-focus) .node[data-key="sales-order"] { left: 306px; }
-    .integrated-three-panel:not(.is-map-focus) .node[data-key="fulfilment"] { left: 457px; }
-    .integrated-three-panel:not(.is-map-focus) .node[data-key="delivery"] { left: 608px; }
-    .integrated-three-panel:not(.is-map-focus) .node[data-key="invoice"] { left: 759px; }
-    .integrated-three-panel:not(.is-map-focus) .node[data-key="payment"] { left: 910px; }
-    .integrated-three-panel:not(.is-map-focus) .fulfilment-zone { left: 410px; width: 430px; }
-    .integrated-three-panel:not(.is-map-focus) .material-zone { left: 195px; width: 620px; }
-    .integrated-three-panel:not(.is-map-focus) .stock-journey-zone { left: 457px; }
-    .integrated-three-panel:not(.is-map-focus) .production-zone { left: 315px; width: 600px; }
-    .integrated-three-panel:not(.is-map-focus) .focus-note { left: 780px; width: 240px; }
-  }
-  @media (max-width: 700px) { .header-main, .control-tower-freshness { align-items: flex-start; flex-direction: column; } }
-  @media (prefers-reduced-motion: reduce) { .control-tower-freshness, .map-focus-control, .control-tower-refresh-button { transition: none !important; } }
-</style>
 </head>
-<body>
-<a class="skip-link" href="#controlTowerContent">Lewati ke konten utama</a><main class="app control-tower-dashboard integrated-three-panel" id="controlTowerContent" tabindex="-1">
-<aside class="temuan-panel" aria-labelledby="integratedTemuanHeading">
-  <p class="integrated-eyebrow">Temuan</p>
-  <h2 id="integratedTemuanHeading">Masalah Aktif</h2>
-  <p class="panel-caption">Prioritas yang perlu dipahami dan ditinjau dari snapshot terakhir.</p>
-  <div class="finding-categories" aria-label="Kategori temuan">
-    <button class="finding-category-row is-active" id="activeFindingCategory" data-presentation-category="MASALAH_AKTIF" type="button" aria-pressed="true"><span>Masalah Aktif</span><strong>Memuat...</strong></button>
-    <button class="finding-category-row" id="reviewFindingCategory" data-presentation-category="PERLU_DITINJAU" type="button" aria-pressed="false"><span>Perlu Ditinjau</span><strong>Memuat...</strong></button>
-    <button class="finding-category-row" id="incompleteFindingCategory" data-presentation-category="DATA_BELUM_LENGKAP" type="button" aria-pressed="false"><span>Data Belum Lengkap</span><strong>Memuat...</strong></button>
-  </div>
-  <div id="integratedFindingList" class="integrated-finding-list" aria-live="polite">
-    <div class="integrated-finding-card integrated-finding-card--loading" aria-label="Ringkasan temuan">Memuat temuan...</div>
-  </div>
-</aside><header class="control-tower-header"><div class="header-main"><div><h1>Control Tower Operasional</h1><p>Process Map operasional untuk gambaran proses yang mudah dipindai.</p></div><div class="header-actions" aria-label="Navigasi dashboard"><a href="/dashboard/control-tower" aria-current="page">Control Tower</a><a href="/dashboard/internal-orders">Internal Orders</a><a href="/dashboard/sales-orders">Sales Orders</a><a href="/dashboard/internal-order-rekap">Order Material Tracking</a><a href="/logout">Keluar</a></div></div><section class="control-tower-freshness" id="controlTowerFreshness" data-state="LOADING" aria-live="polite"><div><span class="control-tower-freshness-label" id="controlTowerFreshnessLabel">Status data</span><strong class="control-tower-freshness-title" id="controlTowerFreshnessTitle">Memeriksa freshness...</strong><p class="control-tower-freshness-details" id="controlTowerFreshnessDetails">Timestamp trusted snapshot akan ditampilkan setelah health berhasil dibaca.</p></div><button class="control-tower-refresh-button" id="controlTowerRefreshButton" type="button" hidden>Refresh sekarang</button></section></header><nav class="view-navigation" aria-label="Bagian Control Tower"><a href="?view=overview">Process Map</a><a href="?view=tracking">Tracking</a><a href="?view=temuan">Temuan</a></nav>
-<div id="overviewView">
-  <header class="page-head">
-    <div>
-      <h1>Process Map</h1>
-      <p class="subhead">Executive overview · pilih detail hanya saat diperlukan.</p>
-    </div>
-    <div class="state-text"><strong id="state-name">Gambaran besar</strong><span id="state-description">Primary spine yang tenang dan mudah dipindai.</span></div>
-  </header>
-
-  <section class="shell" aria-label="Control Tower Process Map prototype">
-    <div class="toolbar">
-  <div class="toolbar-title">Control Tower · Process Map</div>
-  <div class="header-actions"><button class="state-control back-control" id="overview-control" type="button" hidden>Kembali ke gambaran besar</button><button class="state-control map-focus-control" id="map-focus-control" type="button" aria-pressed="false">Fokus Process Map</button></div>
+<body data-ct-page="control-tower">
+<a class="skip-link" href="#controlTowerContent">Lewati ke konten utama</a>
+<main class="ct-immersive-page" id="controlTowerContent" tabindex="-1">
+<header class="ct-app-header" data-ct-shell-header="">
+<a class="ct-brand" href="/dashboard/control-tower">
+<span aria-hidden="true" class="ct-brand-mark">CT</span>
+<span class="ct-brand-copy">
+<strong>Control Tower Operasional</strong>
+<small>Evidence-led operations workspace</small>
+</span>
+</a>
+<nav aria-label="Navigasi utama" class="ct-primary-nav">
+<a data-ct-route="control-tower" href="/dashboard/control-tower">Control Tower</a>
+<a data-ct-route="temuan" href="/dashboard/control-tower/temuan">Temuan</a>
+<a data-ct-route="sales-orders" href="/dashboard/sales-orders">Sales Orders</a>
+<a data-ct-route="internal-orders" href="/dashboard/internal-orders">Internal Orders</a>
+<a data-ct-route="internal-order-rekap" href="/dashboard/internal-order-rekap">Order Material Tracking</a>
+</nav>
+<div class="ct-header-tools">
+<div aria-live="polite" class="ct-freshness-compact" data-ct-freshness="" data-state="LOADING" title="Memeriksa status data">
+<span class="ct-freshness-state" data-ct-freshness-state="">LOADING</span>
+<span class="ct-freshness-time" data-ct-freshness-time="">Memeriksa data...</span>
 </div>
-<div class="map-viewport">
-    <div class="map-scroll" tabindex="0" aria-label="Scrollable process map canvas">
-      <div class="canvas" id="canvas">
-        <svg id="routes" aria-hidden="true">
-          <defs><marker id="arrow" markerWidth="6" markerHeight="6" refX="5.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#a96312" /></marker></defs>
-        </svg>
-
-        <article class="node" data-key="estimate"><strong>Estimasi / RKB Kasar</strong><small>Di luar Odoo</small></article>
-        <article class="node" data-key="quotation"><strong>Quotation</strong><small>Penawaran</small></article>
-        <article class="node" data-key="sales-order" data-process-key="sales-order" role="button" tabindex="0" aria-label="Sales Order"><strong>Sales Order</strong><small>SO</small><span class="sales-order-finding-badge" id="salesOrderFindingBadge" hidden></span></article>
-        <button class="node fulfilment" data-key="fulfilment" type="button" aria-expanded="false" aria-controls="fulfilment-choices" aria-label="Tampilkan pilihan Fulfilment"><strong>Fulfilment</strong><small>MO atau From Stock / IO</small></button>
-        <article class="node" data-key="delivery"><strong>Delivery</strong><small>DO</small></article>
-        <article class="node" data-key="invoice"><strong>Invoice</strong><small>INV</small></article>
-        <article class="node" data-key="payment"><strong>Payment</strong><small>Traceability-only</small></article>
-
-        <section class="branch-zone fulfilment-zone" aria-label="Fulfilment sources">
-          <div class="zone-label"><h2>Sumber pemenuhan</h2><span>dua pilihan</span></div>
-          <div class="choices" id="fulfilment-choices">
-            <button class="choice" data-choice="manufacturing" data-process-key="manufacturing-order"><strong>Manufacturing Order</strong><small>Produksi dimulai setelah SO aktif</small><span class="process-evidence-badge" data-process-badge="manufacturing-order" hidden></span></button>
-            <button class="choice" data-choice="stock" data-process-key="internal-order"><strong>From Stock / Internal Order</strong><small>Barang tersedia; Internal Order opsional untuk produksi lebih awal</small><span class="process-evidence-badge" data-process-badge="internal-order" hidden></span></button>
-          </div>
-        </section>
-
-        <section class="branch-zone material-zone" aria-label="Kebutuhan Material supporting flow">
-          <div class="zone-label"><h2>Kebutuhan Material</h2><span>turunan dari Sales Order</span></div>
-          <div class="material-flow">
-            <div class="material-step"><strong>RKB Pekerjaan</strong><small>Kebutuhan item</small></div>
-            <div class="material-step"><strong>Cek Stock</strong><small>Cukup / shortage</small></div>
-            <div class="material-step"><strong>ROP</strong><small>Permintaan pengadaan</small></div>
-            <div class="material-step" data-process-key="material-purchase-order"><strong>Purchase Order</strong><small>Pengadaan material</small><span class="process-evidence-badge" data-process-badge="material-purchase-order" hidden></span></div>
-            <div class="material-step"><strong>Receipt &amp; QC</strong><small>Material diterima</small></div>
-          </div>
-        </section>
-        <section class="branch-zone stock-journey-zone" aria-label="Optional Internal Order production path">
-          <div class="zone-label"><h2>Internal Order</h2><span>opsional sebelum SO</span></div>
-          <div class="stock-flow">
-            <div class="stock-step"><strong>Internal Order</strong><small>Opsional untuk produksi lebih awal; bukan syarat From Stock</small></div>
-          </div>
-        </section>
-        <section class="branch-zone production-zone" aria-label="Production process">
-          <div class="zone-label"><h2>Proses Produksi</h2><span>material menjadi finished goods</span></div>
-          <div class="production-flow">
-            <div class="production-step"><strong>Stock Material</strong><small>Material tersedia untuk produksi</small></div>
-            <div class="production-step"><strong>Manufacture</strong><small>Proses produksi</small></div>
-            <div class="production-step"><strong>Finished Goods</strong><small>Barang jadi siap fulfilment</small></div>
-          </div>
-        </section>
-        <aside class="focus-note"><strong id="focus-note-title">Manufacturing Order journey</strong><span id="focus-note-copy">Hanya jalur ini yang dianimasikan. Dokumen lengkap dan hubungan detail tetap berada di Tracking.</span></aside>
-      </div>
-    </div>
-    <div class="scroll-cue" aria-hidden="true">Geser untuk melihat alur -&gt;</div>
-    </div>
-    <footer class="review-bar"><span><strong>Alur:</strong> gambaran besar → pilih Fulfilment → pilih sumber pemenuhan.</span><span class="tracking-note">Full document lineage belongs in <strong>Tracking</strong>.</span></footer>
-  </section>
+<button class="ct-refresh-compact" data-ct-refresh="" type="button">Refresh Data</button>
+<button aria-pressed="true" class="ct-mode-toggle" data-ct-mode-toggle="" type="button">Desk mode</button>
+<a class="ct-exit" href="/logout">Keluar</a>
 </div>
-
-  <section class="temuan-view" id="temuanView" aria-labelledby="temuanHeading" hidden>
-    <div class="temuan-head">
-      <h1 id="temuanHeading">Temuan</h1>
-      <p>Temuan aktif berbasis bukti langsung dari snapshot Odoo terakhir yang selesai.</p>
-    </div>
-    <div class="temuan-status" id="temuanStatus" role="status" aria-live="polite">Memuat Temuan...</div>
-    <div class="finding-list" id="findingList"></div>
-  </section>
-<aside class="inspector-panel" aria-labelledby="inspectorHeading">
-  <p class="integrated-eyebrow">Process Inspector</p>
-  <h2 id="inspectorHeading">Belum ada pilihan</h2>
-  <div class="inspector-state" id="inspectorState">Pilih proses atau temuan untuk melihat konteks yang didukung bukti.</div>
-  <section class="inspector-section"><h3>Tujuan proses</h3><p id="inspectorPurpose">Menjaga alur kerja tetap terbaca dari Sales Order hingga fulfilment.</p></section>
-  <section class="inspector-section"><h3>Sumber klasifikasi</h3><p id="inspectorClassification">Belum ada node atau temuan yang dipilih.</p></section>
-  <section class="inspector-section"><h3>Ekspektasi kerja</h3><ul id="inspectorExpected"><li>Periksa kondisi proses yang dipilih.</li><li>Gunakan bukti sumber sebelum menyimpulkan.</li></ul></section>
-  <section class="inspector-section"><h3>SOP checks &amp; exceptions</h3><p id="inspectorChecks">Belum ada node atau temuan yang dipilih.</p></section>
-  <section class="inspector-section"><h3>Related data</h3><p id="inspectorRelated">Relasi dan dokumen terkait akan ditampilkan saat tersedia.</p></section>
-  <section class="inspector-section"><h3>Confidence / limitation</h3><p id="inspectorConfidence">Belum ada review limitation.</p></section>
-  <section class="inspector-section"><h3>Destination</h3><p id="inspectorAction">Tidak ada destination yang dipilih.</p></section>
-  <details class="inspector-section" id="inspectorRawEvidence" hidden><summary>Bukti mentah (sekunder)</summary><pre id="inspectorRawEvidenceContent"></pre></details>
+</header>
+<section aria-labelledby="ctMapHeading" class="ct-map-stage" data-ct-map-stage="">
+<h1 class="ct-visually-hidden" id="ctMapHeading">Process Map Control Tower Operasional</h1>
+<section aria-labelledby="ctTemuanHeading" class="ct-floating-temuan is-collapsed" data-ct-temuan="">
+<div class="ct-floating-window-head">
+<div class="ct-temuan-title-wrap">
+<span class="ct-window-kicker">Temuan</span>
+<strong id="ctTemuanHeading">Perhatian operasional</strong>
+<span class="ct-temuan-compact-count" data-ct-active-summary="">— aktif</span>
+</div>
+<button aria-controls="ctTemuanBody" aria-expanded="false" aria-label="Buka ringkasan Temuan" class="ct-window-toggle" data-ct-temuan-toggle="" type="button">⌄</button>
+</div>
+<div class="ct-temuan-body" id="ctTemuanBody">
+<button class="ct-temuan-row" data-ct-category="MASALAH_AKTIF" type="button">
+<span>Masalah Aktif</span>
+<strong data-ct-category-count="MASALAH_AKTIF">—</strong>
+<span aria-hidden="true">→</span>
+</button>
+<button class="ct-temuan-row" data-ct-category="PERLU_DITINJAU" type="button">
+<span>Perlu Ditinjau</span>
+<strong data-ct-category-count="PERLU_DITINJAU">—</strong>
+<span aria-hidden="true">→</span>
+</button>
+<button class="ct-temuan-row" data-ct-category="DATA_BELUM_LENGKAP" type="button">
+<span>Data Belum Lengkap</span>
+<strong data-ct-category-count="DATA_BELUM_LENGKAP">—</strong>
+<span aria-hidden="true">→</span>
+</button>
+</div>
+</section>
+<aside aria-labelledby="ctInspectorTitle" class="ct-floating-inspector" data-ct-inspector="" hidden="">
+<div class="ct-floating-window-head">
+<div>
+<span class="ct-window-kicker">Proses terpilih</span>
+<h2 data-ct-inspector-title="" id="ctInspectorTitle">Proses</h2>
+</div>
+<button aria-label="Tutup detail proses" class="ct-window-close" data-ct-inspector-close="" type="button">×</button>
+</div>
+<div class="ct-inspector-body">
+<div aria-label="Ringkasan temuan proses" class="ct-inspector-counts">
+<button class="ct-inspector-count-row" data-ct-inspector-category="MASALAH_AKTIF" type="button">
+<span>Masalah Aktif</span>
+<strong data-ct-inspector-count="MASALAH_AKTIF">—</strong>
+<span aria-hidden="true">→</span>
+</button>
+<button class="ct-inspector-count-row" data-ct-inspector-category="PERLU_DITINJAU" type="button">
+<span>Perlu Ditinjau</span>
+<strong data-ct-inspector-count="PERLU_DITINJAU">—</strong>
+<span aria-hidden="true">→</span>
+</button>
+<button class="ct-inspector-count-row" data-ct-inspector-category="DATA_BELUM_LENGKAP" type="button">
+<span>Data Belum Lengkap</span>
+<strong data-ct-inspector-count="DATA_BELUM_LENGKAP">—</strong>
+<span aria-hidden="true">→</span>
+</button>
+</div>
+<section aria-labelledby="ctPrimarySignalHeading" class="ct-primary-signal">
+<span class="ct-window-kicker" id="ctPrimarySignalHeading">Sinyal utama</span>
+<p data-ct-primary-signal="">Tidak ada sinyal utama yang perlu ditampilkan.</p>
+</section>
+<button class="ct-primary-action" data-ct-open-documents="" type="button">Buka Temuan proses ini</button>
+</div>
 </aside>
+<div aria-live="polite" class="ct-hover-preview" data-ct-hover-preview="" hidden="" role="status">
+<strong data-ct-preview-title="">Proses</strong>
+<div><span>Masalah Aktif</span><b data-ct-preview-count="MASALAH_AKTIF">—</b></div>
+<div><span>Perlu Ditinjau</span><b data-ct-preview-count="PERLU_DITINJAU">—</b></div>
+<div><span>Data Belum Lengkap</span><b data-ct-preview-count="DATA_BELUM_LENGKAP">—</b></div>
+</div>
+<div aria-label="Process Map dapat digeser secara horizontal" class="ct-map-scroll" data-ct-map-scroll="" tabindex="0">
+<div class="ct-process-canvas" data-ct-process-canvas="">
+<div class="ct-lane-label" style="--ct-lane-y: 70px">Commercial</div>
+<div class="ct-lane-label" style="--ct-lane-y: 200px">Production</div>
+<div class="ct-lane-label" style="--ct-lane-y: 330px">Finance</div>
+<div class="ct-lane-label" style="--ct-lane-y: 330px; --ct-lane-x: 420px">Internal Order</div>
+<div class="ct-lane-label" style="--ct-lane-y: 460px">Material Planning</div>
+<div class="ct-lane-label" style="--ct-lane-y: 590px">Procurement</div>
+<div class="ct-lane-label" style="--ct-lane-y: 720px">Non-SO / Opex</div>
+<svg aria-hidden="true" class="ct-connectors" viewbox="0 0 1900 820">
+<defs>
+<marker id="ctArrow" markerheight="7" markerunits="strokeWidth" markerwidth="7" orient="auto" refx="6" refy="3.5">
+<path d="M0,0 L7,3.5 L0,7 Z" fill="context-stroke"></path>
+</marker>
+</defs>
+<!-- Main commercial / production / finance route -->
+<path class="ct-connector" data-edge-id="estimate-quotation" d="M302 99 H340" data-routes="normal" marker-end="url(#ctArrow)"></path>
+<path class="ct-connector" data-edge-id="quotation-sales-order" d="M472 99 H530" data-routes="normal" marker-end="url(#ctArrow)"></path>
+<path class="ct-connector" data-edge-id="sales-order-mo-trunk" d="M662 99 H800 V229" data-routes="normal"></path>
+<path class="ct-connector" data-edge-id="internal-order-mo-trunk" d="M662 359 H800 V229" data-routes="internal"></path>
+<path class="ct-connector" data-edge-id="mo-entry" d="M800 229 H900" data-routes="normal internal" marker-end="url(#ctArrow)"></path>
+<circle class="ct-junction" cx="800" cy="229" data-routes="normal internal" r="4"></circle>
+<path class="ct-connector" data-edge-id="mo-production" d="M1032 229 H1070" data-routes="normal internal material procurement" marker-end="url(#ctArrow)"></path>
+<path class="ct-connector" data-edge-id="production-qc" d="M1202 229 H1240" data-routes="normal internal material procurement" marker-end="url(#ctArrow)"></path>
+<path class="ct-connector" data-edge-id="qc-stock-fg" d="M1372 229 H1410" data-routes="normal internal material procurement" marker-end="url(#ctArrow)"></path>
+<path class="ct-connector" data-edge-id="stock-fg-delivery" d="M1542 229 H1580" data-routes="normal internal" marker-end="url(#ctArrow)"></path>
+<path class="ct-connector" data-edge-id="stock-fg-so-pb" d="M1476 258 V330" data-routes="internal" marker-end="url(#ctArrow)"></path>
+<path class="ct-connector" data-edge-id="so-pb-delivery-return" d="M1542 359 H1560 V229" data-routes="internal"></path>
+<circle class="ct-junction" cx="1560" cy="229" data-routes="normal internal" r="4"></circle>
+<path class="ct-connector" data-edge-id="delivery-invoice" d="M1646 258 V330" data-routes="normal internal" marker-end="url(#ctArrow)"></path>
+<path class="ct-connector" data-edge-id="invoice-payment" d="M1712 359 H1750" data-routes="normal internal" marker-end="url(#ctArrow)"></path>
+<!-- SO / IO / MO to material planning. One deliberate bridge crosses the IO-to-MO trunk. -->
+<path class="ct-bridge-halo" d="M700 346 A13 13 0 0 1 713 359 A13 13 0 0 1 700 372"></path>
+<path class="ct-connector" data-edge-id="sales-order-material-source" d="M596 128 V160 H700 V346 A13 13 0 0 1 713 359 A13 13 0 0 1 700 372 V420" data-routes="material"></path>
+<path class="ct-connector" data-edge-id="internal-order-material-source" d="M596 388 V420 H700" data-routes="material"></path>
+<circle class="ct-junction" cx="700" cy="420" data-routes="material" r="4"></circle>
+<path class="ct-connector" data-edge-id="material-source-corridor" d="M700 420 H766 V440" data-routes="material"></path>
+<path class="ct-connector" data-edge-id="mo-material-source-return" d="M966 258 V440 H810 V440 H766" data-routes="material"></path>
+<circle class="ct-junction" cx="766" cy="440" data-routes="material" r="4"></circle>
+<path class="ct-connector" data-edge-id="material-source-entry" d="M766 440 V460" data-routes="material" marker-end="url(#ctArrow)"></path>
+<!-- Material availability and procurement -->
+<path class="ct-connector" data-edge-id="material-source-rkb" d="M832 489 H870" data-routes="material procurement" marker-end="url(#ctArrow)"></path>
+<path class="ct-connector" data-edge-id="rkb-stock-check" d="M1002 489 H1040" data-routes="material procurement" marker-end="url(#ctArrow)"></path>
+<path class="ct-connector" data-edge-id="stock-check-stock-material" d="M1172 489 H1380" data-routes="material" marker-end="url(#ctArrow)"></path>
+<path class="ct-connector" data-edge-id="stock-check-rop" d="M1106 518 V590" data-routes="procurement" marker-end="url(#ctArrow)"></path>
+<path class="ct-connector" data-edge-id="rop-purchase-order" d="M1172 619 H1210" data-routes="procurement" marker-end="url(#ctArrow)"></path>
+<path class="ct-connector" data-edge-id="purchase-order-receipt" d="M1342 619 H1380" data-routes="procurement nonso" marker-end="url(#ctArrow)"></path>
+<path class="ct-connector" data-edge-id="receipt-stock-material" d="M1446 590 V518" data-routes="procurement" marker-end="url(#ctArrow)"></path>
+<path class="ct-connector" data-edge-id="stock-material-mo" d="M1446 460 V400 H1000 V258" data-routes="material procurement" marker-end="url(#ctArrow)"></path>
+<!-- Shared PO for non-SO / Opex -->
+<path class="ct-connector" data-edge-id="rop-nonso-purchase-order" d="M1002 749 H1190 V619 H1210" data-routes="nonso" marker-end="url(#ctArrow)"></path>
+<circle class="ct-junction" cx="1190" cy="619" data-routes="procurement nonso" r="4"></circle>
+<path class="ct-connector" data-edge-id="purchase-order-vendor-bill" d="M1276 648 V680 H1446 V720" data-routes="nonso" marker-end="url(#ctArrow)"></path>
+<path class="ct-connector" data-edge-id="receipt-stock-expense" d="M1512 619 H1530 V749 H1550" data-routes="nonso"></path>
+<path class="ct-connector" data-edge-id="vendor-bill-stock-expense" d="M1512 749 H1550" data-routes="nonso" marker-end="url(#ctArrow)"></path>
+<circle class="ct-junction" cx="1530" cy="749" data-routes="nonso" r="4"></circle>
+</svg>
+<span class="ct-route-label" data-routes="material" style="left: 1205px; top: 465px">stock cukup</span>
+<span class="ct-route-label" data-routes="procurement" style="left: 1075px; top: 536px">stock kurang</span>
+<span class="ct-route-label" data-routes="procurement nonso" style="left: 1370px; top: 554px">receipt</span>
+<span class="ct-route-label" data-routes="nonso" style="left: 1320px; top: 667px">vendor bill</span>
+<button class="ct-map-node" data-ct-process-node="" data-process-key="estimate" data-route-focus="normal" data-routes="normal" style="--ct-node-x: 170px; --ct-node-y: 70px" type="button">
+<strong>Estimasi / RKB Kasar</strong><small>Di luar Odoo</small><span aria-hidden="true" class="ct-node-signals"></span>
+</button>
+<button class="ct-map-node" data-ct-process-node="" data-process-key="quotation" data-route-focus="normal" data-routes="normal" style="--ct-node-x: 340px; --ct-node-y: 70px" type="button">
+<strong>Quotation</strong><small>Penawaran</small><span aria-hidden="true" class="ct-node-signals"></span>
+</button>
+<button class="ct-map-node" data-ct-process-node="" data-process-key="sales-order" data-route-focus="normal" data-routes="normal material" style="--ct-node-x: 530px; --ct-node-y: 70px" type="button">
+<strong>Sales Order</strong><small>SO</small><span aria-hidden="true" class="ct-node-signals"></span>
+</button>
+<button class="ct-map-node" data-ct-process-node="" data-process-key="manufacturing-order" data-route-focus="normal" data-routes="normal internal material procurement" style="--ct-node-x: 900px; --ct-node-y: 200px" type="button">
+<strong>Manufacturing Order</strong><small>MO</small><span aria-hidden="true" class="ct-node-signals"></span>
+</button>
+<button class="ct-map-node" data-ct-process-node="" data-process-key="production" data-route-focus="normal" data-routes="normal internal material procurement" style="--ct-node-x: 1070px; --ct-node-y: 200px" type="button">
+<strong>Production</strong><small>Proses produksi</small><span aria-hidden="true" class="ct-node-signals"></span>
+</button>
+<button class="ct-map-node" data-ct-process-node="" data-process-key="quality-control" data-route-focus="normal" data-routes="normal internal material procurement" style="--ct-node-x: 1240px; --ct-node-y: 200px" type="button">
+<strong>QC</strong><small>Pemeriksaan hasil</small><span aria-hidden="true" class="ct-node-signals"></span>
+</button>
+<button class="ct-map-node" data-ct-process-node="" data-process-key="stock-finished-goods" data-route-focus="normal" data-routes="normal internal" style="--ct-node-x: 1410px; --ct-node-y: 200px" type="button">
+<strong>Stock FG</strong><small>Finished goods</small><span aria-hidden="true" class="ct-node-signals"></span>
+</button>
+<button class="ct-map-node" data-ct-process-node="" data-process-key="delivery" data-route-focus="normal" data-routes="normal internal" style="--ct-node-x: 1580px; --ct-node-y: 200px" type="button">
+<strong>Delivery</strong><small>DO</small><span aria-hidden="true" class="ct-node-signals"></span>
+</button>
+<button class="ct-map-node" data-ct-process-node="" data-process-key="invoice" data-route-focus="normal" data-routes="normal internal" style="--ct-node-x: 1580px; --ct-node-y: 330px" type="button">
+<strong>Invoice</strong><small>INV</small><span aria-hidden="true" class="ct-node-signals"></span>
+</button>
+<button class="ct-map-node" data-ct-process-node="" data-process-key="payment" data-route-focus="normal" data-routes="normal internal" style="--ct-node-x: 1750px; --ct-node-y: 330px" type="button">
+<strong>Payment</strong><small>Traceability</small><span aria-hidden="true" class="ct-node-signals"></span>
+</button>
+<button class="ct-map-node" data-ct-process-node="" data-process-key="internal-order" data-route-focus="internal" data-routes="internal material" style="--ct-node-x: 530px; --ct-node-y: 330px" type="button">
+<strong>Internal Order</strong><small>Produksi lebih awal</small><span aria-hidden="true" class="ct-node-signals"></span>
+</button>
+<button class="ct-map-node" data-ct-process-node="" data-process-key="so-pb" data-route-focus="internal" data-routes="internal" style="--ct-node-x: 1410px; --ct-node-y: 330px" type="button">
+<strong>SO PB</strong><small>Sales Order hasil IO</small><span aria-hidden="true" class="ct-node-signals"></span>
+</button>
+<button class="ct-map-node" data-ct-process-node="" data-process-key="material-source" data-route-focus="material" data-routes="material" style="--ct-node-x: 700px; --ct-node-y: 460px" type="button">
+<strong>SO / IO / MO</strong><small>Sumber kebutuhan</small><span aria-hidden="true" class="ct-node-signals"></span>
+</button>
+<button class="ct-map-node" data-ct-process-node="" data-process-key="rkb-pekerjaan" data-route-focus="material" data-routes="material procurement" style="--ct-node-x: 870px; --ct-node-y: 460px" type="button">
+<strong>RKB Pekerjaan</strong><small>Kebutuhan material</small><span aria-hidden="true" class="ct-node-signals"></span>
+</button>
+<button class="ct-map-node" data-ct-process-node="" data-process-key="stock-check" data-route-focus="material" data-routes="material procurement" style="--ct-node-x: 1040px; --ct-node-y: 460px" type="button">
+<strong>Cek Stock</strong><small>Cukup / shortage</small><span aria-hidden="true" class="ct-node-signals"></span>
+</button>
+<button class="ct-map-node" data-ct-process-node="" data-process-key="stock-material" data-route-focus="material" data-routes="material procurement" style="--ct-node-x: 1380px; --ct-node-y: 460px" type="button">
+<strong>Stock Material</strong><small>Material tersedia</small><span aria-hidden="true" class="ct-node-signals"></span>
+</button>
+<button class="ct-map-node" data-ct-process-node="" data-process-key="rop-pekerjaan" data-route-focus="procurement" data-routes="procurement" style="--ct-node-x: 1040px; --ct-node-y: 590px" type="button">
+<strong>ROP Pekerjaan</strong><small>Permintaan pengadaan</small><span aria-hidden="true" class="ct-node-signals"></span>
+</button>
+<button class="ct-map-node" data-ct-process-node="" data-process-key="material-purchase-order" data-route-focus="procurement" data-routes="procurement nonso" style="--ct-node-x: 1210px; --ct-node-y: 590px" type="button">
+<strong>Purchase Order</strong><small>PO</small><span aria-hidden="true" class="ct-node-signals"></span>
+</button>
+<button class="ct-map-node" data-ct-process-node="" data-process-key="receipt-qc" data-route-focus="procurement" data-routes="procurement nonso" style="--ct-node-x: 1380px; --ct-node-y: 590px" type="button">
+<strong>Receipt &amp; QC</strong><small>Penerimaan material</small><span aria-hidden="true" class="ct-node-signals"></span>
+</button>
+<button class="ct-map-node" data-ct-process-node="" data-process-key="rop-non-so" data-route-focus="nonso" data-routes="nonso" style="--ct-node-x: 870px; --ct-node-y: 720px" type="button">
+<strong>ROP Non-SO</strong><small>Opex / non-project</small><span aria-hidden="true" class="ct-node-signals"></span>
+</button>
+<button class="ct-map-node" data-ct-process-node="" data-process-key="vendor-bill" data-route-focus="nonso" data-routes="nonso" style="--ct-node-x: 1380px; --ct-node-y: 720px" type="button">
+<strong>Vendor Bill</strong><small>Tagihan vendor</small><span aria-hidden="true" class="ct-node-signals"></span>
+</button>
+<button class="ct-map-node" data-ct-process-node="" data-process-key="stock-expense" data-route-focus="nonso" data-routes="nonso" style="--ct-node-x: 1550px; --ct-node-y: 720px" type="button">
+<strong>Stock / Expense</strong><small>Tujuan akhir</small><span aria-hidden="true" class="ct-node-signals"></span>
+</button>
+</div>
+</div>
+<div class="ct-map-scroll-cue" data-ct-scroll-cue="" hidden="">Geser untuk melihat proses berikutnya →</div>
+<div aria-live="polite" class="ct-map-status" data-ct-map-status="">Arahkan pointer ke node untuk ringkasan. Klik node untuk melihat tindakan yang relevan.</div>
+</section>
 </main>
-
-<script>
-  const canvas = document.querySelector('#canvas');
-  const svg = document.querySelector('#routes');
-  const nodes = [...document.querySelectorAll('.node')];
-  const inspectorHeading = document.querySelector('#inspectorHeading');
-  const inspectorState = document.querySelector('#inspectorState');
-  const inspectorPurpose = document.querySelector('#inspectorPurpose');
-  const inspectorChecks = document.querySelector('#inspectorChecks');
-  const inspectorRelated = document.querySelector('#inspectorRelated');
-  const inspectorClassification = document.querySelector('#inspectorClassification');
-  const inspectorExpected = document.querySelector('#inspectorExpected');
-  const inspectorConfidence = document.querySelector('#inspectorConfidence');
-  const inspectorAction = document.querySelector('#inspectorAction');
-  const inspectorRawEvidence = document.querySelector('#inspectorRawEvidence');
-  const inspectorRawEvidenceContent = document.querySelector('#inspectorRawEvidenceContent');
-  const choices = [...document.querySelectorAll('.choice')];
-  const processElements = [...document.querySelectorAll('.node, .choice, .material-step')];
-  const stateName = document.querySelector('#state-name');
-  const stateDescription = document.querySelector('#state-description');
-  const overviewControl = document.querySelector('#overview-control');
-  const mapScroll = document.querySelector('.map-scroll');
-  const mapViewport = document.querySelector('.map-viewport');
-  const pageShell = document.querySelector('#controlTowerContent');
-  const mapFocusControl = document.querySelector('#map-focus-control');
-  const controlTowerFreshness = document.querySelector('#controlTowerFreshness');
-  const controlTowerFreshnessLabel = document.querySelector('#controlTowerFreshnessLabel');
-  const controlTowerFreshnessTitle = document.querySelector('#controlTowerFreshnessTitle');
-  const controlTowerFreshnessDetails = document.querySelector('#controlTowerFreshnessDetails');
-  const controlTowerRefreshButton = document.querySelector('#controlTowerRefreshButton');
-  const fulfilmentControl = document.querySelector('[data-key="fulfilment"]');
-  const focusNoteTitle = document.querySelector('#focus-note-title');
-  const focusNoteCopy = document.querySelector('#focus-note-copy');
-  const overviewView = document.querySelector('#overviewView');
-  const temuanView = document.querySelector('#temuanView');
-  const temuanStatus = document.querySelector('#temuanStatus');
-  const findingList = document.querySelector('#findingList');
-  const viewNavigationLinks = [...document.querySelectorAll('.view-navigation a')];  const integratedFindingList = document.querySelector('#integratedFindingList');
-  const activeFindingCategory = document.querySelector('#activeFindingCategory strong');
-  const reviewFindingCategory = document.querySelector('#reviewFindingCategory strong');
-  const incompleteFindingCategory = document.querySelector('#incompleteFindingCategory strong');
-  const categoryRows = [...document.querySelectorAll('[data-presentation-category]')];
-  const findingBadge = document.querySelector('#salesOrderFindingBadge');
-  const findingFilters = Object.freeze({ affected_model: 'sale.order', category: 'DATA_BELUM_LENGKAP', rule_code: 'DH2-SALES-001' });
-  const findingPageSize = 200;
-  let currentFindings = [];
-  let findingsTotal = 0;
-  let findingLoadMoreError = '';
-  let findingLoadingMore = false;
-  let selectedPresentationCategory = new URLSearchParams(window.location.search).get('presentation_category') || 'MASALAH_AKTIF';
-  let currentEvidence = null;
-  let selectedFindingId = new URLSearchParams(window.location.search).get('selected_finding');
-  let selectedProcessKey = new URLSearchParams(window.location.search).get('selected_process');
-  let currentState = 'overview';
-  const controlTowerRefreshState = { health: null, refresh: null };
-  let idleResetTimer;
-
-  const copy = {
-    overview: ['Gambaran besar', 'Primary spine yang tenang dan mudah dipindai.'],
-    expanded: ['Fulfilment expanded', 'Dua sumber fulfilment dan supporting flow material.'],
-    focused: ['Jalur fokus: Manufacturing Order', 'SO menurunkan kebutuhan material hingga menjadi Finished Goods.'],
-    'stock-focused': ['Jalur fokus: From Stock / Internal Order', 'From Stock memenuhi secara langsung; Internal Order hanya opsi produksi sebelum SO.']
-  };
-
-  function escapeHtml(value) {
-    return String(value ?? '')
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
-  function freshnessTime(value) {
-    if (!value) return 'belum tersedia';
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleString('id-ID');
-  }
-  function controlTowerFreshnessStatus(health, refresh) {
-    const attempt = health?.latest_refresh_attempt_status;
-    if (refresh?.active || (attempt === 'RUNNING' && !refresh?.stale_attempt)) return 'REFRESHING';
-    if (refresh?.candidate_pending || refresh?.stale_attempt || ['FAILED', 'ABORTED'].includes(attempt)) return 'FAILED';
-    return health?.freshness_classification?.state || health?.freshness || 'FAILED';
-  }
-  function renderControlTowerFreshness(health, refresh, error = '') {
-    if (error || !health) {
-      controlTowerFreshness.dataset.state = 'FAILED';
-      controlTowerFreshnessLabel.textContent = 'FAILED';
-      controlTowerFreshnessTitle.textContent = 'Status data tidak dapat dimuat';
-      controlTowerFreshnessDetails.textContent = error || 'Control Tower data service unavailable.';
-      controlTowerRefreshButton.hidden = true;
-      return;
-    }
-    const status = controlTowerFreshnessStatus(health, refresh);
-    const titles = {
-      CURRENT: 'Snapshot trusted masih current',
-      STALE: 'Snapshot trusted mulai tertinggal',
-      CRITICALLY_STALE: 'Snapshot trusted sangat tertinggal',
-      REFRESHING: 'Refresh sedang berjalan',
-      FAILED: 'Refresh terakhir gagal'
-    };
-    const trusted = health.latest_trusted_completed_at ? `Trusted snapshot selesai ${freshnessTime(health.latest_trusted_completed_at)}.` : 'Belum ada trusted snapshot yang selesai.';
-    const age = health.data_age_hours === null || health.data_age_hours === undefined ? '' : ` Umur data ${health.data_age_hours} jam.`;
-    const failure = health.latest_failure_message ? ` Refresh terakhir: ${health.latest_failure_message}` : '';
-    controlTowerFreshness.dataset.state = status;
-    controlTowerFreshnessLabel.textContent = status;
-    controlTowerFreshnessTitle.textContent = titles[status] || 'Status data tidak tersedia';
-    controlTowerFreshnessDetails.textContent = status === 'REFRESHING'
-      ? `${trusted} Snapshot trusted sebelumnya tetap ditampilkan.`
-      : status === 'FAILED'
-        ? `${trusted}${failure || (refresh?.candidate_pending ? ' Kandidat refresh menunggu publikasi atau recovery administrator.' : ' Periksa log administrator sebelum mencoba kembali.')}`
-        : `${trusted}${age}`;
-    controlTowerRefreshButton.hidden = !refresh?.can_refresh || status === 'REFRESHING';
-  }
-  async function fetchControlTowerJson(url, options = {}) {
-    const response = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json' }, ...options });
-    let payload = {};
-    try { payload = await response.json(); } catch {}
-    if (!response.ok) throw new Error(payload.detail || `Request gagal (${response.status}).`);
-    return payload;
-  }
-  async function loadControlTowerFreshness() {
-    const results = await Promise.allSettled([
-      fetchControlTowerJson('/api/control-tower/health'),
-      fetchControlTowerJson('/api/control-tower/refresh')
-    ]);
-    if (results[0].status === 'rejected') {
-      controlTowerRefreshState.health = null;
-      controlTowerRefreshState.refresh = results[1].status === 'fulfilled' ? results[1].value : null;
-      renderControlTowerFreshness(null, null, results[0].reason?.message || 'Control Tower data service unavailable.');
-      return false;
-    }
-    controlTowerRefreshState.health = results[0].value;
-    controlTowerRefreshState.refresh = results[1].status === 'fulfilled' ? results[1].value : null;
-    renderControlTowerFreshness(controlTowerRefreshState.health, controlTowerRefreshState.refresh);
-    return Boolean(controlTowerRefreshState.refresh?.active);
-  }
-  async function pollControlTowerRefresh(attempt = 0) {
-    const active = await loadControlTowerFreshness();
-    if (active && attempt < 20) window.setTimeout(() => pollControlTowerRefresh(attempt + 1), 3000);
-  }
-  async function requestControlTowerRefresh() {
-    controlTowerRefreshButton.disabled = true;
-    controlTowerRefreshState.refresh = { ...(controlTowerRefreshState.refresh || {}), active: true };
-    renderControlTowerFreshness(controlTowerRefreshState.health, controlTowerRefreshState.refresh);
-    try {
-      await fetchControlTowerJson('/api/control-tower/refresh', { method: 'POST' });
-      await pollControlTowerRefresh();
-    } catch (error) {
-      renderControlTowerFreshness(controlTowerRefreshState.health, { ...(controlTowerRefreshState.refresh || {}), active: false }, error.message);
-    } finally {
-      controlTowerRefreshButton.disabled = false;
-    }
-  }
-  function findingTime(value) {
-    if (!value) return '-';
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? '-' : parsed.toLocaleString('id-ID');
-  }
-  function findingQuery(offset = 0) {
-    const query = new URLSearchParams({ ...findingFilters, limit: String(findingPageSize), offset: String(offset) });
-    return query.toString();
-  }
-  function returnContextUrl(findingId = '', processKey = selectedProcessKey) {
-    const url = new URL(window.location.href);
-    if (processKey) url.searchParams.set('selected_process', processKey);
-    if (findingId) url.searchParams.set('selected_finding', findingId);
-    return `${url.pathname}${url.search}`;
-  }
-  function exactFindingDestination(finding) {
-    if (!finding.destination_url) return '';
-    const url = new URL(finding.destination_url, window.location.origin);
-    url.searchParams.set('return_to', returnContextUrl(finding.finding_id, 'sales-order'));
-    return `${url.pathname}${url.search}`;
-  }
-  function evidenceText(value) {
-    return value === null || value === undefined || value === '' ? 'Belum tersedia' : String(value);
-  }
-  function selectFinding(finding, updateUrl = true) {
-    if (!finding) return;
-    selectedFindingId = finding.finding_id;
-    selectedProcessKey = 'sales-order';
-    document.querySelectorAll('[data-finding-id]').forEach(card => card.classList.toggle('is-selected', card.dataset.findingId === selectedFindingId));
-    document.querySelector('[data-key="sales-order"]')?.classList.add('active');
-    const evidence = finding.evidence_payload || {};
-    const missing = Array.isArray(evidence.missing_fields) && evidence.missing_fields.length ? evidence.missing_fields.join(', ') : 'Tidak ada field yang ditandai hilang.';
-    const actualEvidence = `Customer Reference: ${evidence.client_order_ref || 'Belum tersedia'}; Customer PO Date: ${evidence.customer_po_date || 'Belum tersedia'}; State: ${evidence.state || 'Belum tersedia'}; Date Order: ${evidence.date_order || 'Belum tersedia'}`;
-    inspectorHeading.textContent = finding.title || 'Data Sales Order belum lengkap';
-    inspectorState.textContent = `${finding.category || 'Kategori tidak tersedia'} · ${finding.current_status || 'Status tidak tersedia'}`;
-    inspectorPurpose.textContent = 'Memastikan data Sales Order yang diperlukan tersedia sebelum proses berlanjut.';
-    document.querySelector('#inspectorExpected').innerHTML = '<li>Customer Reference tersedia.</li><li>Customer PO Date tersedia.</li>';
-    inspectorChecks.textContent = `${finding.rule_code || 'Rule tidak tersedia'} · Field yang perlu diperiksa: ${missing}. Actual evidence: ${actualEvidence}`;
-    if (updateUrl) {
-      const url = new URL(window.location.href);
-      url.searchParams.set('selected_finding', finding.finding_id);
-      url.searchParams.set('selected_process', 'sales-order');
-      history.replaceState({}, '', url);
-    }
-    const destination = exactFindingDestination(finding);
-    const selectedCardLink = document.querySelector(`[data-finding-id="${CSS.escape(finding.finding_id)}"] a`);
-    if (selectedCardLink && destination) selectedCardLink.href = destination;
-    inspectorRelated.innerHTML = destination
-      ? `Sales Order <a href="${escapeHtml(destination)}">${escapeHtml(finding.native_document_reference || finding.affected_document_id)}</a><br>Detected: ${escapeHtml(findingTime(finding.first_detected_time))}`
-      : 'Exact Sales Order destination tidak tersedia.';
-  }
-  function renderIntegratedFindings(rows, state = 'ready', total = findingsTotal) {
-    if (state === 'loading') {
-      activeFindingCategory.textContent = 'Memuat...';
-      incompleteFindingCategory.textContent = 'Memuat...';
-      findingBadge.hidden = true;
-      integratedFindingList.innerHTML = '<div class="integrated-finding-card integrated-finding-card--loading">Memuat temuan...</div>';
-      return;
-    }
-    if (state === 'error') {
-      activeFindingCategory.textContent = 'Belum tersedia';
-      incompleteFindingCategory.textContent = 'Belum tersedia';
-      findingBadge.hidden = true;
-      integratedFindingList.innerHTML = '<div class="integrated-finding-card integrated-finding-card--error">Temuan tidak dapat dimuat. <button class="finding-retry" id="integratedFindingRetry" type="button">Coba lagi</button></div>';
-      document.querySelector('#integratedFindingRetry').addEventListener('click', loadFindings);
-      return;
-    }
-    const loaded = rows.length;
-    const matchingTotal = Math.max(Number(total) || 0, loaded);
-    activeFindingCategory.textContent = 'Belum tersedia';
-    incompleteFindingCategory.textContent = String(matchingTotal);
-    findingBadge.hidden = matchingTotal === 0;
-    findingBadge.textContent = matchingTotal ? `Data Belum Lengkap · ${matchingTotal}` : '';
-    if (!matchingTotal) {
-      integratedFindingList.innerHTML = selectedFindingId
-        ? '<div class="integrated-finding-card integrated-finding-card--empty">Temuan yang dipilih tidak ditemukan pada snapshot saat ini.</div>'
-        : '<div class="integrated-finding-card integrated-finding-card--empty">Tidak ada temuan Data Belum Lengkap pada snapshot saat ini.</div>';
-      if (selectedFindingId) inspectorState.textContent = 'Temuan yang dipilih tidak ditemukan pada snapshot saat ini.';
-      return;
-    }
-    const cards = rows.map(finding => `<article class="integrated-finding-card" data-finding-id="${escapeHtml(finding.finding_id)}" role="button" tabindex="0" aria-label="Pilih ${escapeHtml(finding.title || 'Temuan Sales Order')}">
-      <span class="status-badge">${escapeHtml(finding.category || 'Kategori tidak tersedia')}</span>
-      <h3>${escapeHtml(finding.title || 'Data Sales Order belum lengkap')}</h3>
-      <p>${escapeHtml(finding.summary || 'Ringkasan temuan belum tersedia.')}</p>
-      ${finding.destination_url ? `<a class="finding-document" href="${escapeHtml(exactFindingDestination(finding))}">${escapeHtml(finding.native_document_reference || finding.affected_document_id)}</a>` : '<span class="finding-document">Exact document unavailable</span>'}
-    </article>`).join('');
-    const pagination = loaded < matchingTotal
-      ? `<div class="integrated-finding-card integrated-finding-card--pagination"><span>${findingLoadMoreError || `Menampilkan ${loaded} dari ${matchingTotal} temuan.`}</span><button class="finding-retry" id="integratedFindingLoadMore" type="button">${findingLoadMoreError ? 'Coba lagi' : 'Muat lagi'}</button></div>`
-      : `<div class="integrated-finding-card integrated-finding-card--pagination">Menampilkan ${loaded} dari ${matchingTotal} temuan.</div>`;
-    integratedFindingList.innerHTML = cards + pagination;
-    document.querySelectorAll('[data-finding-id]').forEach(card => {
-      const finding = rows.find(row => row.finding_id === card.dataset.findingId);
-      card.addEventListener('click', event => { if (event.target.closest('a')) return; selectFinding(finding); });
-      card.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectFinding(finding); } });
-    });
-    document.querySelector('#integratedFindingLoadMore')?.addEventListener('click', loadMoreFindings);
-    if (selectedFindingId) {
-      const selected = rows.find(row => row.finding_id === selectedFindingId);
-      if (selected) selectFinding(selected, false);
-      else inspectorState.textContent = 'Temuan yang dipilih tidak ditemukan pada snapshot saat ini.';
-    }
-  }
-  function renderFindings(rows, total = findingsTotal) {
-    const matchingTotal = Math.max(Number(total) || 0, rows.length);
-    if (!matchingTotal) {
-      findingList.innerHTML = '';
-      temuanStatus.textContent = 'Tidak ada Temuan Data Belum Lengkap pada snapshot saat ini.';
-      return;
-    }
-    temuanStatus.textContent = `Data Belum Lengkap: ${matchingTotal}. Menampilkan ${rows.length} dari ${matchingTotal} temuan.`;
-    findingList.innerHTML = rows.map((finding) => [
-      '<article class="finding-card">',
-      '<div class="finding-category">Data Belum Lengkap</div>',
-      '<h2>' + escapeHtml(finding.title) + '</h2>',
-      '<p class="finding-summary">' + escapeHtml(finding.summary) + '</p>',
-      '<dl>',
-      '<dt>Sales Order</dt>',
-      '<dd><a href="' + escapeHtml(exactFindingDestination(finding)) + '">' + escapeHtml(finding.native_document_reference || finding.affected_document_id) + '</a></dd>',
-      '<dt>Terdeteksi pertama</dt>',
-      '<dd>' + escapeHtml(findingTime(finding.first_detected_time)) + '</dd>',
-      '<dt>Terdeteksi terakhir</dt>',
-      '<dd>' + escapeHtml(findingTime(finding.last_detected_time)) + '</dd>',
-      '</dl>',
-      '</article>'
-    ].join('')).join('');
-  }
-  async function loadFindings() {
-    currentFindings = [];
-    findingsTotal = 0;
-    findingLoadMoreError = '';
-    renderIntegratedFindings([], 'loading');
-    if (!temuanView.hidden) temuanStatus.textContent = 'Memuat Temuan...';
-    try {
-      const response = await fetch(`/api/control-tower/findings?${findingQuery(0)}`, { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
-      if (!response.ok) throw new Error('Request failed: ' + response.status);
-      const payload = await response.json();
-      currentFindings = Array.isArray(payload.rows) ? payload.rows : [];
-      findingsTotal = Number(payload.total ?? currentFindings.length) || 0;
-      renderIntegratedFindings(currentFindings, 'ready', findingsTotal);
-      renderFindings(currentFindings, findingsTotal);
-    } catch (error) {
-      currentFindings = [];
-      findingsTotal = 0;
-      renderIntegratedFindings([], 'error');
-      temuanStatus.textContent = 'Temuan tidak dapat dimuat.';
-      findingList.innerHTML = '<button class="finding-retry" type="button" id="temuanRetry">Coba lagi</button>';
-      document.querySelector('#temuanRetry').addEventListener('click', loadFindings);
-    }
-  }
-  async function loadMoreFindings() {
-    if (findingLoadingMore || currentFindings.length >= findingsTotal) return;
-    findingLoadingMore = true;
-    findingLoadMoreError = '';
-    const button = document.querySelector('#integratedFindingLoadMore');
-    if (button) {
-      button.disabled = true;
-      button.textContent = 'Memuat...';
-    }
-    try {
-      const response = await fetch(`/api/control-tower/findings?${findingQuery(currentFindings.length)}`, { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
-      if (!response.ok) throw new Error('Request failed: ' + response.status);
-      const payload = await response.json();
-      const nextRows = Array.isArray(payload.rows) ? payload.rows : [];
-      findingsTotal = Number(payload.total ?? findingsTotal) || findingsTotal;
-      currentFindings = currentFindings.concat(nextRows);
-      if (!nextRows.length && currentFindings.length < findingsTotal) findingLoadMoreError = 'Temuan tambahan tidak tersedia. Coba lagi.';
-      renderIntegratedFindings(currentFindings, 'ready', findingsTotal);
-      renderFindings(currentFindings, findingsTotal);
-    } catch (error) {
-      findingLoadMoreError = 'Temuan tambahan tidak dapat dimuat. Coba lagi.';
-      renderIntegratedFindings(currentFindings, 'ready', findingsTotal);
-      renderFindings(currentFindings, findingsTotal);
-    } finally {
-      findingLoadingMore = false;
-    }
-  }  function initializeView() {
-    const isTemuan = new URLSearchParams(window.location.search).get('view') === 'temuan';
-    overviewView.hidden = isTemuan;
-    temuanView.hidden = !isTemuan;
-    viewNavigationLinks.forEach((link) => {
-      const active = (isTemuan && link.getAttribute('href') === '?view=temuan')
-        || (!isTemuan && link.getAttribute('href') === '?view=overview');
-      if (active) link.setAttribute('aria-current', 'page');
-      else link.removeAttribute('aria-current');
-    });
-    loadFindings();
-  }
-
-  const presentationCategoryLabels = {
-    MASALAH_AKTIF: 'Masalah Aktif',
-    PERLU_DITINJAU: 'Perlu Ditinjau',
-    DATA_BELUM_LENGKAP: 'Data Belum Lengkap'
-  };
-  const presentationCategories = Object.keys(presentationCategoryLabels);
-
-  function evidenceKey(row) {
-    return String(row?.evidence_key || row?.finding_id || row?.issue_id || 'unknown');
-  }
-  function evidenceDestination(row) {
-    if (!row?.destination_url) return '';
-    const url = new URL(row.destination_url, window.location.origin);
-    url.searchParams.set('return_to', returnContextUrl(evidenceKey(row), row.process_key || selectedProcessKey));
-    return `${url.pathname}${url.search}`;
-  }
-  function readableEvidence(value) {
-    if (value === null || value === undefined || value === '') return 'Belum tersedia';
-    if (Array.isArray(value)) return value.length ? value.map(readableEvidence).join(', ') : 'Kosong';
-    if (typeof value === 'object') {
-      return Object.entries(value).map(([key, item]) => `${key}: ${readableEvidence(item)}`).join('; ') || 'Kosong';
-    }
-    return String(value);
-  }
-  function sourceStatus(row) {
-    return row?.validation_status || row?.current_status || 'Belum tersedia';
-  }
-  function evidenceDocument(row) {
-    const model = row?.affected_model || row?.document_model || 'model tidak tersedia';
-    const reference = row?.native_document_reference || row?.document_number || 'nomor tidak tersedia';
-    const id = row?.affected_document_id ?? row?.document_id ?? 'ID tidak tersedia';
-    return `${model} · ${reference} · ID ${id}`;
-  }
-  function categoryCountText(value) {
-    return Number(value || 0).toLocaleString('id-ID');
-  }
-  function processSummary(processKey) {
-    return currentEvidence?.process_counts?.find(item => item.process_key === processKey) || null;
-  }
-  function renderProcessBadges(processCounts = []) {
-    const counts = new Map((processCounts || []).map(item => [item.process_key, Number(item.count || 0)]));
-    document.querySelectorAll('[data-process-badge]').forEach(badge => {
-      const count = counts.get(badge.dataset.processBadge) || 0;
-      badge.hidden = count === 0;
-      badge.textContent = count ? `${presentationCategoryLabels[selectedPresentationCategory]} · ${categoryCountText(count)}` : '';
-    });
-    const salesCount = counts.get('sales-order') || 0;
-    findingBadge.hidden = salesCount === 0;
-    findingBadge.textContent = salesCount ? `${presentationCategoryLabels[selectedPresentationCategory]} · ${categoryCountText(salesCount)}` : '';
-  }
-  function renderCategoryCounts(payload = {}) {
-    const counts = payload.category_counts || {};
-    activeFindingCategory.textContent = categoryCountText(counts.MASALAH_AKTIF);
-    reviewFindingCategory.textContent = categoryCountText(counts.PERLU_DITINJAU);
-    incompleteFindingCategory.textContent = categoryCountText(counts.DATA_BELUM_LENGKAP);
-    categoryRows.forEach(row => {
-      const active = row.dataset.presentationCategory === selectedPresentationCategory;
-      row.classList.toggle('is-active', active);
-      row.setAttribute('aria-pressed', String(active));
-    });
-    renderProcessBadges(payload.process_counts || []);
-  }
-  function setInspectorRawEvidence(row) {
-    const raw = {
-      expected_condition: row?.expected_condition,
-      actual_condition: row?.actual_condition,
-      evidence: row?.evidence,
-      evidence_payload: row?.evidence_payload
-    };
-    const hasRaw = Object.values(raw).some(value => value !== undefined && value !== null);
-    inspectorRawEvidence.hidden = !hasRaw;
-    inspectorRawEvidenceContent.textContent = hasRaw ? JSON.stringify(raw, null, 2) : '';
-  }
-  function selectEvidence(row, updateUrl = true) {
-    if (!row) return;
-    selectedFindingId = evidenceKey(row);
-    selectedProcessKey = row.process_key || null;
-    document.querySelectorAll('[data-finding-id]').forEach(card => card.classList.toggle('is-selected', card.dataset.findingId === selectedFindingId));
-    processElements.forEach(element => element.classList.toggle('active', Boolean(selectedProcessKey && (element.dataset.processKey === selectedProcessKey || element.dataset.key === selectedProcessKey))));
-    const category = presentationCategoryLabels[row.presentation_category] || row.presentation_category || 'Kategori tidak tersedia';
-    const originalRule = row.rule_id || 'Rule tidak tersedia';
-    const sourceRule = row.source_rule_id && row.source_rule_id !== originalRule ? ` · source ${row.source_rule_id}` : '';
-    inspectorHeading.textContent = row.title || row.rule_name || originalRule;
-    inspectorState.textContent = `${category} · ${sourceStatus(row)} · ${row.severity || 'Severity belum tersedia'}`;
-    inspectorClassification.textContent = `Presentation category: ${category}; original rule ID: ${originalRule}${sourceRule}; affected model: ${row.affected_model || row.document_model || 'Belum tersedia'}; document: ${evidenceDocument(row)}.`;
-    inspectorPurpose.textContent = row.process_key ? `Evidence dipetakan ke node ${row.process_key}; gunakan detail sumber sebelum menyimpulkan.` : 'Evidence tetap terlihat di Temuan; rule-to-process mapping belum cukup didukung untuk badge node.';
-    inspectorExpected.innerHTML = `<li>Original validation status: ${escapeHtml(sourceStatus(row))}</li><li>Expected condition: ${escapeHtml(readableEvidence(row.expected_condition))}</li>`;
-    inspectorChecks.innerHTML = `${escapeHtml(row.evidence_wording || row.summary || 'Penjelasan evidence belum tersedia.')}<br><strong>Actual evidence:</strong> ${escapeHtml(readableEvidence(row.actual_condition || row.evidence_payload))}<br><strong>Supported evidence:</strong> ${escapeHtml(readableEvidence(row.evidence))}`;
-    const limitation = row.validation_status === 'DATA_LINKAGE_GAP' || row.validation_status === 'PARTIAL_MATCH' || row.validation_status === 'MANUAL_EVIDENCE_REQUIRED' || row.validation_status === 'DATA_EXCEPTION'
-      ? 'Review signal; bukan konfirmasi kesalahan user atau SOP.'
-      : 'Source confidence follows the rule result.';
-    inspectorConfidence.textContent = `${limitation} Confidence: ${row.confidence || 'Belum tersedia'}.`;
-    const destination = evidenceDestination(row);
-    inspectorRelated.innerHTML = destination
-      ? `${escapeHtml(evidenceDocument(row))}`
-      : `${escapeHtml(evidenceDocument(row))}. Exact destination belum tersedia untuk model ini.`;
-    inspectorAction.innerHTML = destination
-      ? `<a href="${escapeHtml(destination)}">Buka ${escapeHtml(row.destination_label || 'tracking view')}</a>`
-      : 'Tidak ada destination yang didukung untuk model dan bukti ini.';
-    setInspectorRawEvidence(row);
-    if (updateUrl) {
-      const url = new URL(window.location.href);
-      url.searchParams.set('selected_finding', selectedFindingId);
-      if (selectedProcessKey) url.searchParams.set('selected_process', selectedProcessKey);
-      else url.searchParams.delete('selected_process');
-      history.replaceState({}, '', url);
-    }
-  }
-  function selectFinding(finding, updateUrl = true) {
-    selectEvidence(finding, updateUrl);
-  }
-  function renderIntegratedFindings(rows, state = 'ready', total = findingsTotal) {
-    if (state === 'loading') {
-      activeFindingCategory.textContent = 'Memuat...';
-      reviewFindingCategory.textContent = 'Memuat...';
-      incompleteFindingCategory.textContent = 'Memuat...';
-      findingBadge.hidden = true;
-      integratedFindingList.innerHTML = '<div class="integrated-finding-card integrated-finding-card--loading">Memuat evidence...</div>';
-      return;
-    }
-    if (state === 'error') {
-      activeFindingCategory.textContent = 'Belum tersedia';
-      reviewFindingCategory.textContent = 'Belum tersedia';
-      incompleteFindingCategory.textContent = 'Belum tersedia';
-      findingBadge.hidden = true;
-      integratedFindingList.innerHTML = '<div class="integrated-finding-card integrated-finding-card--error">Evidence tidak dapat dimuat. <button class="finding-retry" id="integratedFindingRetry" type="button">Coba lagi</button></div>';
-      document.querySelector('#integratedFindingRetry').addEventListener('click', loadFindings);
-      return;
-    }
-    const matchingTotal = Number(total || 0);
-    renderCategoryCounts(currentEvidence || {});
-    if (!matchingTotal) {
-      integratedFindingList.innerHTML = selectedFindingId
-        ? '<div class="integrated-finding-card integrated-finding-card--empty">Evidence yang dipilih tidak ditemukan pada snapshot saat ini.</div>'
-        : `<div class="integrated-finding-card integrated-finding-card--empty">Tidak ada ${escapeHtml(presentationCategoryLabels[selectedPresentationCategory])} pada snapshot saat ini.</div>`;
-      if (selectedFindingId) inspectorState.textContent = 'Evidence yang dipilih tidak ditemukan pada snapshot saat ini.';
-      return;
-    }
-    const cards = rows.map(row => {
-      const id = evidenceKey(row);
-      const destination = evidenceDestination(row);
-      const status = sourceStatus(row);
-      return `<article class="integrated-finding-card" data-finding-id="${escapeHtml(id)}" role="button" tabindex="0" aria-label="Pilih ${escapeHtml(row.title || row.rule_id || 'Evidence')}" data-process-key="${escapeHtml(row.process_key || '')}">
-        <span class="status-badge">${escapeHtml(presentationCategoryLabels[row.presentation_category] || row.presentation_category)}</span>
-        <div class="finding-source-meta">${escapeHtml(row.rule_id || 'Rule tidak tersedia')} · ${escapeHtml(status)} · ${escapeHtml(row.severity || 'Severity belum tersedia')}</div>
-        <h3>${escapeHtml(row.title || row.rule_name || row.rule_id || 'Evidence')}</h3>
-        <p>${escapeHtml(row.evidence_wording || row.summary || 'Penjelasan evidence belum tersedia.')}</p>
-        <span class="finding-document">${escapeHtml(evidenceDocument(row))}</span>
-        ${destination ? `<a class="finding-document" href="${escapeHtml(destination)}">Buka ${escapeHtml(row.destination_label || 'destination')}</a>` : '<span class="finding-document">Destination belum tersedia</span>'}
-      </article>`;
-    }).join('');
-    const pagination = rows.length < matchingTotal
-      ? `<div class="integrated-finding-card integrated-finding-card--pagination"><span>${findingLoadMoreError || `Menampilkan ${rows.length} dari ${matchingTotal} evidence.`}</span><button class="finding-retry" id="integratedFindingLoadMore" type="button">${findingLoadMoreError ? 'Coba lagi' : 'Muat lagi'}</button></div>`
-      : `<div class="integrated-finding-card integrated-finding-card--pagination">Menampilkan ${rows.length} dari ${matchingTotal} evidence.</div>`;
-    integratedFindingList.innerHTML = cards + pagination;
-    document.querySelectorAll('[data-finding-id]').forEach(card => {
-      const row = rows.find(candidate => evidenceKey(candidate) === card.dataset.findingId);
-      card.addEventListener('click', event => { if (event.target.closest('a')) return; selectEvidence(row); });
-      card.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectEvidence(row); } });
-    });
-    document.querySelector('#integratedFindingLoadMore')?.addEventListener('click', loadMoreFindings);
-    if (selectedFindingId) {
-      const selected = rows.find(row => evidenceKey(row) === selectedFindingId);
-      if (selected) selectEvidence(selected, false);
-      else inspectorState.textContent = 'Evidence yang dipilih tidak ditemukan pada snapshot saat ini.';
-    }
-  }
-  function renderFindings(rows, total = findingsTotal) {
-    const matchingTotal = Number(total || 0);
-    if (!matchingTotal) {
-      findingList.innerHTML = '';
-      temuanStatus.textContent = `Tidak ada ${presentationCategoryLabels[selectedPresentationCategory]} pada snapshot saat ini.`;
-      return;
-    }
-    temuanStatus.textContent = `${presentationCategoryLabels[selectedPresentationCategory]}: ${matchingTotal}. Menampilkan ${rows.length} dari ${matchingTotal} evidence.`;
-    findingList.innerHTML = rows.map(row => {
-      const destination = evidenceDestination(row);
-      return `<article class="finding-card"><div class="finding-category">${escapeHtml(presentationCategoryLabels[row.presentation_category] || row.presentation_category)}</div><h2>${escapeHtml(row.title || row.rule_name || row.rule_id)}</h2><p class="finding-summary">${escapeHtml(row.evidence_wording || row.summary || 'Penjelasan evidence belum tersedia.')}</p><dl><dt>Rule</dt><dd>${escapeHtml(row.rule_id || 'Belum tersedia')}</dd><dt>Status</dt><dd>${escapeHtml(sourceStatus(row))}</dd><dt>Document</dt><dd>${escapeHtml(evidenceDocument(row))}</dd><dt>Action</dt><dd>${destination ? `<a href="${escapeHtml(destination)}">${escapeHtml(row.destination_label || 'Buka destination')}</a>` : 'Belum tersedia untuk model ini'}</dd></dl></article>`;
-    }).join('');
-  }
-  function evidenceQuery(offset = 0) {
-    return new URLSearchParams({ presentation_category: selectedPresentationCategory, limit: String(findingPageSize), offset: String(offset) }).toString();
-  }
-  async function loadFindings() {
-    currentFindings = [];
-    findingsTotal = 0;
-    findingLoadMoreError = '';
-    currentEvidence = null;
-    renderIntegratedFindings([], 'loading');
-    if (!temuanView.hidden) temuanStatus.textContent = 'Memuat evidence...';
-    try {
-      const response = await fetch(`/api/control-tower/evidence?${evidenceQuery(0)}`, { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
-      if (!response.ok) throw new Error('Request failed: ' + response.status);
-      const payload = await response.json();
-      currentEvidence = payload;
-      currentFindings = Array.isArray(payload.rows) ? payload.rows : [];
-      findingsTotal = Number(payload.total || 0);
-      renderIntegratedFindings(currentFindings, 'ready', findingsTotal);
-      renderFindings(currentFindings, findingsTotal);
-    } catch (error) {
-      currentFindings = [];
-      findingsTotal = 0;
-      currentEvidence = null;
-      renderIntegratedFindings([], 'error');
-      temuanStatus.textContent = 'Evidence tidak dapat dimuat.';
-      findingList.innerHTML = '<button class="finding-retry" type="button" id="temuanRetry">Coba lagi</button>';
-      document.querySelector('#temuanRetry').addEventListener('click', loadFindings);
-    }
-  }
-  async function loadMoreFindings() {
-    if (findingLoadingMore || currentFindings.length >= findingsTotal) return;
-    findingLoadingMore = true;
-    findingLoadMoreError = '';
-    const button = document.querySelector('#integratedFindingLoadMore');
-    if (button) { button.disabled = true; button.textContent = 'Memuat...'; }
-    try {
-      const response = await fetch(`/api/control-tower/evidence?${evidenceQuery(currentFindings.length)}`, { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
-      if (!response.ok) throw new Error('Request failed: ' + response.status);
-      const payload = await response.json();
-      currentEvidence = payload;
-      const nextRows = Array.isArray(payload.rows) ? payload.rows : [];
-      findingsTotal = Number(payload.total || findingsTotal);
-      currentFindings = currentFindings.concat(nextRows);
-      if (!nextRows.length && currentFindings.length < findingsTotal) findingLoadMoreError = 'Evidence tambahan tidak tersedia. Coba lagi.';
-      renderIntegratedFindings(currentFindings, 'ready', findingsTotal);
-      renderFindings(currentFindings, findingsTotal);
-    } catch (error) {
-      findingLoadMoreError = 'Evidence tambahan tidak dapat dimuat. Coba lagi.';
-      renderIntegratedFindings(currentFindings, 'ready', findingsTotal);
-      renderFindings(currentFindings, findingsTotal);
-    } finally {
-      findingLoadingMore = false;
-    }
-  }
-  function initializeView() {
-    const params = new URLSearchParams(window.location.search);
-    const isTemuan = params.get('view') === 'temuan';
-    const requestedCategory = params.get('presentation_category');
-    if (presentationCategories.includes(requestedCategory)) selectedPresentationCategory = requestedCategory;
-    else selectedPresentationCategory = 'MASALAH_AKTIF';
-    overviewView.hidden = isTemuan;
-    temuanView.hidden = !isTemuan;
-    viewNavigationLinks.forEach((link) => {
-      const active = (isTemuan && link.getAttribute('href') === '?view=temuan')
-        || (!isTemuan && link.getAttribute('href') === '?view=overview');
-      if (active) link.setAttribute('aria-current', 'page');
-      else link.removeAttribute('aria-current');
-    });
-    categoryRows.forEach(row => row.addEventListener('click', () => {
-      const category = row.dataset.presentationCategory;
-      const returnUrl = new URL(window.location.href);
-      returnUrl.searchParams.set('view', 'overview');
-      returnUrl.searchParams.set('presentation_category', category);
-      returnUrl.searchParams.delete('selected_finding');
-      const destination = new URL('/dashboard/control-tower/temuan', window.location.origin);
-      destination.searchParams.set('presentation_category', category);
-      destination.searchParams.set('return_to', `${returnUrl.pathname}${returnUrl.search}`);
-      window.location.assign(`${destination.pathname}${destination.search}`);
-    }));
-    loadFindings();
-  }
- function rect(key) {
-    const a = document.querySelector(`[data-key="${key}"]`).getBoundingClientRect();
-    const b = canvas.getBoundingClientRect();
-    return { left: a.left - b.left, right: a.right - b.left, top: a.top - b.top, bottom: a.bottom - b.top, cx: a.left - b.left + a.width / 2, cy: a.top - b.top + a.height / 2 };
-  }
-  function elementRect(element) {
-    const a = element.getBoundingClientRect();
-    const b = canvas.getBoundingClientRect();
-    return { left: a.left - b.left, right: a.right - b.left, top: a.top - b.top, bottom: a.bottom - b.top, cx: a.left - b.left + a.width / 2, cy: a.top - b.top + a.height / 2 };
-  }
-  function route(d, className, arrow = true) {
-    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('d', d); path.setAttribute('class', className);
-    if (arrow) path.setAttribute('marker-end', 'url(#arrow)');
-    svg.append(path);
-  }
-  function draw() {
-    svg.querySelectorAll('path.route, path.motion').forEach(path => path.remove());
-    const spine = ['estimate', 'quotation', 'sales-order', 'fulfilment', 'delivery', 'invoice', 'payment'];
-    spine.slice(0, -1).forEach((key, index) => {
-      const from = rect(key); const to = rect(spine[index + 1]);
-      const d = `M ${from.right} ${from.cy} H ${to.left}`;
-      const focusKeys = ['sales-order', 'fulfilment', 'delivery', 'invoice'];
-      const isFocus = ['focused', 'stock-focused'].includes(currentState) && focusKeys.includes(key);
-      route(d, `route${isFocus ? ' focus' : ''}`);
-      if (isFocus) route(d, 'motion', false);
-    });
-    if (currentState !== 'overview') {
-      const fulfilment = rect('fulfilment');
-      choices.forEach(choice => {
-        const source = elementRect(choice); const elbow = fulfilment.bottom + 28;
-        const d = `M ${source.cx} ${source.top} V ${elbow} H ${fulfilment.cx} V ${fulfilment.bottom}`;
-        const selected = (currentState === 'focused' && choice.dataset.choice === 'manufacturing') || (currentState === 'stock-focused' && choice.dataset.choice === 'stock');
-        if (selected) route(d, 'motion', true); else route(d, 'route support');
-      });
-      const salesOrder = rect('sales-order');
-      if (currentState !== 'stock-focused') {
-        const materialSteps = [...document.querySelectorAll('.material-step')].map(elementRect);
-        const materialClass = currentState === 'focused' ? 'motion' : 'route support';
-        route(`M ${salesOrder.cx} ${salesOrder.bottom} V ${materialSteps[0].top}`, materialClass);
-        materialSteps.slice(0, -1).forEach((from, index) => {
-          const to = materialSteps[index + 1];
-          route(`M ${from.right} ${from.cy} H ${to.left}`, materialClass);
-        });
-      } else {
-        const stockChoice = elementRect(document.querySelector('[data-choice="stock"]'));
-        const internalOrder = elementRect(document.querySelector('.stock-step'));
-        const elbowY = internalOrder.top - 16;
-        route(`M ${stockChoice.cx} ${stockChoice.bottom} V ${elbowY} H ${internalOrder.cx} V ${internalOrder.top}`, 'route reference', false);
-      }
-      if (currentState === 'focused' || currentState === 'stock-focused') {
-        const productionSteps = [...document.querySelectorAll('.production-step')].map(elementRect);
-        if (currentState === 'focused') {
-          const materialSteps = [...document.querySelectorAll('.material-step')].map(elementRect);
-          const from = materialSteps[materialSteps.length - 1];
-          const elbow = productionSteps[0].top - 16;
-          route(`M ${from.cx} ${from.bottom} V ${elbow} H ${productionSteps[0].cx} V ${productionSteps[0].top}`, 'motion');
-        } else {
-          const internalOrder = elementRect(document.querySelector('.stock-step'));
-          const elbow = productionSteps[0].top - 16;
-          route(`M ${internalOrder.cx} ${internalOrder.bottom} V ${elbow} H ${productionSteps[0].cx} V ${productionSteps[0].top}`, 'motion');
-        }
-        productionSteps.slice(0, -1).forEach((from, index) => {
-          const to = productionSteps[index + 1];
-          route(`M ${from.right} ${from.cy} H ${to.left}`, 'motion');
-        });
-      }
-    }
-  }
-  function apply(state) {
-    currentState = state;
-    canvas.classList.toggle('is-expanded', state === 'expanded');
-    canvas.classList.toggle('is-focused', state === 'focused');
-    canvas.classList.toggle('is-stock-focused', state === 'stock-focused');
-    nodes.forEach(node => node.classList.remove('active', 'dim'));
-    choices.forEach(choice => choice.classList.toggle('active',
-      (state === 'focused' && choice.dataset.choice === 'manufacturing') ||
-      (state === 'stock-focused' && choice.dataset.choice === 'stock')
-    ));
-    if (state === 'expanded') document.querySelector('[data-key="fulfilment"]').classList.add('active');
-    if (state === 'focused' || state === 'stock-focused') {
-      ['estimate', 'quotation', 'payment'].forEach(key => document.querySelector(`[data-key="${key}"]`).classList.add('dim'));
-      ['sales-order', 'fulfilment', 'delivery', 'invoice'].forEach(key => document.querySelector(`[data-key="${key}"]`).classList.add('active'));
-    }
-    if (selectedProcessKey) nodes.find(node => node.dataset.key === selectedProcessKey)?.classList.add('active');
-    overviewControl.hidden = state === 'overview';
-    fulfilmentControl.setAttribute('aria-expanded', String(state !== 'overview'));
-    focusNoteTitle.textContent = state === 'stock-focused' ? 'From Stock / Internal Order' : 'Manufacturing Order journey';
-    focusNoteCopy.textContent = state === 'stock-focused' ? 'From Stock tetap langsung ke fulfilment. Internal Order adalah jalur produksi opsional sebelum SO.' : 'Hanya jalur ini yang dianimasikan. Dokumen lengkap dan hubungan detail tetap berada di Tracking.';
-    [stateName.textContent, stateDescription.textContent] = copy[state];
-    requestAnimationFrame(() => { draw(); mapViewport.classList.toggle('has-overflow', mapScroll.scrollWidth > mapScroll.clientWidth + 1); });
-  }
-  overviewControl.addEventListener('click', () => apply('overview'));
-  fulfilmentControl.addEventListener('click', () => apply(currentState === 'overview' ? 'expanded' : 'overview'));
-  mapFocusControl.addEventListener('click', () => {
-    const focused = !pageShell.classList.contains('is-map-focus');
-    pageShell.classList.toggle('is-map-focus', focused);
-    mapFocusControl.setAttribute('aria-pressed', String(focused));
-    mapFocusControl.textContent = focused ? 'Kembali ke 3 panel' : 'Fokus Process Map';
-    requestAnimationFrame(() => { draw(); mapViewport.classList.toggle('has-overflow', mapScroll.scrollWidth > mapScroll.clientWidth + 1); });
-  });
-  document.querySelector('[data-choice="manufacturing"]').addEventListener('click', () => apply('focused'));
-  document.querySelector('[data-choice="stock"]').addEventListener('click', () => apply('stock-focused'));
-  mapScroll.addEventListener('scroll', () => mapViewport.classList.toggle('has-scrolled', mapScroll.scrollLeft > 4));
-  window.addEventListener('resize', () => { draw(); mapViewport.classList.toggle('has-overflow', mapScroll.scrollWidth > mapScroll.clientWidth + 1); });
-  function selectProcessNode(node, updateUrl = true) {
-    const processKey = node.dataset.key || 'process';
-    selectedProcessKey = processKey;
-    if (updateUrl) {
-      selectedFindingId = null;
-      document.querySelectorAll('[data-finding-id]').forEach(card => card.classList.remove('is-selected'));
-      const url = new URL(window.location.href);
-      url.searchParams.set('selected_process', processKey);
-      url.searchParams.delete('selected_finding');
-      history.replaceState({}, '', url);
-    }
-    node.classList.add('active');
-    const label = node.querySelector('strong')?.textContent || 'Proses';
-    inspectorHeading.textContent = label;
-    inspectorState.textContent = `Proses dipilih: ${label}. Inspector menampilkan konteks yang perlu diperiksa.`;
-    inspectorPurpose.textContent = label === 'Sales Order' ? 'Memastikan kebutuhan dan data Sales Order siap menjadi dasar fulfilment.' : `Memahami peran ${label} dalam perjalanan proses.`;
-    inspectorChecks.textContent = 'SOP checks dan exceptions memerlukan bukti snapshot yang sesuai.';
-    inspectorRelated.textContent = label === 'Sales Order' ? 'Dokumen Sales Order dan temuan terkait.' : 'Data terkait node ini belum dipilih.';
-  }
-  function restoreSelectedProcess() {
-    if (!selectedProcessKey || selectedFindingId) return;
-    const node = nodes.find(candidate => candidate.dataset.key === selectedProcessKey);
-    if (node) selectProcessNode(node, false);
-  }
-  function selectProcessNode(element, updateUrl = true) {
-    const processKey = element.dataset.processKey || element.dataset.key || 'process';
-    selectedProcessKey = processKey;
-    if (updateUrl) {
-      selectedFindingId = null;
-      document.querySelectorAll('[data-finding-id]').forEach(card => card.classList.remove('is-selected'));
-      const url = new URL(window.location.href);
-      url.searchParams.set('selected_process', processKey);
-      url.searchParams.delete('selected_finding');
-      history.replaceState({}, '', url);
-    }
-    processElements.forEach(candidate => candidate.classList.toggle('active', candidate === element || candidate.dataset.processKey === processKey));
-    const label = element.querySelector('strong')?.textContent || 'Proses';
-    const summary = processSummary(processKey);
-    const rules = summary?.rules?.map(rule => `${rule.rule_id} · ${rule.validation_status || 'status belum tersedia'} · ${rule.count}`).join('; ');
-    inspectorHeading.textContent = label;
-    inspectorState.textContent = `Proses dipilih: ${label}. ${summary ? `${categoryCountText(summary.count)} evidence pada kategori ${presentationCategoryLabels[selectedPresentationCategory]}.` : 'Tidak ada evidence aktif pada kategori ini.'}`;
-    inspectorPurpose.textContent = `Memahami peran ${label} dalam perjalanan proses dengan evidence snapshot yang tersedia.`;
-    inspectorClassification.textContent = summary ? `Mapping rule-to-process didukung untuk process key ${processKey}.` : 'Tidak ada mapping evidence aktif untuk kategori ini; tidak ada badge yang ditampilkan.';
-    inspectorExpected.innerHTML = '<li>Gunakan rule result dan evidence sumber sebelum menyimpulkan.</li><li>Healthy/PASS dan NOT_TESTED tidak ditampilkan sebagai temuan aktif.</li>';
-    inspectorChecks.textContent = rules || 'Tidak ada rule result non-healthy yang terpetakan pada kategori ini.';
-    inspectorRelated.textContent = `${label}; detail dokumen tersedia melalui Temuan saat result dipilih.`;
-    inspectorConfidence.textContent = 'Confidence mengikuti source rule result; review signals tetap memerlukan peninjauan manusia.';
-    inspectorAction.textContent = 'Pilih evidence di panel Temuan untuk membuka destination yang didukung.';
-    inspectorRawEvidence.hidden = true;
-  }
-  function restoreSelectedProcess() {
-    if (!selectedProcessKey || selectedFindingId) return;
-    const element = processElements.find(candidate => candidate.dataset.processKey === selectedProcessKey || candidate.dataset.key === selectedProcessKey);
-    if (element) selectProcessNode(element, false);
-  }
-  processElements.filter(element => !nodes.includes(element) && element.dataset.processKey).forEach(element => {
-    element.setAttribute('role', element.tagName === 'BUTTON' ? element.getAttribute('role') || 'button' : 'button');
-    element.setAttribute('tabindex', '0');
-    element.addEventListener('click', () => selectProcessNode(element));
-    element.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectProcessNode(element); } });
-  });
-  nodes.forEach(node => {
-    node.setAttribute('role', 'button');
-    node.setAttribute('tabindex', '0');
-    node.addEventListener('click', () => selectProcessNode(node));
-    node.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectProcessNode(node); } });
-  });
-  findingBadge.addEventListener('click', event => {
-    event.stopPropagation();
-    const selected = currentFindings.find(row => evidenceKey(row) === selectedFindingId && row.process_key === 'sales-order')
-      || currentFindings.find(row => row.process_key === 'sales-order')
-      || currentFindings[0];
-    if (selected) selectFinding(selected);
-  });
-  function armIdleReset() {
-    window.clearTimeout(idleResetTimer);
-    idleResetTimer = window.setTimeout(() => window.location.assign('/dashboard/control-tower?view=overview'), 120000);
-  }
-  ['pointerdown', 'keydown', 'scroll', 'touchstart'].forEach(eventName => window.addEventListener(eventName, armIdleReset, { passive: true }));
-  controlTowerRefreshButton.addEventListener('click', requestControlTowerRefresh);
-  window.addEventListener('load', () => { apply('overview'); restoreSelectedProcess(); armIdleReset(); });
-  initializeView();
-  loadControlTowerFreshness();
-</script>
+<script src="/static/dashboard/control-tower-shell.js?v=20260731-phase7-data-trust-1"></script>
 </body>
 </html>

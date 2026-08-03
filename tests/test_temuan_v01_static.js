@@ -5,25 +5,33 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
 const controlTower = fs.readFileSync(path.join(root, 'src/static/dashboard/control-tower.html'), 'utf8');
+const controlTowerShell = fs.readFileSync(path.join(root, 'src/static/dashboard/control-tower-shell.js'), 'utf8');
 const salesOrders = fs.readFileSync(path.join(root, 'src/static/dashboard/sales-orders.js'), 'utf8');
 const dedicatedTemuan = fs.readFileSync(path.join(root, 'src/static/dashboard/temuan.html'), 'utf8');
 const dedicatedTemuanJs = fs.readFileSync(path.join(root, 'src/static/dashboard/temuan.js'), 'utf8');
 
-test('Temuan view has loading, empty, error, and finding contracts', () => {
-  assert.match(controlTower, /id="temuanView"[^>]*hidden/);
-  assert.match(controlTower, /<h1[^>]*>Temuan<\/h1>/);
-  assert.match(controlTower, /Data Belum Lengkap/);
-  assert.match(controlTower, /Memuat Temuan/);
-  assert.match(controlTower, /Tidak ada Temuan Data Belum Lengkap/);
-  assert.match(controlTower, /Temuan tidak dapat dimuat/);
-  assert.match(controlTower, /\/api\/control-tower\/findings/);
+test('Immersive Control Tower exposes trusted Temuan summary and inspector states', () => {
+  assert.match(controlTower, /class="ct-immersive-page"/);
+  assert.match(controlTower, /data-ct-temuan/);
+  assert.match(controlTower, /data-ct-inspector/);
+  assert.match(controlTower, /data-ct-open-documents/);
+  for (const category of ['MASALAH_AKTIF', 'PERLU_DITINJAU', 'DATA_BELUM_LENGKAP']) {
+    assert.match(controlTower, new RegExp('data-ct-category-count="' + category + '"'));
+    assert.match(controlTower, new RegExp('data-ct-inspector-count="' + category + '"'));
+  }
+  assert.match(controlTowerShell, /function evidenceStateForNode/);
+  assert.match(controlTowerShell, /function coverageMessageForNode/);
+  assert.match(controlTowerShell, /function formatCount/);
+  assert.match(controlTowerShell, /coverage\.state !== "MAPPED"/);
 });
 
-test('Temuan uses the exact native Sales Order destination and view switch', () => {
-  assert.match(controlTower, /view=temuan/);
-  assert.match(controlTower, /finding\.destination_url/);
-  assert.match(controlTower, /overviewView\.hidden = isTemuan/);
-  assert.match(controlTower, /temuanView\.hidden = !isTemuan/);
+test('Control Tower routes findings through the dedicated Temuan destination', () => {
+  assert.match(controlTowerShell, /function categoryDestination/);
+  assert.match(controlTowerShell, /\/dashboard\/control-tower\/temuan/);
+  assert.match(controlTowerShell, /presentation_category/);
+  assert.match(controlTowerShell, /return_to/);
+  assert.match(dedicatedTemuanJs, /destinationFor/);
+  assert.match(dedicatedTemuanJs, /unsupported_destination_reason/);
 });
 
 test('Sales Order deep link requires an exact native id and focuses the expanded row', () => {
@@ -57,13 +65,13 @@ test('Office Pilot Temuan worklist preserves trusted freshness and evidence stat
 });
 
 test('Canonical Control Tower exposes office freshness and navigation contracts', () => {
-  assert.match(controlTower, /id="controlTowerFreshness"/);
-  assert.match(controlTower, /id="controlTowerRefreshButton"/);
-  assert.match(controlTower, /fetchControlTowerJson\('\/api\/control-tower\/health'\)/);
-  assert.match(controlTower, /fetchControlTowerJson\('\/api\/control-tower\/refresh'/);
-  assert.match(controlTower, /Promise\.allSettled/);
-  assert.match(controlTower, /window\.location\.assign\(`\$\{destination\.pathname\}/);
-  assert.match(controlTower, /map-focus-control/);
-  assert.match(controlTower, /120000/);
-  assert.match(controlTower, /Control Tower data service unavailable/);
+  assert.match(controlTower, /data-ct-freshness/);
+  assert.match(controlTower, /data-ct-refresh/);
+  assert.match(controlTower, /data-ct-mode-toggle/);
+  assert.match(controlTower, /data-ct-map-scroll/);
+  assert.match(controlTowerShell, /fetch\("\/api\/control-tower\/health"/);
+  assert.match(controlTowerShell, /fetch\("\/api\/control-tower\/refresh"/);
+  assert.match(controlTowerShell, /Promise\.allSettled/);
+  assert.match(controlTowerShell, /categoryDestination/);
+  assert.match(controlTowerShell, /UNAVAILABLE/);
 });

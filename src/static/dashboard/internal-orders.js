@@ -249,7 +249,7 @@ function detailRow(row) {
 function tableRow(row) {
   const expanded = state.expanded.has(row.internal_order_number);
   return `
-    <tr>
+    <tr class="${expanded ? 'is-expanded' : ''}">
       <td data-column-key="expand"><button class="row-action" type="button" data-io="${row.internal_order_number}" title="Toggle diagnostics" aria-label="Toggle diagnostics">${expanded ? "-" : "+"}</button></td>
       <td class="io-number" data-column-key="io_number">${safeText(row.internal_order_number)}</td>
       <td data-column-key="status">${statusBadge(row.status_summary)}</td>

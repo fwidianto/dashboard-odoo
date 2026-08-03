@@ -53,6 +53,9 @@ def test_supported_destinations_keep_unsupported_models_empty() -> None:
     assert supported_destination(
         affected_model="purchase.order", document_id=7, document_number="PO0007"
     ) == (None, None)
+    assert supported_destination(
+        affected_model="mrp.production", document_id=8, document_number="MO0008"
+    ) == (None, None)
 
 
 class _FakeEvidenceService(ControlTowerService):
@@ -92,6 +95,70 @@ class _FakeEvidenceService(ControlTowerService):
 
     def validation_summary(self):
         return [{"rule_id": "SO-CANCEL-001", "overall_status": "MISMATCH"}]
+
+
+class _FakeTemuanDestinationService(ControlTowerService):
+    rows = [
+        {
+            "evidence_key": "mo-1",
+            "source_kind": "mv_ct_exception_worklist",
+            "presentation_category": "MASALAH_AKTIF",
+            "rule_id": "SO-IO-MO-001",
+            "source_rule_id": "SO-IO-MO-001",
+            "affected_model": "mrp.production",
+            "document_id": 8,
+            "document_number": "MO0008",
+            "validation_status": "MISMATCH",
+            "severity": "HIGH",
+            "confidence": "HIGH",
+        },
+        {
+            "evidence_key": "po-1",
+            "source_kind": "mv_ct_exception_worklist",
+            "presentation_category": "MASALAH_AKTIF",
+            "rule_id": "PO-CANCEL-001",
+            "source_rule_id": "PO-CANCEL-001",
+            "affected_model": "purchase.order",
+            "document_id": 7,
+            "document_number": "PO0007",
+            "validation_status": "MISMATCH",
+            "severity": "HIGH",
+            "confidence": "HIGH",
+        },
+    ]
+
+    def _rows(self, sql, params=None):
+        if "GROUP BY presentation_category" in sql or "SELECT DISTINCT" in sql:
+            return []
+        if "FROM evidence" in sql:
+            return list(self.rows)
+        return []
+
+    def _row(self, sql, params=None):
+        if "COUNT(*) AS total" in sql:
+            return {"total": len(self.rows)}
+        return {}
+
+    def validation_summary(self):
+        return []
+
+
+def test_unsupported_temuan_destinations_explain_without_urls() -> None:
+    result = _FakeTemuanDestinationService().temuan(
+        presentation_category="MASALAH_AKTIF"
+    )
+
+    assert {row["affected_model"] for row in result["rows"]} == {
+        "mrp.production",
+        "purchase.order",
+    }
+    for row in result["rows"]:
+        assert row["destination_url"] is None
+        assert row["destination_label"] is None
+        assert row["destination_supported"] is False
+        assert row["unsupported_destination_reason"] == (
+            "No exact compatible investigation page is available for this document."
+        )
 
 
 def test_evidence_uses_authoritative_total_and_offset() -> None:

@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   const refs = {};
-  "backLink freshnessBanner freshnessLabel freshnessTitle freshnessDetails refreshButton categoryFilter processFilter ruleFilter severityFilter sortFilter clearFilters categorySummary worklistStatus findingList previousPage nextPage paginationStatus inspectorState inspectorBody inspectorPresentation inspectorRule inspectorStatus inspectorSeverity inspectorConfidence inspectorDocument inspectorExplanation inspectorEvidence inspectorLimitation inspectorDestination inspectorRaw".split(" ").forEach((id) => { refs[id] = document.getElementById(id); });
+  "backLink freshnessBanner freshnessLabel freshnessTitle freshnessDetails refreshButton categoryFilter processFilter ruleFilter severityFilter sortFilter clearFilters categorySummary worklistStatus findingList previousPage nextPage paginationStatus inspectorState inspectorBody inspectorPresentation inspectorProcess inspectorRule inspectorStatus inspectorSeverity inspectorConfidence inspectorDocument inspectorExplanation inspectorEvidence inspectorLimitation inspectorDestination inspectorRaw".split(" ").forEach((id) => { refs[id] = document.getElementById(id); });
   const labels = { MASALAH_AKTIF: "Masalah Aktif", PERLU_DITINJAU: "Perlu Ditinjau", DATA_BELUM_LENGKAP: "Data Belum Lengkap" };
   const state = { filters: { presentation_category: "", process_key: "", rule_id: "", severity: "", sort: "attention" }, rows: [], offset: 0, limit: 25, total: 0, selectedKey: null, requestId: 0, health: null, refresh: null };
   let returnTo = "/dashboard/control-tower";
@@ -66,6 +66,25 @@
     url.searchParams.set("offset", state.offset);
     return url;
   }
+  function syncContextUrl() {
+    const url = new URL(window.location.href);
+    const queryValues = {
+      presentation_category: state.filters.presentation_category,
+      process_key: state.filters.process_key,
+      rule_id: state.filters.rule_id,
+      severity: state.filters.severity,
+      sort: state.filters.sort === "attention" ? "" : state.filters.sort,
+    };
+    Object.entries(queryValues).forEach(([key, value]) => {
+      if (value) url.searchParams.set(key, value);
+      else url.searchParams.delete(key);
+    });
+    if (state.offset) url.searchParams.set("page", String(Math.floor(state.offset / state.limit) + 1));
+    else url.searchParams.delete("page");
+    if (state.selectedKey) url.searchParams.set("selected_finding", state.selectedKey);
+    else url.searchParams.delete("selected_finding");
+    window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+  }
   function renderInspector(row) {
     if (!row) {
       refs.inspectorState.textContent = "Pilih result untuk melihat evidence.";
@@ -75,6 +94,7 @@
     refs.inspectorState.textContent = row.evidence_wording || "Review signal perlu dikonfirmasi oleh pemilik proses.";
     refs.inspectorBody.hidden = false;
     refs.inspectorPresentation.textContent = display(row.presentation_label);
+    refs.inspectorProcess.textContent = display(row.process_label || row.process_key);
     refs.inspectorRule.textContent = display(row.original_rule_id || row.rule_id);
     refs.inspectorStatus.textContent = display(row.validation_status || row.current_status);
     refs.inspectorSeverity.textContent = display(row.severity);
@@ -129,11 +149,13 @@
         button.addEventListener("click", () => {
           const row = state.rows[Number(button.dataset.index)];
           state.selectedKey = row && rowKey(row);
+          syncContextUrl();
           renderInspector(row);
           renderRows(payload);
         }));
       if (!state.rows.some((row) => rowKey(row) === state.selectedKey)) {
         state.selectedKey = null;
+        syncContextUrl();
         renderInspector();
       }
     }
@@ -243,6 +265,7 @@
     state.filters[key] = select.value;
     state.offset = 0;
     state.selectedKey = null;
+    syncContextUrl();
     loadWorklist();
   }));
   refs.clearFilters.addEventListener("click", () => {
@@ -252,17 +275,20 @@
     });
     state.offset = 0;
     state.selectedKey = null;
+    syncContextUrl();
     loadWorklist();
   });
   refs.previousPage.addEventListener("click", () => {
     state.offset = Math.max(0, state.offset - state.limit);
     state.selectedKey = null;
+    syncContextUrl();
     loadWorklist();
   });
   refs.nextPage.addEventListener("click", () => {
     if (state.offset + state.limit < state.total) {
       state.offset += state.limit;
       state.selectedKey = null;
+      syncContextUrl();
       loadWorklist();
     }
   });
@@ -276,8 +302,12 @@
   state.filters.rule_id = params.get("rule_id") || params.get("rule") || "";
   state.filters.severity = params.get("severity") || "";
   state.filters.sort = params.get("sort") || "attention";
+  const requestedPage = Number(params.get("page"));
+  if (Number.isInteger(requestedPage) && requestedPage > 1) state.offset = (requestedPage - 1) * state.limit;
+  state.selectedKey = params.get("selected_finding") || null;
   function armIdleReset() {
     window.clearTimeout(idleResetTimer);
+    if (window.controlTowerOfficeMode !== true) return;
     idleResetTimer = window.setTimeout(() => window.location.assign("/dashboard/control-tower?view=overview"), 120000);
   }
   ["pointerdown", "keydown", "scroll", "touchstart"].forEach((eventName) => window.addEventListener(eventName, armIdleReset, { passive: true }));

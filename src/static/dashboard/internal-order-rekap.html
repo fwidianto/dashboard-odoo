@@ -6,9 +6,31 @@
   <title>Internal Order Rekap</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/static/dashboard/internal-order-rekap.css?v=20260703-review-signals">
+  <link rel="stylesheet" href="/static/dashboard/control-tower-shell.css?v=20260730-ui-unification-6">
 </head>
-<body>
+<body data-ct-page="internal-order-rekap">
+  <header class="ct-app-header" data-ct-shell-header>
+    <a class="ct-brand" href="/dashboard/control-tower">
+      <span class="ct-brand-mark" aria-hidden="true">CT</span>
+      <span class="ct-brand-copy"><strong>Control Tower Operasional</strong><small>Evidence-led operations workspace</small></span>
+    </a>
+    <nav class="ct-primary-nav" aria-label="Navigasi utama">
+      <a data-ct-route="control-tower" href="/dashboard/control-tower">Control Tower</a>
+      <a data-ct-route="temuan" href="/dashboard/control-tower/temuan">Temuan</a>
+      <a data-ct-route="sales-orders" href="/dashboard/sales-orders">Sales Orders</a>
+      <a data-ct-route="internal-orders" href="/dashboard/internal-orders">Internal Orders</a>
+      <a data-ct-route="internal-order-rekap" href="/dashboard/internal-order-rekap">Order Material Tracking</a>
+    </nav>
+    <div class="ct-header-tools">
+      <div class="ct-freshness-compact" data-ct-freshness data-state="LOADING" title="Memeriksa status data" aria-live="polite">
+        <span class="ct-freshness-state" data-ct-freshness-state>LOADING</span>
+        <span class="ct-freshness-time" data-ct-freshness-time>Memeriksa data...</span>
+      </div>
+      <a class="ct-exit" href="/logout">Keluar</a>
+    </div>
+  </header>
   <main class="page-shell io-rekap-dashboard">
+    <a class="ct-context-return" data-ct-context-return href="#" hidden>Kembali ke Temuan</a>
     <header class="page-header">
       <div>
         <div class="page-title-row">
@@ -22,10 +44,6 @@
         <p id="pageSubtitle">RKB Actual vs ROP vs PO reconciliation</p>
       </div>
       <div class="header-actions">
-        <a class="secondary-button" href="/dashboard/internal-orders">Internal Orders</a>
-        <a class="secondary-button" href="/dashboard/sales-orders">Sales Orders</a>
-        <a class="secondary-button is-current" href="/dashboard/internal-order-rekap" aria-current="page">Order Material Tracking</a>
-        <a class="secondary-button" href="/logout">Logout</a>
         <button class="icon-button" id="refreshButton" type="button" title="Reload current Internal Order" aria-label="Reload current Internal Order">
           <span aria-hidden="true">R</span>
         </button>
@@ -289,6 +307,7 @@
 
   <script src="/static/dashboard/dashboard-table-tools.js"></script>
   <script src="/static/dashboard/dashboard-export.js"></script>
+  <script src="/static/dashboard/control-tower-shell.js?v=20260730-ui-unification-2"></script>
   <script src="/static/dashboard/internal-order-rekap.js?v=20260703-review-signals"></script>
 </body>
 </html>

@@ -873,7 +873,7 @@ function revealLinkedSalesOrder(row) {
   clearConflictingLinkedFilter('customer', row.customer_name);
   clearConflictingLinkedFilter('productType', row.product_type_label);
   clearConflictingLinkedFilter('source', row.source_type);
-  clearConflictingLinkedFilter('status', row.sales_order_state);
+  state.filters.status = new Set([String(row.sales_order_state || '')]);
   clearConflictingLinkedFilter('followUp', row.follow_up_status);
   if (!dateOverlaps(row, els.commitmentFromFilter.value, els.commitmentToFilter.value)) {
     els.commitmentFromFilter.value = '';
@@ -888,6 +888,7 @@ function expandSalesOrderRow(button) {
   const soId = String(button.dataset.so);
   const mainRow = button.closest('tr[data-row-so-id]');
   if (!mainRow) return;
+  mainRow.classList.add('is-expanded');
   const row = state.rows.find((item) => String(item.sales_order_id) === soId);
   if (!row) return;
   state.expanded.add(soId);
@@ -930,7 +931,7 @@ function focusLinkedSalesOrder(rawId) {
 function tableRow(row) {
   const expanded = state.expanded.has(String(row.sales_order_id));
   return `
-    <tr data-row-so-id="${row.sales_order_id}">
+    <tr class="${expanded ? 'is-expanded' : ''}" data-row-so-id="${row.sales_order_id}">
       <td data-column-key="expand"><button class="row-action" type="button" data-so="${row.sales_order_id}" title="Toggle details" aria-label="Toggle details">${expanded ? "-" : "+"}</button></td>
       <td class="sales-order-number" data-column-key="sales_order_number">${safeText(row.sales_order_number)}</td>
       <td data-column-key="customer_name">${safeText(row.customer_name)}</td>
@@ -1307,8 +1308,8 @@ async function loadDashboard() {
     state.detailLoading.clear();
     populateFilters(payload.filters || {});
     applyFilters();
-    focusLinkedSalesOrder(new URLSearchParams(window.location.search).get('sales_order_id'));
     els.lastLoaded.textContent = `Loaded ${new Date().toLocaleString()}`;
+    focusLinkedSalesOrder(new URLSearchParams(window.location.search).get('sales_order_id'));
   } catch (error) {
     els.lastLoaded.textContent = "Failed to load";
     els.dashboardRows.innerHTML = `<tr><td colspan="${Math.max(1, visibleColumnCount())}" class="empty-cell">${error.message}</td></tr>`;
@@ -1472,6 +1473,7 @@ els.dashboardRows.addEventListener("click", (event) => {
   if (existingDetail) {
     existingDetail.remove();
     state.expanded.delete(soId);
+    mainRow.classList.remove("is-expanded");
     button.textContent = "+";
     return;
   }
@@ -1495,4 +1497,3 @@ updateSortIndicators();
 initReviewSignalsCollapsed();
 configureReturnAction();
 loadDashboard();
-
