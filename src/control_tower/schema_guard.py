@@ -27,7 +27,7 @@ def ensure_phase8_schema_ready(postgres_client) -> None:
             revision = conn.execute(
                 text("SELECT version_num FROM alembic_version ORDER BY version_num DESC LIMIT 1")
             ).scalar()
-            if str(revision) not in {"002", "003", "004"}:
+            if str(revision) not in {"002", "003", "004", "005"}:
                 raise Phase8SchemaNotReady(_READY_MESSAGE)
             ready = conn.execute(
                 text(
@@ -67,7 +67,7 @@ def ensure_phase8_detection_schema_ready(postgres_client) -> None:
             revision = conn.execute(
                 text("SELECT version_num FROM alembic_version ORDER BY version_num DESC LIMIT 1")
             ).scalar()
-            if str(revision) not in {"003", "004"}:
+            if str(revision) not in {"003", "004", "005"}:
                 raise Phase8SchemaNotReady(
                     "Change detection requires Alembic revision 003 and its manifest tables."
                 )
@@ -90,9 +90,9 @@ def ensure_phase8_fetch_schema_ready(postgres_client) -> None:
             revision = conn.execute(
                 text("SELECT version_num FROM alembic_version ORDER BY version_num DESC LIMIT 1")
             ).scalar()
-            if str(revision) != "004":
+            if str(revision) not in {"004", "005"}:
                 raise Phase8SchemaNotReady(
-                    "Fetch/apply requires Alembic revision 004 and its evidence tables."
+                    "Fetch/apply requires Alembic revision 004 or 005 and its evidence tables."
                 )
             ready = conn.execute(text("""
                 SELECT to_regclass('public.ct_fetch_apply_run') IS NOT NULL AS header,
@@ -101,6 +101,18 @@ def ensure_phase8_fetch_schema_ready(postgres_client) -> None:
             """)).mappings().one()
             if not ready["header"] or not ready["evidence"] or not ready["batch"]:
                 raise Phase8SchemaNotReady("Fetch/apply evidence schema is not ready.")
+            if str(revision) == "005":
+                contract_columns = conn.execute(text("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'ct_fetch_apply_run'
+                      AND column_name IN ('field_contract_version', 'field_contract_fingerprint', 'field_contract_allowlist_fingerprint')
+                """)).scalars().all()
+                if sorted(contract_columns) != [
+                    "field_contract_allowlist_fingerprint", "field_contract_fingerprint",
+                    "field_contract_version",
+                ]:
+                    raise Phase8SchemaNotReady("Fetch/apply field-contract columns are not ready.")
     except Phase8SchemaNotReady:
         raise
     except Exception as exc:

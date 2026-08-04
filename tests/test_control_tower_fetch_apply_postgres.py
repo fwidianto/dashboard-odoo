@@ -78,6 +78,16 @@ def _upgrade_004():
         command.upgrade(_config(), "004")
 
 
+def _upgrade_005():
+    with _settings():
+        command.upgrade(_config(), "005")
+
+
+def _downgrade_004():
+    with _settings():
+        command.downgrade(_config(), "004")
+
+
 def _downgrade_003():
     with _settings():
         command.downgrade(_config(), "003")
@@ -90,6 +100,7 @@ def engine():
     _upgrade(db)
     _upgrade_003()
     _upgrade_004()
+    _upgrade_005()
     try:
         yield db
     finally:
@@ -269,25 +280,41 @@ def test_migration_004_upgrade_and_downgrade(engine):
         }
         assert {"ct_fetch_apply_run", "ct_fetch_apply_evidence", "ct_fetch_apply_batch"} <= tables
         version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+        assert version == "005"
+    _downgrade_004()
+    with engine.connect() as conn:
+        version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
         assert version == "004"
+        columns = {
+            row[0]
+            for row in conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema='public' AND table_name='ct_fetch_apply_run' "
+                    "AND column_name LIKE 'field_contract%'"
+                )
+            ).all()
+        }
+        assert columns == set()
     _downgrade_003()
     with engine.connect() as conn:
         assert conn.execute(text("SELECT to_regclass('public.ct_fetch_apply_evidence')")).scalar() is None
         version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
         assert version == "003"
     _upgrade_004()
+    _upgrade_005()
     with engine.connect() as conn:
         version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert version == "004"
+        assert version == "005"
 
 
 def test_schema_guard_requires_revision_004(engine):
     with engine.begin() as conn:
         conn.execute(text("UPDATE alembic_version SET version_num='003'"))
-    with pytest.raises(Phase8SchemaNotReady, match="revision 004"):
+    with pytest.raises(Phase8SchemaNotReady, match="revision 004 or 005"):
         ensure_phase8_fetch_schema_ready(_client(engine))
     with engine.begin() as conn:
-        conn.execute(text("UPDATE alembic_version SET version_num='004'"))
+        conn.execute(text("UPDATE alembic_version SET version_num='005'"))
     ensure_phase8_fetch_schema_ready(_client(engine))
 
 
@@ -823,15 +850,17 @@ def test_stale_fetch_header_contradiction_rejected(engine):
                 INSERT INTO ct_fetch_apply_run
                     (run_id, company_id, base_snapshot_run_id, selected_domains, models,
                      manifest_completion_fingerprint, manifest_row_count, batch_size,
-                     contract_version, status, started_at)
+                     contract_version, field_contract_version,
+                     field_contract_allowlist_fingerprint, status, started_at)
                 VALUES (CAST(:run_id AS UUID), 3, CAST(:base AS UUID), '["commercial"]'::jsonb,
                         '["sale.order","sale.order.line"]'::jsonb, :fingerprint, 3, 500,
-                        :version, 'RUNNING', :stamp)
+                        :version, :fc_version, :fc_fp, 'RUNNING', :stamp)
                 """
             ),
             {
                 "run_id": run, "base": PHASE7_BASE_RUN_ID,
-                "fingerprint": "0" * 64, "version": FETCH_APPLY_CONTRACT_VERSION, "stamp": STAMP,
+                "fingerprint": "0" * 64, "version": FETCH_APPLY_CONTRACT_VERSION,
+                "fc_version": FETCH_APPLY_CONTRACT_VERSION, "fc_fp": "e" * 64, "stamp": STAMP,
             },
         )
     with pytest.raises(FetchApplyError, match="immutable inputs contradict"):
@@ -1028,15 +1057,18 @@ def test_db_rejects_wrong_company_header(engine):
                     INSERT INTO ct_fetch_apply_run
                         (run_id, company_id, base_snapshot_run_id, selected_domains, models,
                          manifest_completion_fingerprint, manifest_row_count, batch_size,
-                         contract_version, status, started_at)
+                         contract_version, field_contract_version,
+                         field_contract_allowlist_fingerprint, status, started_at)
                     VALUES (CAST(:run_id AS UUID), 99, CAST(:base AS UUID),
                             '["commercial"]'::jsonb, '["sale.order"]'::jsonb,
-                            :fingerprint, 1, 500, :version, 'RUNNING', :stamp)
+                            :fingerprint, 1, 500, :version, :fc_version, :fc_fp,
+                            'RUNNING', :stamp)
                     """
                 ),
                 {
                     "run_id": run, "base": PHASE7_BASE_RUN_ID,
-                    "fingerprint": "a" * 64, "version": "ct-fetch-apply-v1", "stamp": STAMP,
+                    "fingerprint": "a" * 64, "version": "ct-fetch-apply-v1",
+                    "fc_version": "ct-fetch-apply-v1", "fc_fp": "e" * 64, "stamp": STAMP,
                 },
             )
 
@@ -1050,15 +1082,18 @@ def test_db_rejects_fetched_without_applied_at(engine):
                 INSERT INTO ct_fetch_apply_run
                     (run_id, company_id, base_snapshot_run_id, selected_domains, models,
                      manifest_completion_fingerprint, manifest_row_count, batch_size,
-                     contract_version, status, started_at)
+                     contract_version, field_contract_version,
+                     field_contract_allowlist_fingerprint, status, started_at)
                 VALUES (CAST(:run_id AS UUID), 3, CAST(:base AS UUID),
                         '["commercial"]'::jsonb, '["sale.order","sale.order.line"]'::jsonb,
-                        :fingerprint, 3, 500, :version, 'RUNNING', :stamp)
+                        :fingerprint, 3, 500, :version, :fc_version, :fc_fp,
+                        'RUNNING', :stamp)
                 """
             ),
             {
                 "run_id": run, "base": PHASE7_BASE_RUN_ID,
-                "fingerprint": "b" * 64, "version": "ct-fetch-apply-v1", "stamp": STAMP,
+                "fingerprint": "b" * 64, "version": "ct-fetch-apply-v1",
+                "fc_version": "ct-fetch-apply-v1", "fc_fp": "e" * 64, "stamp": STAMP,
             },
         )
     with pytest.raises(IntegrityError):
@@ -1089,15 +1124,18 @@ def test_db_rejects_malformed_fingerprint(engine):
                 INSERT INTO ct_fetch_apply_run
                     (run_id, company_id, base_snapshot_run_id, selected_domains, models,
                      manifest_completion_fingerprint, manifest_row_count, batch_size,
-                     contract_version, status, started_at)
+                     contract_version, field_contract_version,
+                     field_contract_allowlist_fingerprint, status, started_at)
                 VALUES (CAST(:run_id AS UUID), 3, CAST(:base AS UUID),
                         '["commercial"]'::jsonb, '["sale.order"]'::jsonb,
-                        :fingerprint, 1, 500, :version, 'RUNNING', :stamp)
+                        :fingerprint, 1, 500, :version, :fc_version, :fc_fp,
+                        'RUNNING', :stamp)
                 """
             ),
             {
                 "run_id": run, "base": PHASE7_BASE_RUN_ID,
-                "fingerprint": "d" * 64, "version": "ct-fetch-apply-v1", "stamp": STAMP,
+                "fingerprint": "d" * 64, "version": "ct-fetch-apply-v1",
+                "fc_version": "ct-fetch-apply-v1", "fc_fp": "e" * 64, "stamp": STAMP,
             },
         )
     with pytest.raises(IntegrityError):
@@ -1184,6 +1222,43 @@ def test_stale_writer_finalize_fails_closed(engine):
     assert header_status != "COMPLETE"
 
 
+def test_migration_005_upgrade_use_downgrade(engine):
+    run = _pipeline_to_fetching(engine)
+    result = _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(_rows()), now=STAMP)
+    assert result["current_state"] == "RECONCILING"
+    with engine.connect() as conn:
+        header = conn.execute(
+            text(
+                "SELECT field_contract_version, field_contract_fingerprint, "
+                "field_contract_allowlist_fingerprint FROM ct_fetch_apply_run "
+                "WHERE run_id=CAST(:run_id AS UUID)"
+            ),
+            {"run_id": run},
+        ).mappings().one()
+    assert header["field_contract_version"] == "ct-fetch-apply-v1"
+    assert len(header["field_contract_fingerprint"]) == 64
+    assert len(header["field_contract_allowlist_fingerprint"]) == 64
+    _downgrade_004()
+    with engine.connect() as conn:
+        version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+        assert version == "004"
+        columns = {
+            row[0]
+            for row in conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema='public' AND table_name='ct_fetch_apply_run' "
+                    "AND column_name LIKE 'field_contract%'"
+                )
+            ).all()
+        }
+        assert columns == set()
+    _upgrade_005()
+    with engine.connect() as conn:
+        version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+        assert version == "005"
+
+
 def test_migration_004_downgrade_with_missing_at_fetch_data(engine):
     run = _pipeline_to_fetching(engine)
     rows = _rows()
@@ -1209,6 +1284,369 @@ def test_migration_004_downgrade_with_missing_at_fetch_data(engine):
         ).scalar()
         assert leftover == 3
     _upgrade_004()
+
+
+# --- CT-8C2-R2 blocker regressions -------------------------------------------
+
+def test_completed_header_contract_version_tampering_fails(engine):
+    run = _pipeline_to_fetching(engine)
+    result = _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(_rows()), now=STAMP)
+    assert result["current_state"] == "RECONCILING"
+    with engine.begin() as conn:
+        conn.execute(
+            text("UPDATE ct_fetch_apply_run SET contract_version='tampered' WHERE run_id=CAST(:run_id AS UUID)"),
+            {"run_id": run},
+        )
+    with pytest.raises(FetchApplyError, match="immutable inputs contradict"):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+
+
+def test_completed_run_selected_domains_tampering_fails(engine):
+    run = _pipeline_to_fetching(engine)
+    result = _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(_rows()), now=STAMP)
+    assert result["current_state"] == "RECONCILING"
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_extraction_run SET selected_domains='[\"warehouse\"]'::jsonb "
+                "WHERE run_id=CAST(:run_id AS UUID)"
+            ),
+            {"run_id": run},
+        )
+    with pytest.raises(FetchApplyError, match="selected domains"):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+
+
+def test_completed_header_base_and_batch_tampering_fails(engine):
+    run = _pipeline_to_fetching(engine)
+    result = _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(_rows()), now=STAMP)
+    assert result["current_state"] == "RECONCILING"
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_fetch_apply_run SET batch_size=999 WHERE run_id=CAST(:run_id AS UUID)"
+            ),
+            {"run_id": run},
+        )
+    with pytest.raises(FetchApplyError, match="immutable inputs contradict"):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_fetch_apply_run SET models='[\"sale.order\"]'::jsonb "
+                "WHERE run_id=CAST(:run_id AS UUID)"
+            ),
+            {"run_id": run},
+        )
+    with pytest.raises(FetchApplyError, match="immutable inputs contradict"):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+
+
+def test_field_contract_change_invalidates_completed_reuse(engine):
+    from src.control_tower import fetch_apply as fa_mod
+
+    run = _pipeline_to_fetching(engine)
+    result = _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(_rows()), now=STAMP)
+    assert result["current_state"] == "RECONCILING"
+
+    original_build = fa_mod._build_field_contract
+
+    def changed_build(model):
+        fields = original_build(model)
+        if model == "sale.order":
+            fields = fields + ("x_studio_extra_new_field",)
+        return fields
+
+    fa_mod._build_field_contract = changed_build
+    try:
+        with pytest.raises(FetchApplyError, match="immutable inputs contradict"):
+            _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+    finally:
+        fa_mod._build_field_contract = original_build
+
+
+def test_completed_evidence_timestamp_tampering_fails(engine):
+    run = _pipeline_to_fetching(engine)
+    result = _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(_rows()), now=STAMP)
+    assert result["current_state"] == "RECONCILING"
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_fetch_apply_evidence SET fetched_at = fetched_at + interval '1 hour' "
+                "WHERE run_id=CAST(:run_id AS UUID) AND model='sale.order'"
+            ),
+            {"run_id": run},
+        )
+    with pytest.raises(FetchApplyError):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+
+
+def test_completed_error_evidence_tampering_fails(engine):
+    run = _pipeline_to_fetching(engine)
+    result = _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(_rows()), now=STAMP)
+    assert result["current_state"] == "RECONCILING"
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_fetch_apply_evidence SET error_evidence = CAST(:ev AS JSONB) "
+                "WHERE run_id = CAST(:run_id AS UUID) AND model = 'sale.order'"
+            ),
+            {"run_id": run, "ev": '{"x":1}'},
+        )
+    with pytest.raises(FetchApplyError):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+
+
+def test_completed_batch_completed_at_tampering_fails(engine):
+    run = _pipeline_to_fetching(engine)
+    result = _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(_rows()), now=STAMP)
+    assert result["current_state"] == "RECONCILING"
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_fetch_apply_batch SET completed_at = completed_at + interval '1 hour' "
+                "WHERE run_id=CAST(:run_id AS UUID)"
+            ),
+            {"run_id": run},
+        )
+    with pytest.raises(FetchApplyError):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+
+
+def test_completed_model_fetch_counts_tampering_fails(engine):
+    run = _pipeline_to_fetching(engine)
+    result = _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(_rows()), now=STAMP)
+    assert result["current_state"] == "RECONCILING"
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_fetch_apply_run SET model_fetch_counts = CAST(:counts AS JSONB) "
+                "WHERE run_id = CAST(:run_id AS UUID)"
+            ),
+            {"run_id": run, "counts": '{"sale.order":{"records_requested":99}}'},
+        )
+    with pytest.raises(FetchApplyError, match="model counts contradict"):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+
+
+def test_completed_progress_count_contradiction_fails(engine):
+    run = _pipeline_to_fetching(engine)
+    result = _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(_rows()), now=STAMP)
+    assert result["current_state"] == "RECONCILING"
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_extraction_run SET progress = progress || "
+                "'{\"fetch_apply_records_fetched\": 99}'::jsonb "
+                "WHERE run_id = CAST(:run_id AS UUID)"
+            ),
+            {"run_id": run},
+        )
+    with pytest.raises((FetchApplyError, ProgressContractError)):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+
+
+def test_false_drift_with_newer_timestamp_fails(engine):
+    run = _pipeline_to_fetching(engine)
+    _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(_rows()), now=STAMP)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_fetch_apply_evidence SET fetched_write_date = '2026-01-01 10:00:05+00', "
+                "source_drift = FALSE WHERE run_id=CAST(:run_id AS UUID) AND model='sale.order'"
+            ),
+            {"run_id": run},
+        )
+    with pytest.raises(FetchApplyError, match="source-drift flag is inconsistent"):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+
+
+def test_true_drift_without_newer_timestamp_rejected_by_db(engine):
+    run = _pipeline_to_fetching(engine)
+    _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(_rows()), now=STAMP)
+    with pytest.raises(IntegrityError):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE ct_fetch_apply_evidence SET source_drift = TRUE "
+                    "WHERE run_id = CAST(:run_id AS UUID) AND model = 'sale.order'"
+                ),
+                {"run_id": run},
+            )
+
+
+def test_mismatched_batch_drift_total_fails(engine):
+    run = _pipeline_to_fetching(engine)
+    _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(_rows()), now=STAMP)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_fetch_apply_batch SET source_drift = 1 "
+                "WHERE run_id=CAST(:run_id AS UUID) AND model='sale.order.line' AND batch_number=1"
+            ),
+            {"run_id": run},
+        )
+    with pytest.raises(FetchApplyError, match="source-drift count does not reconcile"):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+
+
+def test_manifest_status_mismatch_fails_completed_reuse(engine):
+    run = _pipeline_to_fetching(engine)
+    _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(_rows()), now=STAMP)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_change_manifest SET status='DETECTED' "
+                "WHERE run_id=CAST(:run_id AS UUID) AND model='sale.order' AND record_id=1"
+            ),
+            {"run_id": run},
+        )
+    with pytest.raises(FetchApplyError, match="lifecycle status"):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+
+
+def test_missing_baseline_candidate_deletion_fails(engine):
+    run = _pipeline_to_fetching(engine)
+    rows = _rows()
+    rows["sale.order"] = []
+    result = _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(rows), now=STAMP)
+    assert result["records_missing_at_fetch"] == 1
+    assert result["current_state"] == "RECONCILING"
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO ct_native_record_snapshot "
+                "(extraction_run_id, model, record_id, payload, extracted_at) "
+                "VALUES (CAST(:run_id AS UUID), 'sale.order', 1, "
+                "'{\"x\" : 1}'::jsonb, :stamp)"
+            ),
+            {"run_id": run, "stamp": STAMP},
+        )
+    with pytest.raises(FetchApplyError, match="baseline policy"):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+
+
+def test_missing_baseline_base_exists_candidate_deleted_fails(engine):
+    run = _create_run(engine, ["commercial"])
+    _seed_watermarks(engine, COMMERCIAL_MODELS)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO ct_native_record_snapshot "
+                "(extraction_run_id, model, record_id, payload, extracted_at) "
+                "VALUES (CAST(:base AS UUID), 'sale.order', 1, "
+                "'{\"x\" : 1}'::jsonb, :stamp)"
+            ),
+            {"base": PHASE7_BASE_RUN_ID, "stamp": STAMP},
+        )
+    CandidateSnapshotCopyForwardService(_client(engine)).copy_forward(run, company_id=3, now=STAMP)
+    IncrementalChangeDetectionService(_client(engine)).detect(
+        run_id=run, company_id=3, selected_domains=["commercial"],
+        odoo_client=FakeOdoo(_rows()), now=STAMP,
+    )
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_extraction_run SET status='FETCHING', stage='FETCHING' "
+                "WHERE run_id=CAST(:run_id AS UUID)"
+            ),
+            {"run_id": run},
+        )
+    rows = _rows()
+    rows["sale.order"] = []
+    result = _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(rows), now=STAMP)
+    assert result["records_missing_at_fetch"] == 1
+    assert result["current_state"] == "RECONCILING"
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "DELETE FROM ct_native_record_snapshot "
+                "WHERE extraction_run_id=CAST(:run_id AS UUID) AND model='sale.order' AND record_id=1"
+            ),
+            {"run_id": run},
+        )
+    with pytest.raises(FetchApplyError, match="baseline policy"):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+
+
+def test_missing_baseline_absent_consistency_passes(engine):
+    run = _pipeline_to_fetching(engine)
+    rows = _rows()
+    rows["sale.order"] = []
+    result = _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(rows), now=STAMP)
+    assert result["records_missing_at_fetch"] == 1
+    assert result["current_state"] == "RECONCILING"
+    second = _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+    assert second["idempotent"] is True
+
+
+def test_candidate_column_tampering_fails(engine):
+    run = _pipeline_to_fetching(engine)
+    _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(_rows()), now=STAMP)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_native_record_snapshot SET state='tampered' "
+                "WHERE extraction_run_id=CAST(:run_id AS UUID) AND model='sale.order' AND record_id=1"
+            ),
+            {"run_id": run},
+        )
+    with pytest.raises(FetchApplyError, match="Candidate state changed"):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+
+
+def test_candidate_write_date_column_tampering_fails(engine):
+    run = _pipeline_to_fetching(engine)
+    _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(_rows()), now=STAMP)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_native_record_snapshot SET write_date='2026-01-01 09:00:00' "
+                "WHERE extraction_run_id=CAST(:run_id AS UUID) AND model='sale.order' AND record_id=1"
+            ),
+            {"run_id": run},
+        )
+    with pytest.raises(FetchApplyError, match="write_date changed"):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+
+
+def test_batch_membership_shuffle_fails(engine):
+    run = _pipeline_to_fetching(engine)
+    _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(_rows()), now=STAMP)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_fetch_apply_evidence SET batch_number = 2 "
+                "WHERE run_id=CAST(:run_id AS UUID) AND model='sale.order.line' AND record_id=11"
+            ),
+            {"run_id": run},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO ct_fetch_apply_batch (run_id, model, batch_number, records_requested, "
+                "records_fetched, records_missing, inserted, updated, unchanged, source_drift, completed_at) "
+                "VALUES (CAST(:run_id AS UUID), 'sale.order.line', 2, 2, 2, 0, 2, 0, 0, 0, :stamp) "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"run_id": run, "stamp": STAMP},
+        )
+    with pytest.raises(FetchApplyError):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+
+
+def test_fetching_with_complete_evidence_no_false_success(engine):
+    run = _pipeline_to_fetching(engine)
+    _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(_rows()), now=STAMP)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_extraction_run SET status='FETCHING', stage='FETCHING' "
+                "WHERE run_id=CAST(:run_id AS UUID)"
+            ),
+            {"run_id": run},
+        )
+    with pytest.raises(FetchApplyError, match="false success"):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
 
 
 def test_no_reconciliation_or_watermark_advance(engine):

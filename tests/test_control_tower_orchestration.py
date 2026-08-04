@@ -19,7 +19,7 @@ from src.control_tower.progress import parse_progress_json
 from src.control_tower.refresh_state import RefreshRunStateService
 from tests.control_tower_odoo_fake import FakeOdoo
 from tests.test_control_tower_change_detection_postgres import _upgrade_003
-from tests.test_control_tower_fetch_apply_postgres import _upgrade_004
+from tests.test_control_tower_fetch_apply_postgres import _upgrade_004, _upgrade_005
 from tests.test_control_tower_refresh_contracts_postgres import (
     PHASE7_BASE_RUN_ID,
     _bootstrap_phase7,
@@ -56,6 +56,7 @@ def engine():
     _upgrade(db)
     _upgrade_003()
     _upgrade_004()
+    _upgrade_005()
     try:
         yield db
     finally:

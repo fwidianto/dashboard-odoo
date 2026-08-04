@@ -29,7 +29,7 @@ from src.control_tower.contracts import resolve_domain_selection
 from src.control_tower.progress import parse_progress_json, serialize_progress
 from src.control_tower.refresh import REFRESH_LOCK_KEY
 from src.control_tower.refresh_state import validate_transition
-from src.control_tower.relation_extractor import MODEL_SPECS, normalize_value
+from src.control_tower.relation_extractor import LINK_SPECS, MODEL_SPECS, normalize_value
 from src.control_tower.schema_guard import ensure_phase8_fetch_schema_ready
 
 FETCH_APPLY_CONTRACT_VERSION = "ct-fetch-apply-v1"
@@ -93,6 +93,58 @@ def _state_value(normalized: Mapping[str, Any]) -> Optional[str]:
         if value not in (None, False, ""):
             return str(value)
     return None
+
+
+def _code_side_field_contract_fingerprint(models: list[str], batch_size: int) -> str:
+    """Deterministic fingerprint of the code-side payload allowlist contract.
+
+    Covers ordered resolved models, approved ordered field names from
+    MODEL_SPECS, and the batch size.  No Odoo access is required.
+    """
+    value = {
+        "version": FETCH_APPLY_CONTRACT_VERSION,
+        "models": [
+            {"model": model, "fields": list(_build_field_contract(model))}
+            for model in models
+        ],
+        "batch_size": batch_size,
+    }
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _relation_target(model: str, field: str) -> Optional[str]:
+    for spec in LINK_SPECS:
+        if spec.field_owner_model == model and spec.source_field == field:
+            return spec.related_model
+    return None
+
+
+def _full_field_contract_fingerprint(
+    models: list[str], batch_size: int,
+    metadata_by_model: Mapping[str, Mapping[str, Mapping[str, Any]]],
+) -> str:
+    """Deterministic fingerprint including trusted metadata normalization inputs."""
+    value = {
+        "version": FETCH_APPLY_CONTRACT_VERSION,
+        "models": [],
+        "batch_size": batch_size,
+    }
+    for model in models:
+        fields = []
+        for field in _build_field_contract(model):
+            field_def = dict((metadata_by_model.get(model) or {}).get(field) or {})
+            fields.append({
+                "field": field,
+                "type": field_def.get("type"),
+                "relation_target": _relation_target(model, field),
+                "relation": "1" if field_def.get("relation") else None,
+            })
+        value["models"].append({"model": model, "fields": fields})
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 def _build_field_contract(model: str) -> tuple[str, ...]:
@@ -284,8 +336,10 @@ class FetchApplyService:
             row = conn.execute(text("""
                 SELECT run_id::text, company_id, base_snapshot_run_id::text,
                        selected_domains, models, manifest_completion_fingerprint,
-                       manifest_row_count, batch_size, contract_version, status,
-                       started_at, finished_at, duration_seconds,
+                       manifest_row_count, batch_size, contract_version,
+                       field_contract_version, field_contract_fingerprint,
+                       field_contract_allowlist_fingerprint,
+                       status, started_at, finished_at, duration_seconds,
                        completion_fingerprint, model_fetch_counts
                 FROM ct_fetch_apply_run
                 WHERE run_id = CAST(:run_id AS UUID)
@@ -315,20 +369,15 @@ class FetchApplyService:
                 requires_new_retry=True,
             ) from exc
 
-    def _ensure_no_contradictory_evidence(
-        self, run_uuid: str, company_id: int, base_snapshot: Any,
+    def _validate_header_immutables(
+        self, header: dict[str, Any], company_id: int, base_snapshot: Any,
         run_selected_domains: Any, detection: dict[str, Any],
+        *, expect_complete: Optional[bool] = None,
     ) -> None:
-        with self.pg.engine.connect() as conn:
-            header = conn.execute(text("""
-                SELECT run_id::text, company_id, base_snapshot_run_id::text,
-                       selected_domains, models, manifest_completion_fingerprint,
-                       manifest_row_count, batch_size, contract_version, status
-                FROM ct_fetch_apply_run WHERE run_id = CAST(:run_id AS UUID)
-            """), {"run_id": run_uuid}).mappings().first()
-        if header is None:
-            return
         expected_domains = sorted(str(domain.key) for domain in resolve_domain_selection(run_selected_domains))
+        code_side = _code_side_field_contract_fingerprint(
+            list(detection["models"]), int(header["batch_size"]),
+        )
         if (
             int(header["company_id"]) != company_id
             or str(header["base_snapshot_run_id"]) != str(base_snapshot)
@@ -338,29 +387,62 @@ class FetchApplyService:
             or int(header["manifest_row_count"]) != int(detection["manifest_row_count"])
             or int(header["batch_size"]) != self._batch_size
             or header["contract_version"] != FETCH_APPLY_CONTRACT_VERSION
+            or header.get("field_contract_version") != FETCH_APPLY_CONTRACT_VERSION
+            or header.get("field_contract_allowlist_fingerprint") != code_side
+            or (header["status"] == "COMPLETE" and not header.get("field_contract_fingerprint"))
         ):
             raise FetchApplyError(
-                "Existing fetch/apply header immutable inputs contradict the run or manifest.",
+                "Fetch/apply header immutable inputs contradict the run, manifest, or field contract.",
                 requires_new_retry=True,
             )
-        if header["status"] == "COMPLETE":
-            raise FetchApplyError("Completed fetch/apply evidence exists without a completion progress marker.")
+        if expect_complete is not None and (header["status"] == "COMPLETE") != expect_complete:
+            raise FetchApplyError(
+                "Fetch/apply header status contradicts the expected lifecycle state.",
+                requires_new_retry=True,
+            )
+
+    def _ensure_no_contradictory_evidence(
+        self, run_uuid: str, company_id: int, base_snapshot: Any,
+        run_selected_domains: Any, detection: dict[str, Any],
+    ) -> None:
+        with self.pg.engine.connect() as conn:
+            header = conn.execute(text("""
+                SELECT run_id::text, company_id, base_snapshot_run_id::text,
+                       selected_domains, models, manifest_completion_fingerprint,
+                       manifest_row_count, batch_size, contract_version,
+                       field_contract_version, field_contract_fingerprint,
+                       field_contract_allowlist_fingerprint, status
+                FROM ct_fetch_apply_run WHERE run_id = CAST(:run_id AS UUID)
+            """), {"run_id": run_uuid}).mappings().first()
+        if header is None:
+            return
+        self._validate_header_immutables(
+            header, company_id, base_snapshot, run_selected_domains, detection,
+            expect_complete=False,
+        )
 
     def _load_or_create_header(
         self, run_uuid: str, company_id: int, base_snapshot: Any,
         selected_domains: Any, detection: dict[str, Any], timestamp: datetime,
     ) -> dict[str, Any]:
         resolved_domains = sorted(str(domain.key) for domain in resolve_domain_selection(selected_domains))
+        code_side = _code_side_field_contract_fingerprint(
+            list(detection["models"]), self._batch_size,
+        )
         with self.pg.engine.begin() as conn:
             conn.execute(text("""
                 INSERT INTO ct_fetch_apply_run
                     (run_id, company_id, base_snapshot_run_id, selected_domains,
                      models, manifest_completion_fingerprint, manifest_row_count,
-                     batch_size, contract_version, status, started_at)
+                     batch_size, contract_version, field_contract_version,
+                     field_contract_fingerprint, field_contract_allowlist_fingerprint,
+                     status, started_at)
                 VALUES (CAST(:run_id AS UUID), :company_id, CAST(:base AS UUID),
                         CAST(:domains AS JSONB), CAST(:models AS JSONB),
                         :manifest_fingerprint, :manifest_row_count, :batch_size,
-                        :contract_version, 'RUNNING', :started_at)
+                        :contract_version, :field_contract_version,
+                        :field_contract_fingerprint, :field_contract_allowlist_fingerprint,
+                        'RUNNING', :started_at)
                 ON CONFLICT (run_id) DO NOTHING
             """), {
                 "run_id": run_uuid, "company_id": company_id, "base": base_snapshot,
@@ -370,6 +452,9 @@ class FetchApplyService:
                 "manifest_row_count": detection["manifest_row_count"],
                 "batch_size": self._batch_size,
                 "contract_version": FETCH_APPLY_CONTRACT_VERSION,
+                "field_contract_version": FETCH_APPLY_CONTRACT_VERSION,
+                "field_contract_fingerprint": None,
+                "field_contract_allowlist_fingerprint": code_side,
                 "started_at": timestamp,
             })
         header = self._header(run_uuid)
@@ -417,6 +502,43 @@ class FetchApplyService:
         run_uuid = header["run_id"]
         models = list(header["models"])
         completed_batches = self._completed_batches(run_uuid)
+        all_batches_complete = True
+        for model in models:
+            batches = self._manifest_batches(run_uuid, model)
+            expected = set(range(1, len(batches) + 1))
+            if not expected.issubset({number for (model_key, number) in completed_batches if model_key == model}):
+                all_batches_complete = False
+        if header.get("field_contract_fingerprint") is None:
+            if not all_batches_complete:
+                metadata_by_model = {
+                    model: self._field_metadata(model, odoo_client) for model in models
+                }
+                full_fingerprint = _full_field_contract_fingerprint(
+                    models, int(header["batch_size"]), metadata_by_model,
+                )
+                with self.pg.engine.begin() as conn:
+                    conn.execute(text("""
+                        UPDATE ct_fetch_apply_run
+                        SET field_contract_fingerprint = :fingerprint
+                        WHERE run_id = CAST(:run_id AS UUID) AND status = 'RUNNING'
+                    """), {"run_id": run_uuid, "fingerprint": full_fingerprint})
+            else:
+                raise FetchApplyError(
+                    "Completed fetch/apply evidence lacks a durable field-contract fingerprint.",
+                    requires_new_retry=True,
+                )
+        elif not all_batches_complete:
+            metadata_by_model = {
+                model: self._field_metadata(model, odoo_client) for model in models
+            }
+            full_fingerprint = _full_field_contract_fingerprint(
+                models, int(header["batch_size"]), metadata_by_model,
+            )
+            if header["field_contract_fingerprint"] != full_fingerprint:
+                raise FetchApplyError(
+                    "Current field metadata no longer matches the persisted fetch/apply contract.",
+                    requires_new_retry=True,
+                )
         totals = self._existing_totals(run_uuid)
         started_value = progress.get("fetch_apply_started_at")
         if isinstance(started_value, str):
@@ -713,7 +835,8 @@ class FetchApplyService:
                     "record_id": row["record_id"],
                     "document_number": row["document_number"], "state": row["state"],
                     "company_id": row["company_id"], "company_name": row["company_name"],
-                    "write_date": row["write_date"], "payload": row["payload"],
+                    "write_date": row["write_date"].replace(tzinfo=None) if isinstance(row["write_date"], datetime) else row["write_date"],
+                    "payload": row["payload"],
                     "extracted_at": row["extracted_at"],
                 })
             for row in evidence_rows:
@@ -768,7 +891,7 @@ class FetchApplyService:
     ) -> dict[str, Any]:
         if not idempotent:
             self._fire("before_completion")
-        self._validate_candidate_rows(run_uuid)
+        self._validate_candidate_rows(run_uuid, str(header["base_snapshot_run_id"]))
         self._validate_evidence_reconciliation(run_uuid, detection)
         totals = self._evidence_totals(run_uuid)
         model_counts = self._model_counts(run_uuid, header["models"])
@@ -900,7 +1023,8 @@ class FetchApplyService:
             rows = conn.execute(text("""
                 SELECT model, record_id, detection_sequence, detection_source_write_date,
                        fetched_write_date, fetch_status, apply_status, source_drift,
-                       payload_fingerprint, batch_number
+                       payload_fingerprint, batch_number, fetched_at, applied_at,
+                       error_evidence
                 FROM ct_fetch_apply_evidence
                 WHERE run_id = CAST(:run_id AS UUID)
                 ORDER BY model, detection_sequence, record_id
@@ -911,17 +1035,25 @@ class FetchApplyService:
                 "model": str(row[0]), "record_id": int(row[1]),
                 "detection_sequence": int(row[2]),
                 "detection_source_write_date": (
-                    str(row[3]) if row[3] is not None else None
+                    row[3].astimezone(timezone.utc).isoformat() if row[3] is not None else None
                 ),
-                "fetched_write_date": (str(row[4]) if row[4] is not None else None),
+                "fetched_write_date": (
+                    row[4].astimezone(timezone.utc).isoformat() if row[4] is not None else None
+                ),
                 "fetch_status": str(row[5]),
                 "apply_status": str(row[6]),
                 "source_drift": bool(row[7]),
                 "payload_fingerprint": row[8],
                 "batch_number": int(row[9]),
+                "fetched_at": (
+                    row[10].astimezone(timezone.utc).isoformat() if row[10] is not None else None
+                ),
+                "applied_at": (
+                    row[11].astimezone(timezone.utc).isoformat() if row[11] is not None else None
+                ),
+                "error_evidence": row[12],
             }, sort_keys=True, separators=(",", ":")))
         return hashlib.sha256("\n".join(chunks).encode("utf-8")).hexdigest()
-
     @staticmethod
     def _manifest_fingerprint(detection: dict[str, Any]) -> str:
         chunks = [FETCH_APPLY_CONTRACT_VERSION]
@@ -940,7 +1072,8 @@ class FetchApplyService:
         with self.pg.engine.connect() as conn:
             rows = conn.execute(text("""
                 SELECT model, batch_number, records_requested, records_fetched,
-                       records_missing, inserted, updated, unchanged, source_drift
+                       records_missing, inserted, updated, unchanged, source_drift,
+                       completed_at
                 FROM ct_fetch_apply_batch
                 WHERE run_id = CAST(:run_id AS UUID)
                 ORDER BY model, batch_number
@@ -953,9 +1086,11 @@ class FetchApplyService:
                 "records_missing": int(row[4]), "inserted": int(row[5]),
                 "updated": int(row[6]), "unchanged": int(row[7]),
                 "source_drift": int(row[8]),
+                "completed_at": (
+                    row[9].astimezone(timezone.utc).isoformat() if row[9] is not None else None
+                ),
             }, sort_keys=True, separators=(",", ":")))
         return hashlib.sha256("\n".join(chunks).encode("utf-8")).hexdigest()
-
     def _completion_fingerprint(
         self, company_id: int, header: dict[str, Any],
         detection: dict[str, Any], model_counts: dict[str, dict[str, int]],
@@ -980,17 +1115,24 @@ class FetchApplyService:
         with self.pg.engine.connect() as conn:
             evidence = conn.execute(text("""
                 SELECT model, record_id, detection_sequence, detection_source_write_date,
-                       batch_number, fetch_status, apply_status
+                       fetched_write_date, batch_number, fetch_status, apply_status,
+                       source_drift
                 FROM ct_fetch_apply_evidence
                 WHERE run_id = CAST(:run_id AS UUID)
                 ORDER BY model, detection_sequence
             """), {"run_id": run_uuid}).mappings().all()
             batches = conn.execute(text("""
                 SELECT model, batch_number, records_requested, records_fetched,
-                       records_missing, inserted, updated, unchanged
+                       records_missing, inserted, updated, unchanged, source_drift
                 FROM ct_fetch_apply_batch
                 WHERE run_id = CAST(:run_id AS UUID)
                 ORDER BY model, batch_number
+            """), {"run_id": run_uuid}).mappings().all()
+            manifest = conn.execute(text("""
+                SELECT model, record_id, status
+                FROM ct_change_manifest
+                WHERE run_id = CAST(:run_id AS UUID)
+                ORDER BY model, detection_sequence
             """), {"run_id": run_uuid}).mappings().all()
         manifest_rows = list(detection.get("manifest_rows") or [])
         if len(evidence) != len(manifest_rows):
@@ -998,8 +1140,11 @@ class FetchApplyService:
                 f"Fetch/apply evidence count {len(evidence)} does not match manifest count {len(manifest_rows)}.",
                 requires_new_retry=True,
             )
-        manifest_key = {
+        manifest_by_key = {
             (str(row["model"]), int(row["record_id"])): row for row in manifest_rows
+        }
+        manifest_status_by_key = {
+            (str(row["model"]), int(row["record_id"])): str(row["status"]) for row in manifest
         }
         evidence_by_key: dict[tuple[str, int], dict[str, Any]] = {}
         for row in evidence:
@@ -1007,7 +1152,7 @@ class FetchApplyService:
             if key in evidence_by_key:
                 raise FetchApplyError(f"Duplicate fetch/apply evidence for {key[0]}/{key[1]}.")
             evidence_by_key[key] = row
-            manifest = manifest_key.get(key)
+            manifest = manifest_by_key.get(key)
             if manifest is None:
                 raise FetchApplyError(
                     f"Fetch/apply evidence exists for an unknown manifest row {key[0]}/{key[1]}.",
@@ -1023,12 +1168,31 @@ class FetchApplyService:
                     f"Fetch/apply detection source timestamp changed for {key[0]}/{key[1]}.",
                     requires_new_retry=True,
                 )
-        for key, manifest in manifest_key.items():
+            is_drift = row["fetched_write_date"] is not None and row["fetched_write_date"] > row["detection_source_write_date"]
+            if bool(row["source_drift"]) != is_drift:
+                raise FetchApplyError(
+                    f"Fetch/apply source-drift flag is inconsistent for {key[0]}/{key[1]}.",
+                    requires_new_retry=True,
+                )
+            expected_status = "APPLIED" if row["fetch_status"] == FETCH_STATUS_FETCHED else "MISSING_AT_FETCH"
+            actual_status = manifest_status_by_key.get(key)
+            if actual_status != expected_status:
+                raise FetchApplyError(
+                    f"Manifest lifecycle status {actual_status!r} contradicts fetch/apply evidence for {key[0]}/{key[1]}.",
+                    requires_new_retry=True,
+                )
+        for key, manifest in manifest_by_key.items():
             if key not in evidence_by_key:
                 raise FetchApplyError(
                     f"Manifest row has no fetch/apply evidence: {key[0]}/{key[1]}.",
                     requires_new_retry=True,
                 )
+        manifest_statuses = set(manifest_status_by_key.values())
+        if not manifest_statuses.issubset({"APPLIED", "MISSING_AT_FETCH"}):
+            raise FetchApplyError(
+                f"Manifest contains unresolved lifecycle statuses at the boundary: {sorted(manifest_statuses)}.",
+                requires_new_retry=True,
+            )
         batch_by_key: dict[tuple[str, int], dict[str, Any]] = {}
         for row in batches:
             key = (str(row["model"]), int(row["batch_number"]))
@@ -1037,6 +1201,12 @@ class FetchApplyService:
         for row in evidence:
             key = (str(row["model"]), int(row["batch_number"]))
             evidence_by_batch.setdefault(key, []).append(row)
+        model_batch_numbers: dict[str, list[int]] = {}
+        for (model, number) in batch_by_key:
+            model_batch_numbers.setdefault(model, []).append(number)
+        for model, numbers in model_batch_numbers.items():
+            if sorted(numbers) != list(range(1, max(numbers) + 1)):
+                raise FetchApplyError(f"Fetch/apply batch numbers are not contiguous for {model}.")
         for key, rows in evidence_by_batch.items():
             batch = batch_by_key.get(key)
             if batch is None:
@@ -1059,55 +1229,177 @@ class FetchApplyService:
                 or unchanged != int(batch["unchanged"])
             ):
                 raise FetchApplyError(f"Batch {key[0]}/{key[1]} apply counts do not reconcile.")
+            drift_count = sum(1 for row in rows if row["source_drift"])
+            if drift_count != int(batch["source_drift"]):
+                raise FetchApplyError(f"Batch {key[0]}/{key[1]} source-drift count does not reconcile.")
+            if int(batch["source_drift"]) > fetched:
+                raise FetchApplyError(f"Batch {key[0]}/{key[1]} source-drift count exceeds fetched count.")
         for key, batch in batch_by_key.items():
             if key not in evidence_by_batch:
                 raise FetchApplyError(f"Batch row has no evidence: {key[0]}/{key[1]}.")
-
-    def _validate_candidate_rows(self, run_uuid: str) -> None:
+        batch_size = self._batch_size
+        for model in sorted({str(row["model"]) for row in manifest_rows}):
+            model_rows = sorted(
+                [row for row in manifest_rows if str(row["model"]) == model],
+                key=lambda r: (int(r["detection_sequence"]), int(r["record_id"])),
+            )
+            for index, manifest in enumerate(model_rows):
+                expected_batch = index // batch_size + 1
+                evidence_row = evidence_by_key[(str(manifest["model"]), int(manifest["record_id"]))]
+                if int(evidence_row["batch_number"]) != expected_batch:
+                    raise FetchApplyError(
+                        f"Fetch/apply batch membership changed for {model}/{manifest['record_id']}: "
+                        f"expected {expected_batch}, found {evidence_row['batch_number']}.",
+                        requires_new_retry=True,
+                    )
+    def _validate_candidate_rows(self, run_uuid: str, base_snapshot_run_id: str) -> None:
         with self.pg.engine.connect() as conn:
             evidence = conn.execute(text("""
-                SELECT model, record_id, payload_fingerprint, apply_status
+                SELECT model, record_id, payload_fingerprint, apply_status, fetch_status
                 FROM ct_fetch_apply_evidence
                 WHERE run_id = CAST(:run_id AS UUID)
-                  AND fetch_status = 'FETCHED'
             """), {"run_id": run_uuid}).mappings().all()
             snapshots = conn.execute(text("""
-                SELECT model, record_id, payload
+                SELECT model, record_id, document_number, state, company_id,
+                       company_name, write_date, payload, extraction_run_id::text
                 FROM ct_native_record_snapshot
                 WHERE extraction_run_id = CAST(:run_id AS UUID)
             """), {"run_id": run_uuid}).mappings().all()
-        snapshot_by_key = {(str(row["model"]), int(row["record_id"])): row["payload"] for row in snapshots}
+            base_rows = conn.execute(text("""
+                SELECT model, record_id FROM ct_native_record_snapshot
+                WHERE extraction_run_id = CAST(:base AS UUID)
+            """), {"base": base_snapshot_run_id}).mappings().all()
+        snapshot_by_key = {
+            (str(row["model"]), int(row["record_id"])): dict(row) for row in snapshots
+        }
+        base_by_key = {(str(row["model"]), int(row["record_id"])) for row in base_rows}
         for row in evidence:
             key = (str(row["model"]), int(row["record_id"]))
-            payload = snapshot_by_key.get(key)
-            if payload is None:
+            if row["fetch_status"] == FETCH_STATUS_MISSING:
+                in_base = key in base_by_key
+                in_candidate = key in snapshot_by_key
+                if in_base != in_candidate:
+                    raise FetchApplyError(
+                        f"Missing-at-fetch baseline policy violated for {key[0]}/{key[1]}.",
+                        requires_new_retry=True,
+                    )
+                continue
+            candidate = snapshot_by_key.get(key)
+            if candidate is None:
                 raise FetchApplyError(
-                    f"Applied candidate row is missing for {row['model']}/{row['record_id']}.",
+                    f"Applied candidate row is missing for {key[0]}/{key[1]}.",
                     requires_new_retry=True,
                 )
+            payload = candidate["payload"]
             if not isinstance(payload, dict):
-                raise FetchApplyError(f"Candidate payload is malformed for {row['model']}/{row['record_id']}.")
+                raise FetchApplyError(f"Candidate payload is malformed for {key[0]}/{key[1]}.")
             if isinstance(payload.get("write_date"), str):
                 try:
                     payload = dict(payload)
                     payload["write_date"] = datetime.fromisoformat(payload["write_date"].replace("Z", "+00:00"))
                 except ValueError:
                     raise FetchApplyError(
-                        f"Candidate payload write_date is malformed for {row['model']}/{row['record_id']}."
+                        f"Candidate payload write_date is malformed for {key[0]}/{key[1]}."
                     )
             fingerprint = _jsonb_fingerprint(payload)
             if fingerprint != row["payload_fingerprint"]:
                 raise FetchApplyError(
-                    f"Candidate row no longer matches recorded application evidence for {row['model']}/{row['record_id']}.",
+                    f"Candidate row no longer matches recorded application evidence for {key[0]}/{key[1]}.",
                     requires_new_retry=True,
                 )
+            if str(candidate["model"]) != key[0] or int(candidate["record_id"]) != key[1]:
+                raise FetchApplyError(f"Candidate identity changed for {key[0]}/{key[1]}.")
+            if str(candidate["extraction_run_id"]) != run_uuid:
+                raise FetchApplyError(f"Candidate run identity changed for {key[0]}/{key[1]}.")
+            normalized = payload
+            expected_document_number = _document_number(normalized, key[0])
+            expected_state = _state_value(normalized)
+            if str(candidate.get("document_number") or "") != str(expected_document_number or ""):
+                raise FetchApplyError(f"Candidate document number changed for {key[0]}/{key[1]}.")
+            if str(candidate.get("state") or "") != str(expected_state or ""):
+                raise FetchApplyError(f"Candidate state changed for {key[0]}/{key[1]}.")
+            company = normalized.get("company_id")
+            expected_company_id = None
+            if isinstance(company, Mapping) and isinstance(company.get("id"), int):
+                expected_company_id = company["id"]
+            if int(candidate.get("company_id") or 0) != int(expected_company_id or 0):
+                raise FetchApplyError(f"Candidate company changed for {key[0]}/{key[1]}.")
+            expected_write = normalized.get("write_date")
+            if isinstance(expected_write, datetime) and not expected_write.tzinfo:
+                expected_write = expected_write.replace(tzinfo=timezone.utc)
+            candidate_write = candidate.get("write_date")
+            if isinstance(candidate_write, datetime) and candidate_write.tzinfo is None:
+                candidate_write = candidate_write.replace(tzinfo=timezone.utc)
+            if isinstance(expected_write, datetime) and isinstance(candidate_write, datetime):
+                if candidate_write.astimezone(timezone.utc) != expected_write.astimezone(timezone.utc):
+                    raise FetchApplyError(f"Candidate write_date changed for {key[0]}/{key[1]}.")
+            elif candidate_write != expected_write:
+                raise FetchApplyError(f"Candidate write_date changed for {key[0]}/{key[1]}.")
+                if candidate_write.astimezone(timezone.utc) != expected_write.astimezone(timezone.utc):
+                    raise FetchApplyError(f"Candidate write_date changed for {key[0]}/{key[1]}.")
+            elif candidate_write != expected_write:
+                raise FetchApplyError(f"Candidate write_date changed for {key[0]}/{key[1]}.")
+    def _validate_progress_consistency(self, run_uuid: str, header: dict[str, Any], totals: dict[str, int]) -> None:
+        with self.pg.engine.connect() as conn:
+            row = conn.execute(text("""
+                SELECT progress FROM ct_extraction_run WHERE run_id = CAST(:run_id AS UUID)
+            """), {"run_id": run_uuid}).scalar()
+        progress = parse_progress_json(row)
+        if not progress.get("fetch_apply_complete"):
+            raise FetchApplyError("Completed fetch/apply progress is missing its completion marker.", requires_new_retry=True)
+        if progress.get("fetch_apply_completion_fingerprint") != header["completion_fingerprint"]:
+            raise FetchApplyError("Completed fetch/apply progress completion fingerprint contradicts durable evidence.", requires_new_retry=True)
+        if sorted(progress.get("fetch_apply_models_planned") or []) != sorted(header["models"]):
+            raise FetchApplyError("Completed fetch/apply progress model plan contradicts the header.", requires_new_retry=True)
+        if sorted(progress.get("fetch_apply_models_completed") or []) != sorted(header["models"]):
+            raise FetchApplyError("Completed fetch/apply progress model completion contradicts the header.", requires_new_retry=True)
+        if int(progress.get("fetch_apply_records_requested", 0)) != totals["records_requested"]:
+            raise FetchApplyError("Completed fetch/apply progress requested count contradicts durable evidence.")
+        if int(progress.get("fetch_apply_records_fetched", 0)) != totals["records_fetched"]:
+            raise FetchApplyError("Completed fetch/apply progress fetched count contradicts durable evidence.")
+        if int(progress.get("fetch_apply_records_missing_at_fetch", 0)) != totals["records_missing"]:
+            raise FetchApplyError("Completed fetch/apply progress missing count contradicts durable evidence.")
+        if int(progress.get("fetch_apply_records_source_drift", 0)) != totals["source_drift"]:
+            raise FetchApplyError("Completed fetch/apply progress drift count contradicts durable evidence.")
+        if int(progress.get("fetch_apply_inserted", 0)) != totals["inserted"]:
+            raise FetchApplyError("Completed fetch/apply progress inserted count contradicts durable evidence.")
+        if int(progress.get("fetch_apply_updated", 0)) != totals["updated"]:
+            raise FetchApplyError("Completed fetch/apply progress updated count contradicts durable evidence.")
+        if int(progress.get("fetch_apply_unchanged", 0)) != totals["unchanged"]:
+            raise FetchApplyError("Completed fetch/apply progress unchanged count contradicts durable evidence.")
+        started = progress.get("fetch_apply_started_at")
+        finished = progress.get("fetch_apply_finished_at")
+        elapsed = progress.get("fetch_apply_elapsed_seconds")
+        if not started or not finished or elapsed is None:
+            raise FetchApplyError("Completed fetch/apply progress timestamps are incomplete.")
+        started_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
+        finished_dt = datetime.fromisoformat(finished.replace("Z", "+00:00"))
+        if finished_dt < started_dt or round((finished_dt - started_dt).total_seconds(), 6) != float(elapsed):
+            raise FetchApplyError("Completed fetch/apply progress elapsed time is inconsistent with its timestamps.")
 
     def _validate_completed(
         self, run_uuid: str, company_id: int, base_snapshot: Any,
         header: dict[str, Any], *, idempotent: bool,
     ) -> dict[str, Any]:
-        detection = self._detection_inputs(run_uuid, company_id, base_snapshot, header["selected_domains"])
-        self._validate_candidate_rows(run_uuid)
+        with self.pg.engine.connect() as conn:
+            run = conn.execute(text("""
+                SELECT status, stage, selected_domains FROM ct_extraction_run
+                WHERE run_id = CAST(:run_id AS UUID)
+            """), {"run_id": run_uuid}).mappings().first()
+        if not run:
+            raise FetchApplyError("Refresh run was not found.", requires_new_retry=True)
+        if str(run["status"]) != "RECONCILING" or str(run["stage"]) != "RECONCILING":
+            raise FetchApplyError(
+                f"Completed fetch/apply evidence exists while the run is {run['status']}/{run['stage']}; "
+                "a RECONCILING summary would be a false success.",
+                requires_new_retry=True,
+            )
+        detection = self._detection_inputs(run_uuid, company_id, base_snapshot, run["selected_domains"])
+        self._validate_header_immutables(
+            header, company_id, base_snapshot, run["selected_domains"], detection,
+            expect_complete=True,
+        )
+        self._validate_candidate_rows(run_uuid, str(header["base_snapshot_run_id"]))
         self._validate_evidence_reconciliation(run_uuid, detection)
         if (
             header["manifest_completion_fingerprint"] != detection["manifest_completion_fingerprint"]
@@ -1121,6 +1413,8 @@ class FetchApplyService:
         expected = self._completion_fingerprint(company_id, header, detection, model_counts)
         if expected != header["completion_fingerprint"]:
             raise FetchApplyError("Completed fetch/apply completion fingerprint changed.")
+        if header["model_fetch_counts"] != model_counts:
+            raise FetchApplyError("Completed fetch/apply header model counts contradict durable evidence.")
         expected_models = sorted(header["models"])
         if sorted(model_counts) != expected_models:
             raise FetchApplyError("Completed fetch/apply model counts do not match the plan.")
@@ -1128,8 +1422,8 @@ class FetchApplyService:
             expected_count = int(detection["model_row_counts"].get(model, 0))
             if model_counts[model]["records_requested"] != expected_count:
                 raise FetchApplyError(f"Completed fetch/apply evidence count changed for {model}.")
+        self._validate_progress_consistency(run_uuid, header, totals)
         return self._summary(run_uuid, company_id, totals, model_counts, idempotent=idempotent)
-
     def _summary(
         self, run_uuid: str, company_id: int, totals: dict[str, int],
         model_counts: dict[str, dict[str, int]], *, idempotent: bool,
