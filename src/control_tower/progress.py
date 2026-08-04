@@ -24,6 +24,26 @@ COPY_FORWARD_TEXT_FIELDS = (
 COPY_FORWARD_MAP_FIELDS = ("copy_forward_rows",)
 COPY_FORWARD_TIMESTAMP_MAP_FIELDS = ("copy_forward_table_completed_at",)
 COPY_FORWARD_STATUS_VALUES = frozenset({"COPYING_BASE_SNAPSHOT", "COMPLETE"})
+DETECTION_COUNT_FIELDS = (
+    "detection_records_scanned", "detection_overlap_rows_rechecked",
+    "detection_newer_rows_detected", "detection_duplicate_rows_removed",
+    "detection_manifest_rows_persisted", "detection_manifest_row_count",
+    "detection_parent_hints_identified",
+)
+DETECTION_NUMBER_FIELDS = ("detection_elapsed_seconds",)
+DETECTION_LIST_FIELDS = (
+    "detection_selected_domains", "detection_models_planned",
+    "detection_models_completed",
+)
+DETECTION_TEXT_FIELDS = (
+    "detection_current_model", "detection_started_at", "detection_finished_at",
+    "detection_contract_fingerprint", "detection_completion_fingerprint",
+    "detection_completion_contract_version",
+)
+DETECTION_MAP_FIELDS = (
+    "detection_watermarks", "detection_overlap_lower_bounds",
+    "detection_model_completed_at", "detection_model_row_counts",
+)
 KNOWN_FIELDS = frozenset(
     (
         *COUNT_FIELDS,
@@ -35,6 +55,9 @@ KNOWN_FIELDS = frozenset(
         *COPY_FORWARD_TEXT_FIELDS,
         *COPY_FORWARD_MAP_FIELDS,
         *COPY_FORWARD_TIMESTAMP_MAP_FIELDS,
+        "change_detection_complete",
+        *DETECTION_COUNT_FIELDS, *DETECTION_NUMBER_FIELDS,
+        *DETECTION_LIST_FIELDS, *DETECTION_TEXT_FIELDS, *DETECTION_MAP_FIELDS,
     )
 )
 
@@ -76,6 +99,24 @@ def validate_progress_payload(payload: Mapping[str, Any] | None) -> dict[str, An
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise ValueError(f"Progress count must be a non-negative integer: {field}")
         result[field] = value
+    if "change_detection_complete" in payload:
+        if not isinstance(payload["change_detection_complete"], bool):
+            raise ValueError("Detection completion marker must be boolean.")
+        result["change_detection_complete"] = payload["change_detection_complete"]
+    for field in DETECTION_COUNT_FIELDS:
+        value = payload.get(field)
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"Progress count must be a non-negative integer: {field}")
+        result[field] = value
+    for field in DETECTION_NUMBER_FIELDS:
+        value = payload.get(field)
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0 or not math.isfinite(value):
+            raise ValueError(f"Progress duration must be a non-negative number: {field}")
+        result[field] = value
     for field in COPY_FORWARD_NUMBER_FIELDS:
         value = payload.get(field)
         if value is None:
@@ -104,6 +145,15 @@ def validate_progress_payload(payload: Mapping[str, Any] | None) -> dict[str, An
         if len(value) != len(set(value)):
             raise ValueError(f"Progress list must contain unique strings: {field}")
         result[field] = sorted(value)
+    for field in DETECTION_LIST_FIELDS:
+        if field not in payload:
+            continue
+        value = payload[field]
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise ValueError(f"Detection progress list must contain strings: {field}")
+        if len(value) != len(set(value)):
+            raise ValueError(f"Detection progress list must contain unique strings: {field}")
+        result[field] = list(value)
     for completed, planned in (("completed_domains", "domains"), ("completed_models", "models")):
         if completed not in result:
             continue
@@ -139,6 +189,35 @@ def validate_progress_payload(payload: Mapping[str, Any] | None) -> dict[str, An
             result[field] = _normalize_copy_forward_timestamp(payload[field], field)
         else:
             result[field] = payload[field]
+    for field in DETECTION_TEXT_FIELDS:
+        if field not in payload or payload[field] is None:
+            continue
+        if not isinstance(payload[field], str):
+            raise ValueError(f"Detection progress text field must be a string: {field}")
+        if field in {"detection_contract_fingerprint", "detection_completion_fingerprint"}:
+            if len(payload[field]) != 64 or any(char not in "0123456789abcdef" for char in payload[field].lower()):
+                raise ValueError(f"Detection fingerprint must be a SHA-256 hex string: {field}")
+        if field == "detection_completion_contract_version" and payload[field] != "ct-change-manifest-v1":
+            raise ValueError("Unsupported detection completion contract version.")
+        if field in {"detection_started_at", "detection_finished_at"}:
+            result[field] = _normalize_copy_forward_timestamp(payload[field], field)
+        else:
+            result[field] = payload[field]
+    for field in DETECTION_MAP_FIELDS:
+        if field not in payload:
+            continue
+        value = payload[field]
+        if not isinstance(value, Mapping) or not all(isinstance(key, str) for key in value):
+            raise ValueError(f"Detection progress map must have string keys: {field}")
+        if field == "detection_model_row_counts":
+            normalized_counts = {}
+            for key, count in value.items():
+                if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                    raise ValueError("Detection model row counts must be non-negative integers.")
+                normalized_counts[key] = count
+            result[field] = {key: normalized_counts[key] for key in sorted(normalized_counts)}
+        else:
+            result[field] = {key: value[key] for key in sorted(value)}
     for field in COPY_FORWARD_MAP_FIELDS:
         if field not in payload:
             continue
@@ -200,6 +279,40 @@ def validate_progress_payload(payload: Mapping[str, Any] | None) -> dict[str, An
             raise ValueError("Completed copy-forward tables require planned tables.")
         if planned is not None and not set(result["copy_forward_tables_completed"]).issubset(planned):
             raise ValueError("Completed copy-forward tables must be a subset of planned tables.")
+    if "detection_models_completed" in result:
+        planned = result.get("detection_models_planned")
+        if planned is None and result["detection_models_completed"]:
+            raise ValueError("Completed detection models require planned models.")
+        if planned is not None and not set(result["detection_models_completed"]).issubset(planned):
+            raise ValueError("Completed detection models must be a subset of planned models.")
+    if {"detection_started_at", "detection_finished_at", "detection_elapsed_seconds"}.issubset(result):
+        started = datetime.fromisoformat(result["detection_started_at"].replace("Z", "+00:00"))
+        finished = datetime.fromisoformat(result["detection_finished_at"].replace("Z", "+00:00"))
+        elapsed = (finished - started).total_seconds()
+        if elapsed < 0 or round(elapsed, 6) != result["detection_elapsed_seconds"]:
+            raise ValueError("Detection elapsed seconds must equal finished minus started and be non-negative.")
+    if result.get("change_detection_complete"):
+        planned = result.get("detection_models_planned")
+        completed = result.get("detection_models_completed")
+        if not planned:
+            raise ValueError("Completed detection requires planned models.")
+        if completed != planned:
+            raise ValueError("Completed detection models must exactly equal planned models.")
+        required = {
+            "detection_contract_fingerprint", "detection_completion_fingerprint",
+            "detection_completion_contract_version", "detection_manifest_row_count",
+            "detection_model_row_counts", "detection_manifest_rows_persisted",
+            "detection_started_at", "detection_finished_at", "detection_elapsed_seconds",
+        }
+        if not required.issubset(result):
+            raise ValueError("Completed detection requires complete completion evidence.")
+        model_counts = result["detection_model_row_counts"]
+        if set(model_counts) != set(planned):
+            raise ValueError("Detection model row counts must match planned models.")
+        if sum(model_counts.values()) != result["detection_manifest_row_count"]:
+            raise ValueError("Detection model row counts must equal the manifest row count.")
+        if result["detection_manifest_rows_persisted"] != result["detection_manifest_row_count"]:
+            raise ValueError("Persisted manifest rows must equal the completion row count.")
     return result
 
 

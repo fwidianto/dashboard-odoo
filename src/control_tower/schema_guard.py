@@ -27,7 +27,7 @@ def ensure_phase8_schema_ready(postgres_client) -> None:
             revision = conn.execute(
                 text("SELECT version_num FROM alembic_version ORDER BY version_num DESC LIMIT 1")
             ).scalar()
-            if str(revision) != "002":
+            if str(revision) not in {"002", "003"}:
                 raise Phase8SchemaNotReady(_READY_MESSAGE)
             ready = conn.execute(
                 text(
@@ -57,3 +57,27 @@ def ensure_phase8_schema_ready(postgres_client) -> None:
         raise
     except Exception as exc:
         raise Phase8SchemaNotReady(_READY_MESSAGE) from exc
+
+
+def ensure_phase8_detection_schema_ready(postgres_client) -> None:
+    """Require revision 003 and both durable change-detection tables."""
+    ensure_phase8_schema_ready(postgres_client)
+    try:
+        with postgres_client.engine.connect() as conn:
+            revision = conn.execute(
+                text("SELECT version_num FROM alembic_version ORDER BY version_num DESC LIMIT 1")
+            ).scalar()
+            if str(revision) != "003":
+                raise Phase8SchemaNotReady(
+                    "Change detection requires Alembic revision 003 and its manifest tables."
+                )
+            ready = conn.execute(text("""
+                SELECT to_regclass('public.ct_change_detection_run') IS NOT NULL AS header,
+                       to_regclass('public.ct_change_manifest') IS NOT NULL AS manifest
+            """)).mappings().one()
+            if not ready["header"] or not ready["manifest"]:
+                raise Phase8SchemaNotReady("Change detection manifest schema is not ready.")
+    except Phase8SchemaNotReady:
+        raise
+    except Exception as exc:
+        raise Phase8SchemaNotReady("Change detection manifest schema is not ready.") from exc

@@ -45,7 +45,11 @@ DOMAIN_REGISTRY: tuple[DomainContract, ...] = (
     DomainContract("manufacturing", "Manufacturing", ("mrp.production", "stock.move"), ("internal_order",), (ParentChildContract("mrp.production", "stock.move", "production_id"),)),
     DomainContract("procurement", "Procurement", ("purchase.order", "purchase.order.line"), ("internal_order",), (ParentChildContract("purchase.order", "purchase.order.line", "order_id"),)),
     DomainContract("warehouse", "Warehouse", ("stock.picking", "stock.move"), ("commercial", "manufacturing", "procurement"), (ParentChildContract("stock.picking", "stock.move", "picking_id"),)),
-    DomainContract("finance", "Finance", ("account.move", "account.move.line", "account.partial.reconcile"), ("commercial", "procurement"), (ParentChildContract("account.move", "account.move.line", "move_id"),)),
+    DomainContract("finance", "Finance", ("account.move", "account.move.line", "account.partial.reconcile"), ("commercial", "procurement"), (
+        ParentChildContract("account.move", "account.move.line", "move_id"),
+        ParentChildContract("account.move.line", "account.partial.reconcile", "debit_move_id"),
+        ParentChildContract("account.move.line", "account.partial.reconcile", "credit_move_id"),
+    )),
 )
 
 DOMAIN_BY_KEY = {domain.key: domain for domain in DOMAIN_REGISTRY}
