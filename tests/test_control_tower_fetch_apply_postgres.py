@@ -31,6 +31,7 @@ from src.control_tower.refresh_state import RefreshRunStateService
 from src.control_tower.schema_guard import Phase8SchemaNotReady, ensure_phase8_fetch_schema_ready
 from tests.control_tower_odoo_fake import (
     _DEFAULT_FIELD_TYPES,
+    _RELATION_TARGETS,
     FakeOdoo,
     UnfilteredOdoo,
 )
@@ -308,14 +309,33 @@ def test_migration_004_upgrade_and_downgrade(engine):
         assert version == "005"
 
 
-def test_schema_guard_requires_revision_004(engine):
+def test_schema_guard_requires_revision_005(engine):
     with engine.begin() as conn:
         conn.execute(text("UPDATE alembic_version SET version_num='003'"))
-    with pytest.raises(Phase8SchemaNotReady, match="revision 004 or 005"):
+    with pytest.raises(Phase8SchemaNotReady, match="revision 005"):
+        ensure_phase8_fetch_schema_ready(_client(engine))
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE alembic_version SET version_num='004'"))
+    with pytest.raises(Phase8SchemaNotReady, match="revision 005"):
         ensure_phase8_fetch_schema_ready(_client(engine))
     with engine.begin() as conn:
         conn.execute(text("UPDATE alembic_version SET version_num='005'"))
     ensure_phase8_fetch_schema_ready(_client(engine))
+
+
+def test_earlier_stage_guards_still_accept_their_revisions(engine):
+    from src.control_tower.schema_guard import (
+        ensure_phase8_detection_schema_ready,
+        ensure_phase8_schema_ready,
+    )
+
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE alembic_version SET version_num='004'"))
+    ensure_phase8_detection_schema_ready(_client(engine))
+    ensure_phase8_schema_ready(_client(engine))
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE alembic_version SET version_num='005'"))
+    ensure_phase8_detection_schema_ready(_client(engine))
 
 
 def test_fetch_evidence_db_constraints_company_isolation(engine):
@@ -411,7 +431,10 @@ def test_insert_update_unchanged_classification(engine):
 
 def _canonical_payload_json(model, record):
     metadata = {
-        field: {"type": _DEFAULT_FIELD_TYPES.get(field, "char")}
+        field: {
+            "type": _DEFAULT_FIELD_TYPES.get(field, "char"),
+            "relation": _RELATION_TARGETS.get(field),
+        }
         for field in record
     }
     normalized = _normalize_record(record, model, 3, metadata)
@@ -1506,10 +1529,24 @@ def test_manifest_status_mismatch_fails_completed_reuse(engine):
 
 
 def test_missing_baseline_candidate_deletion_fails(engine):
-    run = _pipeline_to_fetching(engine)
-    rows = _rows()
-    rows["sale.order"] = []
-    result = _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(rows), now=STAMP)
+    run = _create_run(engine, ["commercial"])
+    _seed_watermarks(engine, COMMERCIAL_MODELS)
+    CandidateSnapshotCopyForwardService(_client(engine)).copy_forward(run, company_id=3, now=STAMP)
+    IncrementalChangeDetectionService(_client(engine)).detect(
+        run_id=run, company_id=3, selected_domains=["commercial"],
+        odoo_client=FakeOdoo(_rows()), now=STAMP,
+    )
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_extraction_run SET status='FETCHING', stage='FETCHING' "
+                "WHERE run_id=CAST(:run_id AS UUID)"
+            ),
+            {"run_id": run},
+        )
+    fetch_rows = _rows()
+    fetch_rows["sale.order"] = []
+    result = _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(fetch_rows), now=STAMP)
     assert result["records_missing_at_fetch"] == 1
     assert result["current_state"] == "RECONCILING"
     with engine.begin() as conn:
@@ -1571,9 +1608,9 @@ def test_missing_baseline_base_exists_candidate_deleted_fails(engine):
 
 def test_missing_baseline_absent_consistency_passes(engine):
     run = _pipeline_to_fetching(engine)
-    rows = _rows()
-    rows["sale.order"] = []
-    result = _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(rows), now=STAMP)
+    fetch_rows = _rows()
+    fetch_rows["sale.order"] = []
+    result = _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(fetch_rows), now=STAMP)
     assert result["records_missing_at_fetch"] == 1
     assert result["current_state"] == "RECONCILING"
     second = _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
@@ -1646,6 +1683,175 @@ def test_fetching_with_complete_evidence_no_false_success(engine):
             {"run_id": run},
         )
     with pytest.raises(FetchApplyError, match="false success"):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+
+
+# --- CT-8C2-R3 final contract regressions ------------------------------------
+
+def test_fetch_service_guard_rejects_revision_004(engine):
+    from src.control_tower.schema_guard import Phase8SchemaNotReady
+
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE alembic_version SET version_num='004'"))
+    with pytest.raises(Phase8SchemaNotReady, match="revision 005"):
+        FetchApplyService(_client(engine))
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE alembic_version SET version_num='005'"))
+    FetchApplyService(_client(engine))
+
+
+def test_metadata_relation_target_change_blocks_resume(engine):
+    run = _create_run(engine, ["commercial"])
+    _seed_watermarks(engine, COMMERCIAL_MODELS)
+    CandidateSnapshotCopyForwardService(_client(engine)).copy_forward(run, company_id=3, now=STAMP)
+    IncrementalChangeDetectionService(_client(engine)).detect(
+        run_id=run, company_id=3, selected_domains=["commercial"],
+        odoo_client=FakeOdoo(_rows()), now=STAMP,
+    )
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_extraction_run SET status='FETCHING', stage='FETCHING' "
+                "WHERE run_id=CAST(:run_id AS UUID)"
+            ),
+            {"run_id": run},
+        )
+    with pytest.raises(RuntimeError, match="injected before_fetch"):
+        _service(engine, hooks={"before_fetch": _boom}).run(
+            run_id=run, company_id=3, odoo_client=FakeOdoo(_rows()), now=STAMP,
+        )
+    tampered = FakeOdoo(_rows())
+    tampered._fields = dict(tampered._fields)
+    tampered._fields["sale.order"] = dict(tampered._fields["sale.order"])
+    tampered._fields["sale.order"]["company_id"] = {
+        "type": "many2one", "relation": "res.company.tampered",
+    }
+    with pytest.raises(FetchApplyError, match="metadata no longer matches"):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=tampered, now=STAMP)
+
+
+def test_missing_metadata_for_approved_field_fails_before_fetch(engine):
+    run = _pipeline_to_fetching(engine)
+    fake = FakeOdoo(_rows())
+    fake._fields = dict(fake._fields)
+    fake._fields["sale.order"] = {
+        key: value for key, value in fake._fields["sale.order"].items() if key != "state"
+    }
+    with pytest.raises(FetchApplyError, match="missing a definition for approved field sale.order.state"):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=fake, now=STAMP)
+    assert _evidence_count(engine, run) == 0
+
+
+def test_blank_metadata_field_type_fails_closed(engine):
+    run = _pipeline_to_fetching(engine)
+    fake = FakeOdoo(_rows())
+    fake._fields = dict(fake._fields)
+    fake._fields["sale.order"] = dict(fake._fields["sale.order"])
+    fake._fields["sale.order"]["state"] = {"type": "", "relation": None}
+    with pytest.raises(FetchApplyError, match="blank or malformed field type"):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=fake, now=STAMP)
+    assert _evidence_count(engine, run) == 0
+
+
+def test_missing_at_fetch_present_row_payload_tamper_fails(engine):
+    run = _create_run(engine, ["commercial"])
+    _seed_watermarks(engine, COMMERCIAL_MODELS)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO ct_native_record_snapshot "
+                "(extraction_run_id, model, record_id, payload, extracted_at) "
+                "VALUES (CAST(:base AS UUID), 'sale.order', 1, "
+                "'{\"x\" : 1}'::jsonb, :stamp)"
+            ),
+            {"base": PHASE7_BASE_RUN_ID, "stamp": STAMP},
+        )
+    CandidateSnapshotCopyForwardService(_client(engine)).copy_forward(run, company_id=3, now=STAMP)
+    IncrementalChangeDetectionService(_client(engine)).detect(
+        run_id=run, company_id=3, selected_domains=["commercial"],
+        odoo_client=FakeOdoo(_rows()), now=STAMP,
+    )
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_extraction_run SET status='FETCHING', stage='FETCHING' "
+                "WHERE run_id=CAST(:run_id AS UUID)"
+            ),
+            {"run_id": run},
+        )
+    fetch_rows = _rows()
+    fetch_rows["sale.order"] = []
+    result = _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(fetch_rows), now=STAMP)
+    assert result["records_missing_at_fetch"] == 1
+    assert result["current_state"] == "RECONCILING"
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_native_record_snapshot SET payload = CAST(:p AS JSONB) "
+                "WHERE extraction_run_id=CAST(:run_id AS UUID) AND model='sale.order' AND record_id=1"
+            ),
+            {"run_id": run, "p": '{"x":2}'},
+        )
+    with pytest.raises(FetchApplyError, match="exact copy of the base"):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+
+
+def test_missing_at_fetch_present_row_document_tamper_fails(engine):
+    run = _create_run(engine, ["commercial"])
+    _seed_watermarks(engine, COMMERCIAL_MODELS)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO ct_native_record_snapshot "
+                "(extraction_run_id, model, record_id, document_number, payload, extracted_at) "
+                "VALUES (CAST(:base AS UUID), 'sale.order', 1, 'BASE-DOC', "
+                "'{\"x\" : 1}'::jsonb, :stamp)"
+            ),
+            {"base": PHASE7_BASE_RUN_ID, "stamp": STAMP},
+        )
+    CandidateSnapshotCopyForwardService(_client(engine)).copy_forward(run, company_id=3, now=STAMP)
+    IncrementalChangeDetectionService(_client(engine)).detect(
+        run_id=run, company_id=3, selected_domains=["commercial"],
+        odoo_client=FakeOdoo(_rows()), now=STAMP,
+    )
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_extraction_run SET status='FETCHING', stage='FETCHING' "
+                "WHERE run_id=CAST(:run_id AS UUID)"
+            ),
+            {"run_id": run},
+        )
+    fetch_rows = _rows()
+    fetch_rows["sale.order"] = []
+    result = _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(fetch_rows), now=STAMP)
+    assert result["records_missing_at_fetch"] == 1
+    assert result["current_state"] == "RECONCILING"
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_native_record_snapshot SET document_number='TAMPERED' "
+                "WHERE extraction_run_id=CAST(:run_id AS UUID) AND model='sale.order' AND record_id=1"
+            ),
+            {"run_id": run},
+        )
+    with pytest.raises(FetchApplyError, match="exact copy of the base"):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+
+
+def test_fetched_company_name_tamper_fails(engine):
+    run = _pipeline_to_fetching(engine)
+    result = _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(_rows()), now=STAMP)
+    assert result["current_state"] == "RECONCILING"
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_native_record_snapshot SET company_name='TAMPERED' "
+                "WHERE extraction_run_id=CAST(:run_id AS UUID) AND model='sale.order' AND record_id=1"
+            ),
+            {"run_id": run},
+        )
+    with pytest.raises(FetchApplyError, match="Candidate company name changed"):
         _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
 
 

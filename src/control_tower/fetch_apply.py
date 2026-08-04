@@ -121,32 +121,76 @@ def _relation_target(model: str, field: str) -> Optional[str]:
     return None
 
 
+def _validated_field_metadata(
+    model: str, metadata: Mapping[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Validate that every approved field has a trusted metadata definition.
+
+    Returns a canonical per-field metadata map.  Missing definitions, blank
+    field types, and relational fields without a relation target are rejected.
+    Display names are never treated as schema evidence.
+    """
+    if not isinstance(metadata, Mapping):
+        raise FetchApplyError(f"Odoo model metadata is malformed for {model}.")
+    validated: dict[str, dict[str, Any]] = {}
+    for field in _build_field_contract(model):
+        field_def = metadata.get(field)
+        if not isinstance(field_def, Mapping):
+            raise FetchApplyError(
+                f"Odoo model metadata is missing a definition for approved field {model}.{field}."
+            )
+        field_def = dict(field_def)
+        field_type = field_def.get("type")
+        if not isinstance(field_type, str) or not field_type.strip():
+            raise FetchApplyError(
+                f"Odoo model metadata has a blank or malformed field type for {model}.{field}."
+            )
+        field_type = field_type.strip()
+        relation = field_def.get("relation")
+        if field_type in {"many2one", "many2many", "one2many"}:
+            if not isinstance(relation, str) or not relation.strip():
+                raise FetchApplyError(
+                    f"Relational field {model}.{field} lacks a trusted relation target."
+                )
+            validated[field] = {
+                "type": field_type,
+                "relation": relation.strip(),
+            }
+        else:
+            validated[field] = {"type": field_type, "relation": None}
+    return validated
+
+
 def _full_field_contract_fingerprint(
     models: list[str], batch_size: int,
     metadata_by_model: Mapping[str, Mapping[str, Mapping[str, Any]]],
 ) -> str:
-    """Deterministic fingerprint including trusted metadata normalization inputs."""
+    """Deterministic fingerprint including trusted metadata normalization inputs.
+
+    Binds, for every approved field, the exact field name, exact field type,
+    and the exact metadata relation target (not LINK_SPECS truthiness).
+    """
     value = {
         "version": FETCH_APPLY_CONTRACT_VERSION,
         "models": [],
         "batch_size": batch_size,
     }
     for model in models:
+        validated = _validated_field_metadata(
+            model, dict(metadata_by_model.get(model) or {})
+        )
         fields = []
         for field in _build_field_contract(model):
-            field_def = dict((metadata_by_model.get(model) or {}).get(field) or {})
+            field_def = validated[field]
             fields.append({
                 "field": field,
-                "type": field_def.get("type"),
-                "relation_target": _relation_target(model, field),
-                "relation": "1" if field_def.get("relation") else None,
+                "type": field_def["type"],
+                "relation_target": field_def["relation"],
             })
         value["models"].append({"model": model, "fields": fields})
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-
-
 def _build_field_contract(model: str) -> tuple[str, ...]:
     spec = next(spec for spec in MODEL_SPECS if spec.model == model)
     required = {"id", "write_date"}
@@ -508,37 +552,30 @@ class FetchApplyService:
             expected = set(range(1, len(batches) + 1))
             if not expected.issubset({number for (model_key, number) in completed_batches if model_key == model}):
                 all_batches_complete = False
-        if header.get("field_contract_fingerprint") is None:
-            if not all_batches_complete:
-                metadata_by_model = {
-                    model: self._field_metadata(model, odoo_client) for model in models
-                }
-                full_fingerprint = _full_field_contract_fingerprint(
-                    models, int(header["batch_size"]), metadata_by_model,
-                )
-                with self.pg.engine.begin() as conn:
-                    conn.execute(text("""
-                        UPDATE ct_fetch_apply_run
-                        SET field_contract_fingerprint = :fingerprint
-                        WHERE run_id = CAST(:run_id AS UUID) AND status = 'RUNNING'
-                    """), {"run_id": run_uuid, "fingerprint": full_fingerprint})
-            else:
-                raise FetchApplyError(
-                    "Completed fetch/apply evidence lacks a durable field-contract fingerprint.",
-                    requires_new_retry=True,
-                )
-        elif not all_batches_complete:
+        if not all_batches_complete:
             metadata_by_model = {
                 model: self._field_metadata(model, odoo_client) for model in models
             }
             full_fingerprint = _full_field_contract_fingerprint(
                 models, int(header["batch_size"]), metadata_by_model,
             )
-            if header["field_contract_fingerprint"] != full_fingerprint:
+            if header.get("field_contract_fingerprint") is None:
+                with self.pg.engine.begin() as conn:
+                    conn.execute(text("""
+                        UPDATE ct_fetch_apply_run
+                        SET field_contract_fingerprint = :fingerprint
+                        WHERE run_id = CAST(:run_id AS UUID) AND status = 'RUNNING'
+                    """), {"run_id": run_uuid, "fingerprint": full_fingerprint})
+            elif header["field_contract_fingerprint"] != full_fingerprint:
                 raise FetchApplyError(
                     "Current field metadata no longer matches the persisted fetch/apply contract.",
                     requires_new_retry=True,
                 )
+        elif header.get("field_contract_fingerprint") is None:
+            raise FetchApplyError(
+                "Completed fetch/apply evidence lacks a durable field-contract fingerprint.",
+                requires_new_retry=True,
+            )
         totals = self._existing_totals(run_uuid)
         started_value = progress.get("fetch_apply_started_at")
         if isinstance(started_value, str):
@@ -624,7 +661,8 @@ class FetchApplyService:
             metadata = odoo_client.get_model_fields(model)
             if not isinstance(metadata, Mapping):
                 raise FetchApplyError(f"Odoo model metadata is malformed for {model}.")
-            self._metadata_cache[model] = metadata
+            self._metadata_cache[model] = _validated_field_metadata(model, metadata)
+        return self._metadata_cache[model]
         return self._metadata_cache[model]
 
     def _fetch_and_apply_batch(
@@ -1261,18 +1299,32 @@ class FetchApplyService:
             """), {"run_id": run_uuid}).mappings().all()
             snapshots = conn.execute(text("""
                 SELECT model, record_id, document_number, state, company_id,
-                       company_name, write_date, payload, extraction_run_id::text
+                       company_name, write_date, payload, extracted_at,
+                       extraction_run_id::text
                 FROM ct_native_record_snapshot
                 WHERE extraction_run_id = CAST(:run_id AS UUID)
             """), {"run_id": run_uuid}).mappings().all()
             base_rows = conn.execute(text("""
-                SELECT model, record_id FROM ct_native_record_snapshot
+                SELECT model, record_id, document_number, state, company_id,
+                       company_name, write_date, payload, extracted_at
+                FROM ct_native_record_snapshot
                 WHERE extraction_run_id = CAST(:base AS UUID)
             """), {"base": base_snapshot_run_id}).mappings().all()
         snapshot_by_key = {
             (str(row["model"]), int(row["record_id"])): dict(row) for row in snapshots
         }
-        base_by_key = {(str(row["model"]), int(row["record_id"])) for row in base_rows}
+        base_by_key = {
+            (str(row["model"]), int(row["record_id"])): dict(row) for row in base_rows
+        }
+
+        def _business_row_equal(candidate: Mapping[str, Any], base: Mapping[str, Any], key) -> None:
+            for column in ("document_number", "state", "company_id", "company_name", "write_date", "payload", "extracted_at"):
+                if candidate.get(column) != base.get(column):
+                    raise FetchApplyError(
+                        f"Missing-at-fetch candidate row is not an exact copy of the base for {key[0]}/{key[1]} ({column}).",
+                        requires_new_retry=True,
+                    )
+
         for row in evidence:
             key = (str(row["model"]), int(row["record_id"]))
             if row["fetch_status"] == FETCH_STATUS_MISSING:
@@ -1283,6 +1335,8 @@ class FetchApplyService:
                         f"Missing-at-fetch baseline policy violated for {key[0]}/{key[1]}.",
                         requires_new_retry=True,
                     )
+                if in_base:
+                    _business_row_equal(snapshot_by_key[key], base_by_key[key], key)
                 continue
             candidate = snapshot_by_key.get(key)
             if candidate is None:
@@ -1320,10 +1374,14 @@ class FetchApplyService:
                 raise FetchApplyError(f"Candidate state changed for {key[0]}/{key[1]}.")
             company = normalized.get("company_id")
             expected_company_id = None
+            expected_company_name = None
             if isinstance(company, Mapping) and isinstance(company.get("id"), int):
                 expected_company_id = company["id"]
+                expected_company_name = company.get("name")
             if int(candidate.get("company_id") or 0) != int(expected_company_id or 0):
                 raise FetchApplyError(f"Candidate company changed for {key[0]}/{key[1]}.")
+            if str(candidate.get("company_name") or "") != str(expected_company_name or ""):
+                raise FetchApplyError(f"Candidate company name changed for {key[0]}/{key[1]}.")
             expected_write = normalized.get("write_date")
             if isinstance(expected_write, datetime) and not expected_write.tzinfo:
                 expected_write = expected_write.replace(tzinfo=timezone.utc)
@@ -1331,10 +1389,6 @@ class FetchApplyService:
             if isinstance(candidate_write, datetime) and candidate_write.tzinfo is None:
                 candidate_write = candidate_write.replace(tzinfo=timezone.utc)
             if isinstance(expected_write, datetime) and isinstance(candidate_write, datetime):
-                if candidate_write.astimezone(timezone.utc) != expected_write.astimezone(timezone.utc):
-                    raise FetchApplyError(f"Candidate write_date changed for {key[0]}/{key[1]}.")
-            elif candidate_write != expected_write:
-                raise FetchApplyError(f"Candidate write_date changed for {key[0]}/{key[1]}.")
                 if candidate_write.astimezone(timezone.utc) != expected_write.astimezone(timezone.utc):
                     raise FetchApplyError(f"Candidate write_date changed for {key[0]}/{key[1]}.")
             elif candidate_write != expected_write:

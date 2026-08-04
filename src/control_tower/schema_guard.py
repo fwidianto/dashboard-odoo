@@ -83,16 +83,16 @@ def ensure_phase8_detection_schema_ready(postgres_client) -> None:
         raise Phase8SchemaNotReady("Change detection manifest schema is not ready.") from exc
 
 def ensure_phase8_fetch_schema_ready(postgres_client) -> None:
-    """Require revision 004 and the durable fetch/apply evidence tables."""
+    """Require revision 005 and the durable fetch/apply evidence tables."""
     ensure_phase8_detection_schema_ready(postgres_client)
     try:
         with postgres_client.engine.connect() as conn:
             revision = conn.execute(
                 text("SELECT version_num FROM alembic_version ORDER BY version_num DESC LIMIT 1")
             ).scalar()
-            if str(revision) not in {"004", "005"}:
+            if str(revision) != "005":
                 raise Phase8SchemaNotReady(
-                    "Fetch/apply requires Alembic revision 004 or 005 and its evidence tables."
+                    "Fetch/apply requires Alembic revision 005 and its field-contract columns."
                 )
             ready = conn.execute(text("""
                 SELECT to_regclass('public.ct_fetch_apply_run') IS NOT NULL AS header,

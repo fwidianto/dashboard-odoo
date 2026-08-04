@@ -38,11 +38,43 @@ def _freeze(item: Any) -> Any:
     return item
 
 
+def _approved_fields_for(model, rows):
+    from src.control_tower.relation_extractor import MODEL_SPECS
+
+    approved = set()
+    for spec in MODEL_SPECS:
+        if spec.model == model:
+            approved.update(spec.fields)
+            break
+    approved.update(_rows_for(model, rows))
+    return approved
+
+
 def _rows_for(model, rows):
     fields = set()
     for row in rows.get(model, []):
         fields.update(row.keys())
     return fields
+
+
+_RELATION_TARGETS = {
+    "company_id": "res.company", "order_id": "sale.order",
+    "approval_request_id": "approval.request", "partner_id": "res.partner",
+    "product_id": "product.product", "product_uom": "uom.uom",
+    "product_uom_id": "uom.uom", "category_id": "approval.category",
+    "request_owner_id": "res.users", "picking_id": "stock.picking",
+    "picking_type_id": "stock.picking.type", "sale_id": "sale.order",
+    "backorder_id": "stock.picking", "purchase_line_id": "purchase.order.line",
+    "sale_line_id": "sale.order.line", "raw_material_production_id": "mrp.production",
+    "production_id": "mrp.production", "location_id": "stock.location",
+    "location_dest_id": "stock.location", "purchase_id": "purchase.order",
+    "reversed_entry_id": "account.move", "move_id": "account.move",
+    "account_id": "account.account", "debit_move_id": "account.move.line",
+    "credit_move_id": "account.move.line", "x_studio_io_1": "approval.request",
+    "sale_line_ids": "sale.order.line", "move_raw_ids": "stock.move",
+    "move_finished_ids": "stock.move", "x_studio_many2one_field_iJ0j0": "approval.request",
+    "x_studio_many2one_field_n6i7C": "approval.request", "x_studio_jo": "sale.order",
+}
 
 
 _DEFAULT_FIELD_TYPES = {
@@ -75,7 +107,13 @@ class FakeOdoo:
         self.live = live
         self.calls = []
         self._fields = {
-            model: {field: {"type": _DEFAULT_FIELD_TYPES.get(field, "char")} for field in _rows_for(model, rows)}
+            model: {
+                field: {
+                    "type": _DEFAULT_FIELD_TYPES.get(field, "char"),
+                    "relation": _RELATION_TARGETS.get(field),
+                }
+                for field in _approved_fields_for(model, rows)
+            }
             for model in rows
         }
 
