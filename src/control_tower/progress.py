@@ -50,6 +50,23 @@ DETECTION_MAP_FIELDS = (
     "detection_model_completed_at", "detection_model_row_counts",
     "detection_replay_start_seconds", "detection_scan_upper_exclusives",
 )
+ORCHESTRATION_COUNT_FIELDS = ("orchestration_manifest_rows",)
+ORCHESTRATION_NUMBER_FIELDS = ("orchestration_elapsed_seconds",)
+ORCHESTRATION_LIST_FIELDS = (
+    "orchestration_selected_domains",
+    "orchestration_models_planned",
+    "orchestration_models_completed",
+)
+ORCHESTRATION_TEXT_FIELDS = (
+    "orchestration_started_at",
+    "orchestration_finished_at",
+    "orchestration_current_stage",
+    "orchestration_last_completed_stage",
+    "orchestration_next_required_stage",
+    "orchestration_copy_forward_status",
+    "orchestration_detection_status",
+)
+ORCHESTRATION_BOOL_FIELDS = ("orchestration_no_changes",)
 KNOWN_FIELDS = frozenset(
     (
         *COUNT_FIELDS,
@@ -64,6 +81,9 @@ KNOWN_FIELDS = frozenset(
         "change_detection_complete",
         *DETECTION_COUNT_FIELDS, *DETECTION_NUMBER_FIELDS,
         *DETECTION_LIST_FIELDS, *DETECTION_TEXT_FIELDS, *DETECTION_MAP_FIELDS,
+        *ORCHESTRATION_COUNT_FIELDS, *ORCHESTRATION_NUMBER_FIELDS,
+        *ORCHESTRATION_LIST_FIELDS, *ORCHESTRATION_TEXT_FIELDS,
+        *ORCHESTRATION_BOOL_FIELDS,
     )
 )
 
@@ -116,11 +136,30 @@ def validate_progress_payload(payload: Mapping[str, Any] | None) -> dict[str, An
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise ValueError(f"Progress count must be a non-negative integer: {field}")
         result[field] = value
+    for field in ORCHESTRATION_COUNT_FIELDS:
+        value = payload.get(field)
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"Progress count must be a non-negative integer: {field}")
+        result[field] = value
     for field in DETECTION_NUMBER_FIELDS:
         value = payload.get(field)
         if value is None:
             continue
         if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0 or not math.isfinite(value):
+            raise ValueError(f"Progress duration must be a non-negative number: {field}")
+        result[field] = value
+    for field in ORCHESTRATION_NUMBER_FIELDS:
+        value = payload.get(field)
+        if value is None:
+            continue
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or value < 0
+            or not math.isfinite(value)
+        ):
             raise ValueError(f"Progress duration must be a non-negative number: {field}")
         result[field] = value
     for field in COPY_FORWARD_NUMBER_FIELDS:
@@ -160,6 +199,21 @@ def validate_progress_payload(payload: Mapping[str, Any] | None) -> dict[str, An
         if len(value) != len(set(value)):
             raise ValueError(f"Detection progress list must contain unique strings: {field}")
         result[field] = list(value)
+    for field in ORCHESTRATION_LIST_FIELDS:
+        if field not in payload:
+            continue
+        value = payload[field]
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise ValueError(f"Orchestration progress list must contain strings: {field}")
+        if len(value) != len(set(value)):
+            raise ValueError(f"Orchestration progress list must contain unique strings: {field}")
+        result[field] = list(value)
+    if "orchestration_models_completed" in result:
+        planned = result.get("orchestration_models_planned")
+        if planned is None and result["orchestration_models_completed"]:
+            raise ValueError("Completed orchestration models require planned models.")
+        if planned is not None and not set(result["orchestration_models_completed"]).issubset(planned):
+            raise ValueError("Completed orchestration models must be a subset of planned models.")
     for completed, planned in (("completed_domains", "domains"), ("completed_models", "models")):
         if completed not in result:
             continue
@@ -209,6 +263,21 @@ def validate_progress_payload(payload: Mapping[str, Any] | None) -> dict[str, An
             result[field] = _normalize_copy_forward_timestamp(payload[field], field)
         else:
             result[field] = payload[field]
+    for field in ORCHESTRATION_TEXT_FIELDS:
+        if field not in payload or payload[field] is None:
+            continue
+        if not isinstance(payload[field], str):
+            raise ValueError(f"Orchestration progress text field must be a string: {field}")
+        if field in {"orchestration_started_at", "orchestration_finished_at"}:
+            result[field] = _normalize_copy_forward_timestamp(payload[field], field)
+        else:
+            result[field] = payload[field]
+    for field in ORCHESTRATION_BOOL_FIELDS:
+        if field not in payload:
+            continue
+        if not isinstance(payload[field], bool):
+            raise ValueError(f"Orchestration progress marker must be boolean: {field}")
+        result[field] = payload[field]
     for field in DETECTION_MAP_FIELDS:
         if field not in payload:
             continue
@@ -308,6 +377,12 @@ def validate_progress_payload(payload: Mapping[str, Any] | None) -> dict[str, An
         elapsed = (finished - started).total_seconds()
         if elapsed < 0 or round(elapsed, 6) != result["detection_elapsed_seconds"]:
             raise ValueError("Detection elapsed seconds must equal finished minus started and be non-negative.")
+    if {"orchestration_started_at", "orchestration_finished_at", "orchestration_elapsed_seconds"}.issubset(result):
+        started = datetime.fromisoformat(result["orchestration_started_at"].replace("Z", "+00:00"))
+        finished = datetime.fromisoformat(result["orchestration_finished_at"].replace("Z", "+00:00"))
+        elapsed = (finished - started).total_seconds()
+        if elapsed < 0 or round(elapsed, 6) != result["orchestration_elapsed_seconds"]:
+            raise ValueError("Orchestration elapsed seconds must equal finished minus started and be non-negative.")
     if result.get("change_detection_complete"):
         planned = result.get("detection_models_planned")
         completed = result.get("detection_models_completed")
