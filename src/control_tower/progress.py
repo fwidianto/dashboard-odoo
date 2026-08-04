@@ -67,6 +67,30 @@ ORCHESTRATION_TEXT_FIELDS = (
     "orchestration_detection_status",
 )
 ORCHESTRATION_BOOL_FIELDS = ("orchestration_no_changes",)
+FETCH_APPLY_COUNT_FIELDS = (
+    "fetch_apply_records_requested",
+    "fetch_apply_records_fetched",
+    "fetch_apply_records_missing_at_fetch",
+    "fetch_apply_records_source_drift",
+    "fetch_apply_inserted",
+    "fetch_apply_updated",
+    "fetch_apply_unchanged",
+    "fetch_apply_applied_total",
+    "fetch_apply_batches_completed",
+)
+FETCH_APPLY_NUMBER_FIELDS = ("fetch_apply_elapsed_seconds",)
+FETCH_APPLY_LIST_FIELDS = (
+    "fetch_apply_models_planned",
+    "fetch_apply_models_completed",
+)
+FETCH_APPLY_TEXT_FIELDS = (
+    "fetch_apply_current_model",
+    "fetch_apply_started_at",
+    "fetch_apply_finished_at",
+    "fetch_apply_completion_fingerprint",
+    "fetch_apply_contract_version",
+)
+FETCH_APPLY_BOOL_FIELDS = ("fetch_apply_complete",)
 KNOWN_FIELDS = frozenset(
     (
         *COUNT_FIELDS,
@@ -84,6 +108,9 @@ KNOWN_FIELDS = frozenset(
         *ORCHESTRATION_COUNT_FIELDS, *ORCHESTRATION_NUMBER_FIELDS,
         *ORCHESTRATION_LIST_FIELDS, *ORCHESTRATION_TEXT_FIELDS,
         *ORCHESTRATION_BOOL_FIELDS,
+        *FETCH_APPLY_COUNT_FIELDS, *FETCH_APPLY_NUMBER_FIELDS,
+        *FETCH_APPLY_LIST_FIELDS, *FETCH_APPLY_TEXT_FIELDS,
+        *FETCH_APPLY_BOOL_FIELDS,
     )
 )
 
@@ -143,6 +170,13 @@ def validate_progress_payload(payload: Mapping[str, Any] | None) -> dict[str, An
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise ValueError(f"Progress count must be a non-negative integer: {field}")
         result[field] = value
+    for field in FETCH_APPLY_COUNT_FIELDS:
+        value = payload.get(field)
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"Progress count must be a non-negative integer: {field}")
+        result[field] = value
     for field in DETECTION_NUMBER_FIELDS:
         value = payload.get(field)
         if value is None:
@@ -151,6 +185,18 @@ def validate_progress_payload(payload: Mapping[str, Any] | None) -> dict[str, An
             raise ValueError(f"Progress duration must be a non-negative number: {field}")
         result[field] = value
     for field in ORCHESTRATION_NUMBER_FIELDS:
+        value = payload.get(field)
+        if value is None:
+            continue
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or value < 0
+            or not math.isfinite(value)
+        ):
+            raise ValueError(f"Progress duration must be a non-negative number: {field}")
+        result[field] = value
+    for field in FETCH_APPLY_NUMBER_FIELDS:
         value = payload.get(field)
         if value is None:
             continue
@@ -208,6 +254,21 @@ def validate_progress_payload(payload: Mapping[str, Any] | None) -> dict[str, An
         if len(value) != len(set(value)):
             raise ValueError(f"Orchestration progress list must contain unique strings: {field}")
         result[field] = list(value)
+    for field in FETCH_APPLY_LIST_FIELDS:
+        if field not in payload:
+            continue
+        value = payload[field]
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise ValueError(f"Fetch/apply progress list must contain strings: {field}")
+        if len(value) != len(set(value)):
+            raise ValueError(f"Fetch/apply progress list must contain unique strings: {field}")
+        result[field] = list(value)
+    if "fetch_apply_models_completed" in result:
+        planned = result.get("fetch_apply_models_planned")
+        if planned is None and result["fetch_apply_models_completed"]:
+            raise ValueError("Completed fetch/apply models require planned models.")
+        if planned is not None and not set(result["fetch_apply_models_completed"]).issubset(planned):
+            raise ValueError("Completed fetch/apply models must be a subset of planned models.")
     if "orchestration_models_completed" in result:
         planned = result.get("orchestration_models_planned")
         if planned is None and result["orchestration_models_completed"]:
@@ -277,6 +338,25 @@ def validate_progress_payload(payload: Mapping[str, Any] | None) -> dict[str, An
             continue
         if not isinstance(payload[field], bool):
             raise ValueError(f"Orchestration progress marker must be boolean: {field}")
+        result[field] = payload[field]
+    for field in FETCH_APPLY_TEXT_FIELDS:
+        if field not in payload or payload[field] is None:
+            continue
+        if not isinstance(payload[field], str):
+            raise ValueError(f"Fetch/apply progress text field must be a string: {field}")
+        if field == "fetch_apply_completion_fingerprint" and (
+            len(payload[field]) != 64 or any(char not in "0123456789abcdef" for char in payload[field].lower())
+        ):
+            raise ValueError("Fetch/apply completion fingerprint must be a SHA-256 hex string.")
+        if field in {"fetch_apply_started_at", "fetch_apply_finished_at"}:
+            result[field] = _normalize_copy_forward_timestamp(payload[field], field)
+        else:
+            result[field] = payload[field]
+    for field in FETCH_APPLY_BOOL_FIELDS:
+        if field not in payload:
+            continue
+        if not isinstance(payload[field], bool):
+            raise ValueError(f"Fetch/apply progress marker must be boolean: {field}")
         result[field] = payload[field]
     for field in DETECTION_MAP_FIELDS:
         if field not in payload:
@@ -383,6 +463,41 @@ def validate_progress_payload(payload: Mapping[str, Any] | None) -> dict[str, An
         elapsed = (finished - started).total_seconds()
         if elapsed < 0 or round(elapsed, 6) != result["orchestration_elapsed_seconds"]:
             raise ValueError("Orchestration elapsed seconds must equal finished minus started and be non-negative.")
+    if {"fetch_apply_started_at", "fetch_apply_finished_at", "fetch_apply_elapsed_seconds"}.issubset(result):
+        started = datetime.fromisoformat(result["fetch_apply_started_at"].replace("Z", "+00:00"))
+        finished = datetime.fromisoformat(result["fetch_apply_finished_at"].replace("Z", "+00:00"))
+        elapsed = (finished - started).total_seconds()
+        if elapsed < 0 or round(elapsed, 6) != result["fetch_apply_elapsed_seconds"]:
+            raise ValueError("Fetch/apply elapsed seconds must equal finished minus started and be non-negative.")
+    if result.get("fetch_apply_complete"):
+        planned = result.get("fetch_apply_models_planned")
+        completed = result.get("fetch_apply_models_completed")
+        if not planned:
+            raise ValueError("Completed fetch/apply requires planned models.")
+        if completed != planned:
+            raise ValueError("Completed fetch/apply models must exactly equal planned models.")
+        required = {
+            "fetch_apply_started_at", "fetch_apply_finished_at",
+            "fetch_apply_elapsed_seconds", "fetch_apply_completion_fingerprint",
+            "fetch_apply_contract_version", "fetch_apply_records_requested",
+            "fetch_apply_records_fetched", "fetch_apply_records_missing_at_fetch",
+            "fetch_apply_records_source_drift", "fetch_apply_inserted",
+            "fetch_apply_updated", "fetch_apply_unchanged",
+            "fetch_apply_applied_total", "fetch_apply_batches_completed",
+        }
+        if not required.issubset(result):
+            raise ValueError("Completed fetch/apply requires complete completion evidence.")
+        if (
+            result["fetch_apply_applied_total"]
+            != result["fetch_apply_inserted"] + result["fetch_apply_updated"] + result["fetch_apply_unchanged"]
+        ):
+            raise ValueError("Fetch/apply applied total must equal applied classifications.")
+        if (
+            result["fetch_apply_records_fetched"]
+            + result["fetch_apply_records_missing_at_fetch"]
+            != result["fetch_apply_records_requested"]
+        ):
+            raise ValueError("Fetch/apply fetched plus missing must equal requested.")
     if result.get("change_detection_complete"):
         planned = result.get("detection_models_planned")
         completed = result.get("detection_models_completed")

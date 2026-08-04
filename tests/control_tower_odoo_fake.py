@@ -50,9 +50,11 @@ class FakeOdoo:
     def _true_ts(self, row):
         return _aware(row.get("_true_write_date") or row["write_date"])
 
-    def _wire(self, row):
+    def _wire(self, row, fields=None):
         out = {key: value for key, value in row.items() if key != "_true_write_date"}
         out["write_date"] = self._true_ts(row).strftime("%Y-%m-%d %H:%M:%S")
+        if fields is not None:
+            out = {key: value for key, value in out.items() if key in fields}
         return out
 
     def _validate_leaf(self, model, leaf):
@@ -95,6 +97,10 @@ class FakeOdoo:
             actual = row.get(field)
         if operator == "=":
             return actual == value
+        if operator == "in":
+            if not isinstance(value, (list, tuple)):
+                raise AssertionError("in-domain value must be a list")
+            return actual in value
         if operator == ">":
             return actual > value
         if operator == ">=":
@@ -133,13 +139,13 @@ class FakeOdoo:
     def _match(self, model, domain):
         return [row for row in self._store[model] if self._matches(row, domain)]
 
-    def _finish(self, model, rows, order, limit):
+    def _finish(self, model, rows, order, limit, fields=None):
         rows = self._sorted(rows, order)
         if limit is not None:
             rows = rows[:limit]
         if self.live:
             self._append_newer(model)
-        return [self._wire(row) for row in rows]
+        return [self._wire(row, fields) for row in rows]
 
     def search_read(self, model, domain, *, fields=None, order=None, limit=None):
         self._validate_domain(model, domain)
@@ -152,7 +158,7 @@ class FakeOdoo:
         })
         if model == self.fail_model:
             raise RuntimeError("injected Odoo read failure")
-        return self._finish(model, self._match(model, domain), order, limit)
+        return self._finish(model, self._match(model, domain), order, limit, fields)
 
     def _append_newer(self, model):
         existing = self._store[model]
@@ -174,7 +180,12 @@ class FakeOdoo:
 
 
 class UnfilteredOdoo(FakeOdoo):
-    """Rogue client that ignores the domain so the scanner must fail closed."""
+    """Rogue client that ignores the domain and returns all stored fields."""
 
     def _match(self, model, domain):
         return list(self._store[model])
+
+    def _wire(self, row, fields=None):
+        out = {key: value for key, value in row.items() if key != "_true_write_date"}
+        out["write_date"] = self._true_ts(row).strftime("%Y-%m-%d %H:%M:%S")
+        return out

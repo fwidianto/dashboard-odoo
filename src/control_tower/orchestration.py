@@ -40,12 +40,13 @@ from src.control_tower.copy_forward import (
     CopyForwardError,
     CopyForwardPartialError,
 )
+from src.control_tower.fetch_apply import FetchApplyError, FetchApplyService
 from src.control_tower.progress import parse_progress_json
 from src.control_tower.refresh_state import RefreshRunStateService
 from src.control_tower.schema_guard import ensure_phase8_detection_schema_ready
 
 
-_ORCHESTRATION_BOUNDARY_STATES = frozenset({"FETCHING", "VALIDATING"})
+_ORCHESTRATION_BOUNDARY_STATES = frozenset({"FETCHING", "VALIDATING", "RECONCILING"})
 _DURABLE_NON_BOUNDARY_STATES = frozenset(
     {"REQUESTED", "PREPARING", "DETECTING_CHANGES", "RECONCILING", "REFRESHING_DERIVED_DATA", "PUBLISHING"}
 )
@@ -97,6 +98,7 @@ class RefreshPipelineOrchestrator:
         self._detection = IncrementalChangeDetectionService(
             postgres_client, schema_guard=schema_guard
         )
+        self._fetch_apply = FetchApplyService(postgres_client, hooks=self._hooks)
 
     def _fire(self, name: str) -> None:
         hook = self._hooks.get(name)
@@ -143,6 +145,8 @@ class RefreshPipelineOrchestrator:
         run = self._read_run(run_uuid)
         self._validate_run_inputs(run, company_id, resolved)
         if run["status"] in _ORCHESTRATION_BOUNDARY_STATES:
+            if run["status"] == "FETCHING":
+                return self._ensure_fetch_apply(run, company_id, resolved, odoo_client, timestamp)
             return self._idempotent_boundary_result(run, resolved)
         if run["status"] in _FAILED_OR_TERMINAL_STATES:
             raise OrchestrationError(
@@ -168,7 +172,15 @@ class RefreshPipelineOrchestrator:
             run, progress, company_id, resolved, odoo_client, bucket_page_size, timestamp
         )
         self._fire("after_detection")
-        return self._finalize_boundary(run, progress, resolved, timestamp, detection)
+        if run["status"] == "FETCHING":
+            return self._ensure_fetch_apply(run, company_id, resolved, odoo_client, timestamp)
+        boundary = self._finalize_boundary(run, progress, resolved, timestamp, detection)
+        if boundary["current_state"] == "FETCHING":
+            run = self._read_run(run_uuid)
+            if run is None:
+                raise OrchestrationError("Refresh run disappeared at the fetching boundary.")
+            return self._ensure_fetch_apply(run, company_id, resolved, odoo_client, timestamp)
+        return boundary
 
     def _read_run(self, run_uuid: str) -> Optional[dict[str, Any]]:
         with self.pg.engine.connect() as conn:
@@ -337,6 +349,69 @@ class RefreshPipelineOrchestrator:
         return refreshed, parse_progress_json(refreshed["progress"]), {
             "idempotent": idempotent,
             "manifest_rows": int(detection.get("manifest_rows", 0)),
+        }
+
+    def _ensure_fetch_apply(
+        self,
+        run: dict[str, Any],
+        company_id: int,
+        resolved: list[str],
+        odoo_client,
+        timestamp: datetime,
+    ) -> dict[str, Any]:
+        if run["status"] == "RECONCILING":
+            progress = parse_progress_json(run["progress"])
+            if not progress.get("fetch_apply_complete"):
+                raise OrchestrationError(
+                    "Refresh run is at RECONCILING without complete fetch/apply evidence.",
+                    requires_new_retry=True,
+                )
+            summary = self._fetch_apply.run(
+                run_id=run["run_id"], company_id=company_id,
+                odoo_client=_NoCallOdoo(), now=timestamp,
+            )
+            return self._merge_fetch_summary(summary, resolved, run)
+        try:
+            summary = self._fetch_apply.run(
+                run_id=run["run_id"], company_id=company_id,
+                odoo_client=odoo_client, now=timestamp,
+            )
+        except FetchApplyError as exc:
+            raise OrchestrationError(
+                f"Fetch/apply failed closed: {exc}",
+                requires_new_retry=bool(exc.requires_new_retry),
+            ) from exc
+        except Exception as exc:
+            raise OrchestrationError(
+                f"Fetch/apply failed durably; evidence is preserved and a linked retry is required: {exc}",
+                requires_new_retry=True,
+            ) from exc
+        return self._merge_fetch_summary(summary, resolved, run)
+
+    def _merge_fetch_summary(self, summary: dict[str, Any], resolved: list[str], run: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "run_id": summary["run_id"],
+            "company_id": int(summary["company_id"]),
+            "selected_domains": sorted(resolved),
+            "current_state": summary["current_state"],
+            "last_completed_stage": summary["last_completed_stage"],
+            "next_required_stage": summary["next_required_stage"],
+            "copy_forward_status": "COMPLETE",
+            "detection_status": "COMPLETE",
+            "manifest_rows": int(summary.get("records_requested", 0)),
+            "models_completed": list(summary.get("models_completed", [])),
+            "no_changes": False,
+            "records_fetched": int(summary.get("records_fetched", 0)),
+            "records_missing_at_fetch": int(summary.get("records_missing_at_fetch", 0)),
+            "source_drift": int(summary.get("source_drift", 0)),
+            "inserted": int(summary.get("inserted", 0)),
+            "updated": int(summary.get("updated", 0)),
+            "unchanged": int(summary.get("unchanged", 0)),
+            "applied_total": int(summary.get("applied_total", 0)),
+            "idempotent": bool(summary.get("idempotent", False)),
+            "requires_new_retry": False,
+            "base_snapshot_run_id": str(run["base_snapshot_run_id"]) if run["base_snapshot_run_id"] else None,
+            "candidate_run_id": summary["run_id"],
         }
 
     def _finalize_boundary(

@@ -27,7 +27,7 @@ def ensure_phase8_schema_ready(postgres_client) -> None:
             revision = conn.execute(
                 text("SELECT version_num FROM alembic_version ORDER BY version_num DESC LIMIT 1")
             ).scalar()
-            if str(revision) not in {"002", "003"}:
+            if str(revision) not in {"002", "003", "004"}:
                 raise Phase8SchemaNotReady(_READY_MESSAGE)
             ready = conn.execute(
                 text(
@@ -67,7 +67,7 @@ def ensure_phase8_detection_schema_ready(postgres_client) -> None:
             revision = conn.execute(
                 text("SELECT version_num FROM alembic_version ORDER BY version_num DESC LIMIT 1")
             ).scalar()
-            if str(revision) != "003":
+            if str(revision) not in {"003", "004"}:
                 raise Phase8SchemaNotReady(
                     "Change detection requires Alembic revision 003 and its manifest tables."
                 )
@@ -81,3 +81,27 @@ def ensure_phase8_detection_schema_ready(postgres_client) -> None:
         raise
     except Exception as exc:
         raise Phase8SchemaNotReady("Change detection manifest schema is not ready.") from exc
+
+def ensure_phase8_fetch_schema_ready(postgres_client) -> None:
+    """Require revision 004 and the durable fetch/apply evidence tables."""
+    ensure_phase8_detection_schema_ready(postgres_client)
+    try:
+        with postgres_client.engine.connect() as conn:
+            revision = conn.execute(
+                text("SELECT version_num FROM alembic_version ORDER BY version_num DESC LIMIT 1")
+            ).scalar()
+            if str(revision) != "004":
+                raise Phase8SchemaNotReady(
+                    "Fetch/apply requires Alembic revision 004 and its evidence tables."
+                )
+            ready = conn.execute(text("""
+                SELECT to_regclass('public.ct_fetch_apply_run') IS NOT NULL AS header,
+                       to_regclass('public.ct_fetch_apply_evidence') IS NOT NULL AS evidence,
+                       to_regclass('public.ct_fetch_apply_batch') IS NOT NULL AS batch
+            """)).mappings().one()
+            if not ready["header"] or not ready["evidence"] or not ready["batch"]:
+                raise Phase8SchemaNotReady("Fetch/apply evidence schema is not ready.")
+    except Phase8SchemaNotReady:
+        raise
+    except Exception as exc:
+        raise Phase8SchemaNotReady("Fetch/apply evidence schema is not ready.") from exc

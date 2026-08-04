@@ -1,4 +1,4 @@
-"""Phase 8C-1 orchestration tests: mocked Odoo + disposable PostgreSQL."""
+"""Phase 8C-1/8C-2 orchestration tests: mocked Odoo + disposable PostgreSQL."""
 
 from __future__ import annotations
 
@@ -13,11 +13,13 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from src.control_tower.copy_forward import CandidateSnapshotCopyForwardService
+from src.control_tower.fetch_apply import FetchApplyError, FetchApplyService
 from src.control_tower.orchestration import OrchestrationError, RefreshPipelineOrchestrator
 from src.control_tower.progress import parse_progress_json
 from src.control_tower.refresh_state import RefreshRunStateService
 from tests.control_tower_odoo_fake import FakeOdoo
 from tests.test_control_tower_change_detection_postgres import _upgrade_003
+from tests.test_control_tower_fetch_apply_postgres import _upgrade_004
 from tests.test_control_tower_refresh_contracts_postgres import (
     PHASE7_BASE_RUN_ID,
     _bootstrap_phase7,
@@ -53,12 +55,14 @@ def engine():
     _bootstrap_phase7(db)
     _upgrade(db)
     _upgrade_003()
+    _upgrade_004()
     try:
         yield db
     finally:
         with db.begin() as conn:
             for table in (
-                "ct_change_manifest", "ct_change_detection_run",
+                "ct_fetch_apply_batch", "ct_fetch_apply_evidence",
+                "ct_fetch_apply_run", "ct_change_manifest", "ct_change_detection_run",
                 "ct_control_tower_watermark", "ct_parent_reconciliation_queue",
                 "ct_parent_reconciliation_cursor", "ct_published_snapshot",
                 "ct_native_record_snapshot", "ct_document_link",
@@ -99,31 +103,95 @@ def _seed_watermarks(engine, models):
 def _rows(detected=True, models=None):
     rows = {model: [] for model in (models or COMMERCIAL_MODELS)}
     if detected:
-        rows["sale.order"] = [{"id": 1, "write_date": WIRE, "company_id": [3, "Nobi"]}]
+        rows["sale.order"] = [
+            {"id": 1, "name": "SO001", "state": "sale", "company_id": [3, "Nobi"],
+             "partner_id": [101, "Partner A"], "client_order_ref": "REF-1",
+             "x_studio_tanggal_po_cust": False, "x_studio_io_1": [201, "IO001"],
+             "date_order": "2026-01-01 09:00:00", "commitment_date": False,
+             "write_date": WIRE},
+        ]
         rows["sale.order.line"] = [
-            {"id": 11, "write_date": WIRE, "company_id": [3, "Nobi"], "order_id": [1, "SO"]},
-            {"id": 12, "write_date": WIRE, "company_id": [3, "Nobi"], "order_id": [1, "SO"]},
+            {"id": 11, "order_id": [1, "SO001"], "product_id": [501, "Product A"],
+             "product_uom": [601, "Unit"], "product_uom_qty": 2.0, "qty_delivered": 0.0,
+             "qty_invoiced": 0.0, "price_unit": 100.0, "write_date": WIRE,
+             "company_id": [3, "Nobi"]},
+            {"id": 12, "order_id": [1, "SO001"], "product_id": [502, "Product B"],
+             "product_uom": [601, "Unit"], "product_uom_qty": 1.0, "qty_delivered": 1.0,
+             "qty_invoiced": 1.0, "price_unit": 50.0, "write_date": WIRE,
+             "company_id": [3, "Nobi"]},
         ]
     return rows
 
 
 def _all_domain_rows():
     rows = _rows(detected=False, models=ALL_MODELS)
-    rows["sale.order"] = [{"id": 1, "write_date": WIRE, "company_id": [3, "Nobi"]}]
-    rows["sale.order.line"] = [
-        {"id": 11, "write_date": WIRE, "company_id": [3, "Nobi"], "order_id": [1, "SO"]},
-        {"id": 12, "write_date": WIRE, "company_id": [3, "Nobi"], "order_id": [1, "SO"]},
+    rows["sale.order"] = _rows()["sale.order"]
+    rows["sale.order.line"] = _rows()["sale.order.line"]
+    rows["approval.request"] = [
+        {"id": 201, "name": "IO001", "display_name": "IO001", "request_status": "approved",
+         "state": "approved", "category_id": [301, "Category"], "request_owner_id": [401, "Owner"],
+         "company_id": [3, "Nobi"], "write_date": WIRE},
+    ]
+    rows["approval.product.line"] = [
+        {"id": 211, "approval_request_id": [201, "IO001"], "product_id": [501, "Product A"],
+         "product_uom_id": [601, "Unit"], "quantity": 2.0, "x_studio_category": "c",
+         "x_studio_status": "approved", "x_studio_nomor_io": "IO001", "x_studio_nomor_jo": "JO001",
+         "company_id": [3, "Nobi"], "write_date": WIRE},
+    ]
+    rows["mrp.production"] = [
+        {"id": 301, "name": "MO001", "state": "done", "origin": "SO001",
+         "product_id": [502, "Product B"], "product_uom_id": [601, "Unit"],
+         "product_qty": 1.0, "qty_produced": 1.0, "x_studio_nomor_io": "IO001",
+         "x_studio_nomor_jo": "JO001", "x_studio_io_from_sales_order_1": False,
+         "move_raw_ids": [351], "move_finished_ids": [352],
+         "company_id": [3, "Nobi"], "write_date": WIRE},
+    ]
+    rows["purchase.order"] = [
+        {"id": 401, "name": "PO001", "state": "purchase", "company_id": [3, "Nobi"],
+         "write_date": WIRE},
+    ]
+    rows["purchase.order.line"] = [
+        {"id": 411, "order_id": [401, "PO001"], "state": "purchase",
+         "product_id": [501, "Product A"], "product_uom": [601, "Unit"],
+         "product_qty": 5.0, "qty_received": 5.0, "qty_invoiced": 5.0,
+         "x_studio_many2one_field_iJ0j0": False, "x_studio_many2one_field_ij0j0": False,
+         "x_studio_many2one_field_n6i7C": False, "x_studio_many2one_field_n6i7c": False,
+         "x_studio_jo": False, "company_id": [3, "Nobi"], "write_date": WIRE},
     ]
     rows["stock.picking"] = [
-        {"id": 31, "write_date": WIRE, "company_id": [3, "Nobi"]},
-        {"id": 32, "write_date": WIRE, "company_id": [3, "Nobi"]},
+        {"id": 31, "name": "PICK001", "state": "done", "sale_id": [1, "SO001"],
+         "backorder_id": False, "origin": "SO001", "partner_id": [101, "Partner A"],
+         "picking_type_id": [701, "Delivery"], "company_id": [3, "Nobi"], "write_date": WIRE},
+        {"id": 32, "name": "PICK002", "state": "done", "sale_id": False,
+         "backorder_id": False, "origin": "MO001", "partner_id": [101, "Partner A"],
+         "picking_type_id": [702, "Receipt"], "company_id": [3, "Nobi"], "write_date": WIRE},
+    ]
+    rows["stock.move"] = [
+        {"id": 351, "name": "MOVE351", "state": "done", "picking_id": [31, "PICK001"],
+         "purchase_line_id": False, "sale_line_id": [11, "SOL001"],
+         "raw_material_production_id": False, "production_id": False,
+         "product_id": [501, "Product A"], "product_uom": [601, "Unit"],
+         "product_uom_qty": 2.0, "quantity": 2.0, "location_id": [801, "Stock"],
+         "location_dest_id": [802, "Customer"], "company_id": [3, "Nobi"], "write_date": WIRE},
+    ]
+    rows["account.move"] = [
+        {"id": 451, "name": "INV001", "state": "posted", "move_type": "out_invoice",
+         "payment_state": "paid", "amount_total": 250.0, "amount_residual": 0.0,
+         "invoice_origin": "SO001", "purchase_id": False, "reversed_entry_id": False,
+         "company_id": [3, "Nobi"], "write_date": WIRE},
+    ]
+    rows["account.move.line"] = [
+        {"id": 461, "move_id": [451, "INV001"], "account_id": [901, "AR"],
+         "partner_id": [101, "Partner A"], "product_id": False, "sale_line_ids": [11, 12],
+         "x_studio_sales_order": False, "amount_residual": 0.0, "reconciled": True,
+         "matching_number": "MTCH1", "company_id": [3, "Nobi"], "write_date": WIRE},
     ]
     rows["account.partial.reconcile"] = [
-        {"id": 41, "write_date": WIRE, "company_id": [3, "Nobi"],
-         "debit_move_id": [51, "Line"], "credit_move_id": [52, "Line"]},
+        {"id": 41, "debit_move_id": [461, "AML461"], "credit_move_id": [462, "AML462"],
+         "amount": 250.0, "max_date": "2026-01-01 10:00:00",
+         "company_id": [3, "Nobi"], "write_date": WIRE},
     ]
     return rows
-
 
 def _run_row(engine, run_id):
     with engine.connect() as conn:
@@ -166,6 +234,16 @@ def _snapshot_count(engine, run_id):
                 SELECT COUNT(*) FROM ct_native_record_snapshot
                 WHERE extraction_run_id = CAST(:run_id AS UUID)
                 """
+            ),
+            {"run_id": run_id},
+        ).scalar()
+
+
+def _evidence_count(engine, run_id):
+    with engine.connect() as conn:
+        return conn.execute(
+            text(
+                "SELECT COUNT(*) FROM ct_fetch_apply_evidence WHERE run_id = CAST(:run_id AS UUID)"
             ),
             {"run_id": run_id},
         ).scalar()
@@ -230,7 +308,7 @@ def _move_pointer(engine):
 
 # --- detected-row path ------------------------------------------------------
 
-def test_full_orchestration_detected_rows_ends_at_fetching(engine):
+def test_full_orchestration_detected_rows_ends_at_reconciling(engine):
     run = _create_run(engine, ["commercial"])
     _seed_watermarks(engine, COMMERCIAL_MODELS)
     before_wm = _wm_snapshot(engine)
@@ -239,10 +317,13 @@ def test_full_orchestration_detected_rows_ends_at_fetching(engine):
     result = _orchestrator(engine).orchestrate(
         run_id=run, company_id=3, selected_domains=["commercial"], odoo_client=fake, now=STAMP,
     )
-    assert result["current_state"] == "FETCHING"
-    assert result["next_required_stage"] == "FETCHING"
-    assert result["last_completed_stage"] == "DETECTING_CHANGES"
+    assert result["current_state"] == "RECONCILING"
+    assert result["next_required_stage"] == "RECONCILING"
+    assert result["last_completed_stage"] == "FETCHING"
     assert result["manifest_rows"] == 3
+    assert result["records_fetched"] == 3
+    assert result["inserted"] == 3
+    assert result["applied_total"] == 3
     assert result["models_completed"] == ["sale.order", "sale.order.line"]
     assert result["no_changes"] is False
     assert result["idempotent"] is False
@@ -250,16 +331,36 @@ def test_full_orchestration_detected_rows_ends_at_fetching(engine):
     assert result["detection_status"] == "COMPLETE"
     assert result["base_snapshot_run_id"] == PHASE7_BASE_RUN_ID
     assert result["candidate_run_id"] == run
-    assert _run_row(engine, run)["status"] == "FETCHING"
+    assert _run_row(engine, run)["status"] == "RECONCILING"
     progress = _progress(engine, run)
     assert progress["change_detection_complete"] is True
     assert progress["detection_manifest_row_count"] == 3
-    assert progress["orchestration_no_changes"] is False
-    assert progress["orchestration_next_required_stage"] == "FETCHING"
+    assert progress["fetch_apply_complete"] is True
+    assert progress["fetch_apply_records_fetched"] == 3
+    assert progress["fetch_apply_applied_total"] == 3
+    assert progress["orchestration_next_required_stage"] == "RECONCILING"
     assert progress["orchestration_elapsed_seconds"] >= 0
     assert _wm_snapshot(engine) == before_wm
     assert _pointer(engine) == before_pointer
-    assert _snapshot_count(engine, run) == _snapshot_count(engine, PHASE7_BASE_RUN_ID)
+    assert _snapshot_count(engine, run) == 1 + 3
+    assert _evidence_count(engine, run) == 3
+
+
+def test_fetching_boundary_when_fetch_never_starts(engine):
+    run = _create_run(engine, ["commercial"])
+    _seed_watermarks(engine, COMMERCIAL_MODELS)
+    with pytest.raises(OrchestrationError, match="Fetch/apply failed durably"):
+        _orchestrator(engine, hooks={"before_first_fetch": _boom}).orchestrate(
+            run_id=run, company_id=3, selected_domains=["commercial"],
+            odoo_client=FakeOdoo(_rows()), now=STAMP,
+        )
+    assert _run_row(engine, run)["status"] == "FETCHING"
+    result = _orchestrator(engine).orchestrate(
+        run_id=run, company_id=3, selected_domains=["commercial"],
+        odoo_client=FakeOdoo(_rows()), now=STAMP,
+    )
+    assert result["current_state"] == "RECONCILING"
+    assert result["idempotent"] is False
 
 
 # --- zero-row / no-change path ----------------------------------------------
@@ -281,7 +382,6 @@ def test_full_orchestration_zero_rows_ends_at_validating(engine):
     assert progress["orchestration_no_changes"] is True
     assert progress["detection_manifest_row_count"] == 0
 
-
 # --- idempotency and reuse --------------------------------------------------
 
 def test_copy_forward_reuse_is_idempotent(engine):
@@ -294,7 +394,7 @@ def test_copy_forward_reuse_is_idempotent(engine):
         odoo_client=FakeOdoo(_rows()), now=STAMP,
     )
     assert result["manifest_rows"] == 3
-    assert _snapshot_count(engine, run) == 1
+    assert _snapshot_count(engine, run) == 1 + 3
     assert result["copy_forward_status"] == "COMPLETE"
 
 
@@ -305,17 +405,20 @@ def test_completed_orchestration_reuse_makes_no_odoo_calls(engine):
         run_id=run, company_id=3, selected_domains=["commercial"],
         odoo_client=FakeOdoo(_rows()), now=STAMP,
     )
+    assert first["current_state"] == "RECONCILING"
     progress_before = _progress(engine, run)
     manifest_before = _manifest(engine, run)
+    evidence_before = _evidence_count(engine, run)
     second = _orchestrator(engine).orchestrate(
         run_id=run, company_id=3, selected_domains=["commercial"],
         odoo_client=NoCallOdoo(), now=STAMP,
     )
     assert second["idempotent"] is True
-    assert second["current_state"] == "FETCHING"
+    assert second["current_state"] == "RECONCILING"
     assert second["manifest_rows"] == first["manifest_rows"] == 3
     assert _progress(engine, run) == progress_before
     assert _manifest(engine, run) == manifest_before
+    assert _evidence_count(engine, run) == evidence_before
 
 
 def test_already_at_validating_returns_idempotent(engine):
@@ -344,13 +447,14 @@ def test_shared_model_domain_selection_executes_each_model_once(engine):
         run_id=run, company_id=3, selected_domains=ALL_DOMAINS,
         odoo_client=FakeOdoo(_all_domain_rows()), now=STAMP,
     )
-    assert result["current_state"] == "FETCHING"
+    assert result["current_state"] == "RECONCILING"
     assert len(result["models_completed"]) == 12
     assert len(set(result["models_completed"])) == 12
-    assert result["manifest_rows"] == 6
+    assert result["manifest_rows"] == 14
     progress = _progress(engine, run)
     assert progress["detection_models_planned"] == progress["detection_models_completed"]
-    assert progress["detection_models_completed"] == result["models_completed"]
+    assert progress["fetch_apply_models_planned"] == progress["fetch_apply_models_completed"]
+    assert progress["fetch_apply_records_fetched"] == 14
 
 
 # --- read-only enforcement --------------------------------------------------
@@ -368,9 +472,10 @@ def test_odoo_read_only_enforcement_no_full_fetch_no_publication(engine):
     with pytest.raises(AssertionError, match="complete Odoo reads"):
         fake.read("sale.order", [1])
     assert _pointer(engine) == PHASE7_BASE_RUN_ID
-    assert _snapshot_count(engine, run) == 1
+    assert _snapshot_count(engine, run) == 1 + 3
     with engine.connect() as conn:
         assert conn.execute(text("SELECT COUNT(*) FROM ct_change_detection_run")).scalar() == 1
+        assert conn.execute(text("SELECT COUNT(*) FROM ct_fetch_apply_run")).scalar() == 1
 
 
 # --- fail-closed input guards ------------------------------------------------
@@ -422,7 +527,6 @@ def test_stale_base_snapshot_fails_closed(engine):
             odoo_client=NoCallOdoo(), now=STAMP,
         )
 
-
 # --- partial detection and retry lineage ------------------------------------
 
 def test_partial_detection_fails_closed_and_requires_linked_retry(engine):
@@ -460,7 +564,7 @@ def test_partial_detection_fails_closed_and_requires_linked_retry(engine):
         run_id=retry["run_id"], company_id=3, selected_domains=["commercial"],
         odoo_client=FakeOdoo(_rows()), now=STAMP,
     )
-    assert result["current_state"] == "FETCHING"
+    assert result["current_state"] == "RECONCILING"
     assert result["manifest_rows"] == 3
     assert _manifest(engine, run) == original_manifest
     retry_manifest = _manifest(engine, retry["run_id"])
@@ -506,8 +610,9 @@ def test_same_run_concurrency_preserves_evidence(engine):
             except Exception as exc:
                 outcomes.append(("error", exc))
     assert any(outcome[0] == "ok" for outcome in outcomes)
-    assert _run_row(engine, run)["status"] == "FETCHING"
+    assert _run_row(engine, run)["status"] == "RECONCILING"
     assert len(_manifest(engine, run)) == 3
+    assert _evidence_count(engine, run) == 3
     assert _wm_snapshot(engine) == before_wm
     assert _pointer(engine) == before_pointer
 
@@ -526,9 +631,8 @@ def test_stale_state_transition_protection(engine):
         run_id=run, company_id=3, selected_domains=["commercial"],
         odoo_client=NoCallOdoo(), now=STAMP,
     )
-    assert result["current_state"] == "FETCHING"
+    assert result["current_state"] == "RECONCILING"
     assert result["idempotent"] is True
-
 
 # --- failure injection -------------------------------------------------------
 
@@ -545,7 +649,7 @@ def test_failure_before_copy_forward_resumes(engine):
         run_id=run, company_id=3, selected_domains=["commercial"],
         odoo_client=FakeOdoo(_rows()), now=STAMP,
     )
-    assert result["current_state"] == "FETCHING"
+    assert result["current_state"] == "RECONCILING"
     assert _progress(engine, run)["orchestration_started_at"]
 
 
@@ -562,27 +666,30 @@ def test_failure_after_copy_forward_resumes_at_detection(engine):
         run_id=run, company_id=3, selected_domains=["commercial"],
         odoo_client=FakeOdoo(_rows()), now=STAMP,
     )
-    assert result["current_state"] == "FETCHING"
-    assert _snapshot_count(engine, run) == 1
+    assert result["current_state"] == "RECONCILING"
+    assert _snapshot_count(engine, run) == 1 + 3
 
 
-def test_failure_after_detection_resumes_without_odoo(engine):
+def test_failure_after_detection_resumes_without_redetection(engine):
     run = _create_run(engine, ["commercial"])
     _seed_watermarks(engine, COMMERCIAL_MODELS)
+    fake = FakeOdoo(_rows())
     with pytest.raises(RuntimeError, match="injected after_detection"):
         _orchestrator(engine, hooks={"after_detection": _boom}).orchestrate(
             run_id=run, company_id=3, selected_domains=["commercial"],
-            odoo_client=FakeOdoo(_rows()), now=STAMP,
+            odoo_client=fake, now=STAMP,
         )
     row = _run_row(engine, run)
     assert row["status"] == "DETECTING_CHANGES"
     assert _progress(engine, run)["change_detection_complete"] is True
+    detection_calls = len(fake.calls)
     result = _orchestrator(engine).orchestrate(
         run_id=run, company_id=3, selected_domains=["commercial"],
-        odoo_client=NoCallOdoo(), now=STAMP,
+        odoo_client=fake, now=STAMP,
     )
-    assert result["current_state"] == "FETCHING"
-    assert result["idempotent"] is True
+    assert result["current_state"] == "RECONCILING"
+    assert result["idempotent"] is False
+    assert len(fake.calls) > detection_calls
 
 
 def test_failure_during_finalize_resumes_at_boundary(engine):
@@ -596,13 +703,13 @@ def test_failure_during_finalize_resumes_at_boundary(engine):
     assert _run_row(engine, run)["status"] == "DETECTING_CHANGES"
     result = _orchestrator(engine).orchestrate(
         run_id=run, company_id=3, selected_domains=["commercial"],
-        odoo_client=NoCallOdoo(), now=STAMP,
+        odoo_client=FakeOdoo(_rows()), now=STAMP,
     )
-    assert result["current_state"] == "FETCHING"
-    assert result["idempotent"] is True
+    assert result["current_state"] == "RECONCILING"
+    assert result["idempotent"] is False
 
 
-def test_failure_after_finalize_returns_idempotent(engine):
+def test_failure_after_finalize_resumes_at_fetching(engine):
     run = _create_run(engine, ["commercial"])
     _seed_watermarks(engine, COMMERCIAL_MODELS)
     with pytest.raises(RuntimeError, match="injected after_finalize"):
@@ -613,11 +720,54 @@ def test_failure_after_finalize_returns_idempotent(engine):
     assert _run_row(engine, run)["status"] == "FETCHING"
     result = _orchestrator(engine).orchestrate(
         run_id=run, company_id=3, selected_domains=["commercial"],
+        odoo_client=FakeOdoo(_rows()), now=STAMP,
+    )
+    assert result["current_state"] == "RECONCILING"
+
+
+def test_failure_mid_fetch_resumes_without_duplicates(engine):
+    run = _create_run(engine, ["commercial"])
+    _seed_watermarks(engine, COMMERCIAL_MODELS)
+    calls = {"n": 0}
+
+    def mid_fetch(_name):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("injected mid fetch")
+
+    with pytest.raises(OrchestrationError, match="Fetch/apply failed durably"):
+        _orchestrator(engine, hooks={"before_fetch": mid_fetch}).orchestrate(
+            run_id=run, company_id=3, selected_domains=["commercial"],
+            odoo_client=FakeOdoo(_rows()), now=STAMP,
+        )
+    assert _run_row(engine, run)["status"] == "FETCHING"
+    assert _evidence_count(engine, run) == 0
+    result = _orchestrator(engine).orchestrate(
+        run_id=run, company_id=3, selected_domains=["commercial"],
+        odoo_client=FakeOdoo(_rows()), now=STAMP,
+    )
+    assert result["current_state"] == "RECONCILING"
+    assert _evidence_count(engine, run) == 3
+    assert _snapshot_count(engine, run) == 1 + 3
+
+
+def test_failure_after_apply_before_completion_resumes(engine):
+    run = _create_run(engine, ["commercial"])
+    _seed_watermarks(engine, COMMERCIAL_MODELS)
+    with pytest.raises(OrchestrationError, match="Fetch/apply failed durably"):
+        _orchestrator(engine, hooks={"before_completion": _boom}).orchestrate(
+            run_id=run, company_id=3, selected_domains=["commercial"],
+            odoo_client=FakeOdoo(_rows()), now=STAMP,
+        )
+    row = _run_row(engine, run)
+    assert row["status"] == "FETCHING"
+    assert _evidence_count(engine, run) == 3
+    result = _orchestrator(engine).orchestrate(
+        run_id=run, company_id=3, selected_domains=["commercial"],
         odoo_client=NoCallOdoo(), now=STAMP,
     )
-    assert result["current_state"] == "FETCHING"
-    assert result["idempotent"] is True
-
+    assert result["current_state"] == "RECONCILING"
+    assert result["idempotent"] is False
 
 # --- progress and immutability evidence -------------------------------------
 
@@ -635,15 +785,20 @@ def test_orchestration_progress_preserves_stage_evidence(engine):
     assert progress["detection_completion_fingerprint"]
     assert progress["detection_scan_upper_exclusives"]
     assert progress["detection_model_row_counts"]
+    assert progress["fetch_apply_complete"] is True
+    assert progress["fetch_apply_completion_fingerprint"]
+    assert progress["fetch_apply_models_planned"] == ["sale.order", "sale.order.line"]
+    assert progress["fetch_apply_models_completed"] == ["sale.order", "sale.order.line"]
+    assert progress["fetch_apply_records_requested"] == 3
+    assert progress["fetch_apply_records_fetched"] == 3
+    assert progress["fetch_apply_applied_total"] == 3
     assert progress["orchestration_selected_domains"] == sorted(["commercial"])
-    assert progress["orchestration_current_stage"] == "FETCHING"
-    assert progress["orchestration_last_completed_stage"] == "DETECTING_CHANGES"
-    assert progress["orchestration_next_required_stage"] == "FETCHING"
+    assert progress["orchestration_current_stage"] == "RECONCILING"
+    assert progress["orchestration_last_completed_stage"] == "FETCHING"
+    assert progress["orchestration_next_required_stage"] == "RECONCILING"
     assert progress["orchestration_copy_forward_status"] == "COMPLETE"
     assert progress["orchestration_detection_status"] == "COMPLETE"
     assert progress["orchestration_manifest_rows"] == 3
-    assert progress["orchestration_models_planned"] == ["sale.order", "sale.order.line"]
-    assert progress["orchestration_models_completed"] == ["sale.order", "sale.order.line"]
     assert progress["orchestration_finished_at"]
     assert progress["orchestration_elapsed_seconds"] >= 0
     with engine.connect() as conn:
@@ -672,7 +827,7 @@ def test_immutability_snapshot_pointer_watermark(engine):
         odoo_client=FakeOdoo(_rows()), now=STAMP,
     )
     assert _snapshot_count(engine, PHASE7_BASE_RUN_ID) == source_count
-    assert _snapshot_count(engine, run) == source_count
+    assert _snapshot_count(engine, run) == source_count + 3
     assert _wm_snapshot(engine) == before_wm
     assert _pointer(engine) == before_pointer
 
@@ -688,6 +843,18 @@ def test_result_contract_is_complete(engine):
         "run_id", "company_id", "selected_domains", "current_state",
         "last_completed_stage", "next_required_stage", "copy_forward_status",
         "detection_status", "manifest_rows", "models_completed", "no_changes",
+        "records_fetched", "records_missing_at_fetch", "source_drift",
+        "inserted", "updated", "unchanged", "applied_total",
         "idempotent", "requires_new_retry", "base_snapshot_run_id", "candidate_run_id",
     }
     assert set(result) == expected
+
+
+def test_blanket_fetch_apply_error_is_wrapped(engine):
+    run = _create_run(engine, ["commercial"])
+    _seed_watermarks(engine, COMMERCIAL_MODELS)
+    with pytest.raises(OrchestrationError, match="Fetch/apply failed durably"):
+        _orchestrator(engine, hooks={"before_completion": _boom}).orchestrate(
+            run_id=run, company_id=3, selected_domains=["commercial"],
+            odoo_client=FakeOdoo(_rows()), now=STAMP,
+        )
