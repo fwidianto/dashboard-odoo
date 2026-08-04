@@ -5,16 +5,46 @@
 
 This file governs every future Codex task prompt and every ChatGPT GitHub review for the Control Tower.
 
+## Mandatory live preflight
+
+Before publishing any new Codex task, ChatGPT must freshly load the current authority files through the GitHub connector. Previously fetched content, conversation memory, and summaries are not sufficient substitutes.
+
+The automatic trigger includes:
+
+- `Prompt Codex`;
+- `Review and continue`;
+- `continue and prompt Codex`;
+- `prepare the next task`;
+- equivalent requests asking ChatGPT to choose or publish the next implementation run.
+
+Load at minimum:
+
+1. `fwidianto/personal-OS/03_Projects/Odoo_Analytics/PROJECT_STATUS.md`;
+2. `fwidianto/personal-OS/03_Projects/Odoo_Analytics/PILOT_FIRST_DELIVERY_GUARDRAILS.md`;
+3. `fwidianto/dashboard-odoo/AGENTS.md` from the target implementation branch;
+4. this file from `codex-prompts`;
+5. `codex-prompts/tasks/CURRENT.md` when a current task exists;
+6. the active task file and the smallest relevant roadmap/design authority.
+
+If any required authority cannot be loaded, stop before writing to the prompt branch. Do not reconstruct the rules from memory.
+
+`Review GitHub` authorizes review and classification only. It does not authorize a correction prompt or next task.
+
 ## Mandatory prompt gate
 
-Before publishing a task, answer:
+After the live preflight and before publishing a task, answer:
 
 1. What can the user visibly see, understand, or do after this task?
 2. Is this the shortest path to the next usable capability?
 3. What concrete normal-use failure does any backend-only work prevent?
 4. Does the work protect Odoo read-only behavior, company isolation, trusted snapshot safety, ordinary refresh/retry correctness, or the agreed user result?
-5. What is explicitly deferred?
-6. What is the stopping condition?
+5. Was the issue inside the frozen acceptance criteria?
+6. What visible product work would be delayed by doing this now?
+7. What is explicitly deferred?
+8. What is the stopping condition?
+9. Is the decision `ACCEPT`, `ONE CORRECTION`, or `DEFER`?
+
+Show this compact **Orchestrator Gate** to the owner before any prompt-branch write.
 
 Do not publish the task when the only justification is theoretical completeness, arbitrary direct-database tamper resistance, exhaustive forensic consistency, generic cleanup, or speculative production scale.
 
