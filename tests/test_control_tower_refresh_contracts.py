@@ -7,6 +7,7 @@ from src.control_tower.contracts import (
     DOMAIN_REGISTRY, MODEL_SPEC_KEYS, resolve_domain_selection,
     resolve_execution_entries, resolve_model_keys, validate_domain_registry,
 )
+from src.control_tower.copy_forward import _elapsed_seconds
 from src.control_tower.progress import ProgressContractError, parse_progress_json, serialize_progress, validate_progress_payload
 from src.control_tower.reconciliation import completion_status, normalize_reconciliation_timestamp
 from src.control_tower.refresh_state import (
@@ -218,8 +219,63 @@ def test_migration_declares_phase7_prerequisite_and_reversible_objects():
 
 def test_watermark_requires_published_run():
     require_published_run("SUCCEEDED", datetime.now(timezone.utc))
+def test_copy_forward_progress_is_deterministic_and_truthful():
+    started = "2026-01-01T11:00:00+00:00"
+    finished = "2026-01-01T11:00:03+00:00"
+    payload = validate_progress_payload({
+        "copy_forward_status": "COMPLETE",
+        "copy_forward_source_run_id": "source",
+        "copy_forward_candidate_run_id": "candidate",
+        "copy_forward_tables_planned": ["ct_document_link", "ct_native_record_snapshot"],
+        "copy_forward_tables_completed": ["ct_native_record_snapshot", "ct_document_link"],
+        "copy_forward_rows": {"ct_document_link": 2, "ct_native_record_snapshot": 3},
+        "copy_forward_total_rows": 5,
+        "copy_forward_started_at": started,
+        "copy_forward_finished_at": finished,
+        "copy_forward_elapsed_seconds": 3.0,
+        "copy_forward_table_completed_at": {
+            "ct_document_link": "2026-01-01T11:00:02+00:00",
+            "ct_native_record_snapshot": "2026-01-01T11:00:01+00:00",
+        },
+    })
+    assert serialize_progress(payload) == serialize_progress(json.loads(serialize_progress(payload)))
+    with pytest.raises(ValueError, match="non-negative"):
+        validate_progress_payload({"copy_forward_total_rows": -1})
+    with pytest.raises(ValueError, match="subset"):
+        validate_progress_payload({
+            "copy_forward_tables_planned": ["ct_document_link"],
+            "copy_forward_tables_completed": ["ct_native_record_snapshot"],
+        })
+    with pytest.raises(ValueError, match="unique"):
+        validate_progress_payload({
+            "copy_forward_tables_planned": ["ct_document_link", "ct_document_link"],
+        })
+    with pytest.raises(ValueError, match="timestamp map"):
+        validate_progress_payload({
+            "copy_forward_table_completed_at": {"ct_document_link": 1},
+        })
+
     with pytest.raises(ValueError, match="successfully published"):
         require_published_run("FETCHING", None)
+
+
+def test_copy_forward_elapsed_uses_utc_instants_and_stays_nonnegative():
+    started = datetime(2026, 1, 1, 11, tzinfo=timezone.utc)
+    finished = datetime(2026, 1, 1, 11, 0, 3, 125000, tzinfo=timezone.utc)
+    local_offset = timezone(timedelta(hours=7))
+    assert _elapsed_seconds(started, finished) == 3.125
+    assert _elapsed_seconds(
+        started.astimezone(local_offset), finished.astimezone(local_offset)
+    ) == 3.125
+    assert _elapsed_seconds(finished, started) == 0.0
+    with pytest.raises(ValueError, match="timezone-aware"):
+        _elapsed_seconds(datetime(2026, 1, 1, 11), finished)
+    with pytest.raises(ValueError, match="elapsed"):
+        validate_progress_payload({
+            "copy_forward_started_at": started.isoformat(),
+            "copy_forward_finished_at": finished.isoformat(),
+            "copy_forward_elapsed_seconds": 3.0,
+        })
 
 
 def test_phase8_schema_guard_is_deferred_and_clear():
