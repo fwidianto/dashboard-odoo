@@ -358,7 +358,7 @@ def test_fetch_evidence_db_constraints_company_isolation(engine):
                             :stamp, :stamp, 'FETCHED', 'INSERTED', FALSE, 'x', :stamp, :stamp, NULL)
                     """
                 ),
-                {"run_id": run, "stamp": STAMP},
+                {"run_id": run, "stamp": STAMP, "fp": "a" * 64},
             )
 
 
@@ -1176,7 +1176,7 @@ def test_db_rejects_malformed_fingerprint(engine):
                             'not-a-fingerprint', :stamp, :stamp, NULL)
                     """
                 ),
-                {"run_id": run, "stamp": STAMP},
+                {"run_id": run, "stamp": STAMP, "fp": "a" * 64},
             )
 
 
@@ -1853,6 +1853,127 @@ def test_fetched_company_name_tamper_fails(engine):
         )
     with pytest.raises(FetchApplyError, match="Candidate company name changed"):
         _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+
+
+# --- CT-8C2-R4 field-contract binding regressions ----------------------------
+
+def _completed_header(engine, run_id):
+    with engine.connect() as conn:
+        return dict(conn.execute(
+            text(
+                "SELECT run_id::text, field_contract_version, field_contract_fingerprint, "
+                "field_contract_allowlist_fingerprint, completion_fingerprint "
+                "FROM ct_fetch_apply_run WHERE run_id=CAST(:run_id AS UUID)"
+            ),
+            {"run_id": run_id},
+        ).mappings().one())
+
+
+def test_completed_field_contract_fingerprint_stored_and_stable(engine):
+    run = _pipeline_to_fetching(engine)
+    result = _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(_rows()), now=STAMP)
+    assert result["current_state"] == "RECONCILING"
+    header = _completed_header(engine, run)
+    assert header["field_contract_version"] == "ct-fetch-apply-v1"
+    assert len(header["field_contract_fingerprint"]) == 64
+    assert len(header["field_contract_allowlist_fingerprint"]) == 64
+    first = _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+    assert first["idempotent"] is True
+    header_after = _completed_header(engine, run)
+    assert header_after["completion_fingerprint"] == header["completion_fingerprint"]
+
+
+def test_field_contract_fingerprint_tamper_fails_completed_reuse(engine):
+    run = _pipeline_to_fetching(engine)
+    result = _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(_rows()), now=STAMP)
+    assert result["current_state"] == "RECONCILING"
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_fetch_apply_run SET field_contract_fingerprint=:fp "
+                "WHERE run_id=CAST(:run_id AS UUID)"
+            ),
+            {"run_id": run, "fp": "f" * 64},
+        )
+    with pytest.raises(FetchApplyError, match="completion fingerprint changed"):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+
+
+def test_field_contract_version_tamper_fails_completed_reuse(engine):
+    run = _pipeline_to_fetching(engine)
+    result = _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(_rows()), now=STAMP)
+    assert result["current_state"] == "RECONCILING"
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_fetch_apply_run SET field_contract_version='tampered' "
+                "WHERE run_id=CAST(:run_id AS UUID)"
+            ),
+            {"run_id": run},
+        )
+    with pytest.raises(FetchApplyError, match="immutable inputs contradict"):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+
+
+def test_field_contract_allowlist_tamper_fails_completed_reuse(engine):
+    run = _pipeline_to_fetching(engine)
+    result = _service(engine).run(run_id=run, company_id=3, odoo_client=FakeOdoo(_rows()), now=STAMP)
+    assert result["current_state"] == "RECONCILING"
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE ct_fetch_apply_run SET field_contract_allowlist_fingerprint=:fp "
+                "WHERE run_id=CAST(:run_id AS UUID)"
+            ),
+            {"run_id": run, "fp": "e" * 64},
+        )
+    with pytest.raises(FetchApplyError, match="immutable inputs contradict"):
+        _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+
+
+def test_completed_reuse_makes_zero_odoo_and_metadata_calls(engine):
+    run = _pipeline_to_fetching(engine)
+    fake = FakeOdoo(_rows())
+    result = _service(engine).run(run_id=run, company_id=3, odoo_client=fake, now=STAMP)
+    assert result["current_state"] == "RECONCILING"
+    calls_before = len(fake.calls)
+    second = _service(engine).run(run_id=run, company_id=3, odoo_client=fake, now=STAMP)
+    assert second["idempotent"] is True
+    assert len(fake.calls) == calls_before
+    third = _service(engine).run(run_id=run, company_id=3, odoo_client=NoCallOdoo(), now=STAMP)
+    assert third["idempotent"] is True
+
+
+def test_stale_metadata_persist_fails_closed(engine):
+    run = _pipeline_to_fetching(engine)
+
+    def complete_header(_name):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE ct_fetch_apply_run SET status='COMPLETE', "
+                    "finished_at=:stamp, duration_seconds=1.0, "
+                    "completion_fingerprint=:fp, model_fetch_counts='{}'::jsonb "
+                    "WHERE run_id=CAST(:run_id AS UUID)"
+                ),
+                {"run_id": run, "stamp": STAMP, "fp": "a" * 64},
+            )
+
+    with pytest.raises(FetchApplyError, match="superseded by another writer"):
+        _service(engine, hooks={"before_metadata_persist": complete_header}).run(
+            run_id=run, company_id=3, odoo_client=FakeOdoo(_rows()), now=STAMP,
+        )
+    with engine.connect() as conn:
+        stored = conn.execute(
+            text("SELECT field_contract_fingerprint FROM ct_fetch_apply_run WHERE run_id=CAST(:run_id AS UUID)"),
+            {"run_id": run},
+        ).scalar()
+        header_status = conn.execute(
+            text("SELECT status FROM ct_fetch_apply_run WHERE run_id=CAST(:run_id AS UUID)"),
+            {"run_id": run},
+        ).scalar()
+    assert stored is None
+    assert header_status == "COMPLETE"
 
 
 def test_no_reconciliation_or_watermark_advance(engine):

@@ -29,7 +29,7 @@ from src.control_tower.contracts import resolve_domain_selection
 from src.control_tower.progress import parse_progress_json, serialize_progress
 from src.control_tower.refresh import REFRESH_LOCK_KEY
 from src.control_tower.refresh_state import validate_transition
-from src.control_tower.relation_extractor import LINK_SPECS, MODEL_SPECS, normalize_value
+from src.control_tower.relation_extractor import MODEL_SPECS, normalize_value
 from src.control_tower.schema_guard import ensure_phase8_fetch_schema_ready
 
 FETCH_APPLY_CONTRACT_VERSION = "ct-fetch-apply-v1"
@@ -114,11 +114,6 @@ def _code_side_field_contract_fingerprint(models: list[str], batch_size: int) ->
     ).hexdigest()
 
 
-def _relation_target(model: str, field: str) -> Optional[str]:
-    for spec in LINK_SPECS:
-        if spec.field_owner_model == model and spec.source_field == field:
-            return spec.related_model
-    return None
 
 
 def _validated_field_metadata(
@@ -372,7 +367,7 @@ class FetchApplyService:
                 run_uuid, company_id, run["base_snapshot_run_id"],
                 run["selected_domains"], detection, timestamp,
             )
-            progress = self._ensure_fetch_apply(header, progress, timestamp, odoo_client)
+            header, progress = self._ensure_fetch_apply(header, progress, timestamp, odoo_client)
             return self._finalize(run_uuid, company_id, header, progress, timestamp, detection, idempotent=False)
 
     def _header(self, run_uuid: str) -> Optional[dict[str, Any]]:
@@ -559,13 +554,21 @@ class FetchApplyService:
             full_fingerprint = _full_field_contract_fingerprint(
                 models, int(header["batch_size"]), metadata_by_model,
             )
+            self._fire("before_metadata_persist")
             if header.get("field_contract_fingerprint") is None:
                 with self.pg.engine.begin() as conn:
-                    conn.execute(text("""
+                    updated = conn.execute(text("""
                         UPDATE ct_fetch_apply_run
                         SET field_contract_fingerprint = :fingerprint
                         WHERE run_id = CAST(:run_id AS UUID) AND status = 'RUNNING'
                     """), {"run_id": run_uuid, "fingerprint": full_fingerprint})
+                    if updated.rowcount != 1:
+                        raise FetchApplyError(
+                            "Field-contract fingerprint persistence was superseded by another writer.",
+                            requires_new_retry=True,
+                        )
+                header = dict(header)
+                header["field_contract_fingerprint"] = full_fingerprint
             elif header["field_contract_fingerprint"] != full_fingerprint:
                 raise FetchApplyError(
                     "Current field metadata no longer matches the persisted fetch/apply contract.",
@@ -619,7 +622,7 @@ class FetchApplyService:
             progress = self._merged_progress(progress, model, totals, started)
             self._write_progress(run_uuid, progress)
 
-        return parse_progress_json(progress)
+        return header, parse_progress_json(progress)
 
     def _manifest_batches(self, run_uuid: str, model: str) -> list[list[dict[str, Any]]]:
         with self.pg.engine.connect() as conn:
@@ -662,7 +665,6 @@ class FetchApplyService:
             if not isinstance(metadata, Mapping):
                 raise FetchApplyError(f"Odoo model metadata is malformed for {model}.")
             self._metadata_cache[model] = _validated_field_metadata(model, metadata)
-        return self._metadata_cache[model]
         return self._metadata_cache[model]
 
     def _fetch_and_apply_batch(
@@ -1142,6 +1144,9 @@ class FetchApplyService:
             "manifest_row_count": header["manifest_row_count"],
             "batch_size": header["batch_size"],
             "base_snapshot_run_id": str(header["base_snapshot_run_id"]),
+            "field_contract_version": header["field_contract_version"],
+            "field_contract_fingerprint": header["field_contract_fingerprint"],
+            "field_contract_allowlist_fingerprint": header["field_contract_allowlist_fingerprint"],
             "model_counts": model_counts,
             "manifest_fingerprint": self._manifest_fingerprint(detection),
             "evidence_fingerprint": self._evidence_fingerprint(header["run_id"]),
