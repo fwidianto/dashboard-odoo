@@ -1,10 +1,12 @@
 # Current Codex Task
 
-- **Task ID:** CT-8C2-R4
-- **Task file:** `codex-prompts/tasks/CT-8C2-R4-bind-field-contract.md`
+- **Task ID:** CT-8D1
+- **Task file:** `codex-prompts/tasks/CT-8D1-visible-refresh-slice.md`
 - **Target implementation branch:** `feat/control-tower-refresh-center`
-- **Current unaccepted implementation SHA:** `9c4d11aeb45f9ace18300aa1135e20cd0c1d4a00`
-- **Last accepted checkpoint:** `1d38f4568db457850baeff25cc8ed5a1954af124`
+- **Accepted implementation base:** `fa4809f3e3435d1976b3720703630548f532239c`
+- **Capability:** User-visible Control Tower freshness and Refresh Data experience
 - **Prompt branch:** `codex-prompts`
 
 Codex must fetch the prompt branch and read the task file from the exact prompt commit supplied by ChatGPT. Do not merge or check out the prompt branch into the implementation branch.
+
+This task is governed by `codex-prompts/PROMPT_AUTHORING_GUARDRAILS.md`. It must deliver a visible owner-reviewable capability and must not start another backend correction cycle.
