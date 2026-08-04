@@ -38,6 +38,34 @@ def _freeze(item: Any) -> Any:
     return item
 
 
+def _rows_for(model, rows):
+    fields = set()
+    for row in rows.get(model, []):
+        fields.update(row.keys())
+    return fields
+
+
+_DEFAULT_FIELD_TYPES = {
+    "id": "integer", "write_date": "datetime", "company_id": "many2one",
+    "order_id": "many2one", "approval_request_id": "many2one",
+    "partner_id": "many2one", "product_id": "many2one", "product_uom": "many2one",
+    "product_uom_id": "many2one", "category_id": "many2one",
+    "request_owner_id": "many2one", "picking_id": "many2one",
+    "picking_type_id": "many2one", "sale_id": "many2one", "backorder_id": "many2one",
+    "purchase_line_id": "many2one", "sale_line_id": "many2one",
+    "raw_material_production_id": "many2one", "production_id": "many2one",
+    "location_id": "many2one", "location_dest_id": "many2one",
+    "purchase_id": "many2one", "reversed_entry_id": "many2one",
+    "move_id": "many2one", "account_id": "many2one",
+    "debit_move_id": "many2one", "credit_move_id": "many2one",
+    "x_studio_io_1": "many2many", "sale_line_ids": "many2many",
+    "move_raw_ids": "many2many", "move_finished_ids": "many2many",
+    "x_studio_many2one_field_iJ0j0": "many2one",
+    "x_studio_many2one_field_n6i7C": "many2one",
+    "x_studio_jo": "many2one",
+}
+
+
 class FakeOdoo:
     """Read-only Odoo client fake with server-side filtering and ordering."""
 
@@ -46,6 +74,14 @@ class FakeOdoo:
         self.fail_model = fail_model
         self.live = live
         self.calls = []
+        self._fields = {
+            model: {field: {"type": _DEFAULT_FIELD_TYPES.get(field, "char")} for field in _rows_for(model, rows)}
+            for model in rows
+        }
+
+    def get_model_fields(self, model):
+        self.calls.append({"model": model, "method": "get_model_fields"})
+        return self._fields[model]
 
     def _true_ts(self, row):
         return _aware(row.get("_true_write_date") or row["write_date"])

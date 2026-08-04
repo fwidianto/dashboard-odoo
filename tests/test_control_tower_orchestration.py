@@ -106,7 +106,7 @@ def _rows(detected=True, models=None):
         rows["sale.order"] = [
             {"id": 1, "name": "SO001", "state": "sale", "company_id": [3, "Nobi"],
              "partner_id": [101, "Partner A"], "client_order_ref": "REF-1",
-             "x_studio_tanggal_po_cust": False, "x_studio_io_1": [201, "IO001"],
+             "x_studio_tanggal_po_cust": False, "x_studio_io_1": [201],
              "date_order": "2026-01-01 09:00:00", "commitment_date": False,
              "write_date": WIRE},
         ]
@@ -129,7 +129,7 @@ def _all_domain_rows():
     rows["sale.order.line"] = _rows()["sale.order.line"]
     rows["approval.request"] = [
         {"id": 201, "name": "IO001", "display_name": "IO001", "request_status": "approved",
-         "state": "approved", "category_id": [301, "Category"], "request_owner_id": [401, "Owner"],
+         "category_id": [301, "Category"], "request_owner_id": [401, "Owner"],
          "company_id": [3, "Nobi"], "write_date": WIRE},
     ]
     rows["approval.product.line"] = [
@@ -154,8 +154,7 @@ def _all_domain_rows():
         {"id": 411, "order_id": [401, "PO001"], "state": "purchase",
          "product_id": [501, "Product A"], "product_uom": [601, "Unit"],
          "product_qty": 5.0, "qty_received": 5.0, "qty_invoiced": 5.0,
-         "x_studio_many2one_field_iJ0j0": False, "x_studio_many2one_field_ij0j0": False,
-         "x_studio_many2one_field_n6i7C": False, "x_studio_many2one_field_n6i7c": False,
+         "x_studio_many2one_field_iJ0j0": False, "x_studio_many2one_field_n6i7C": False,
          "x_studio_jo": False, "company_id": [3, "Nobi"], "write_date": WIRE},
     ]
     rows["stock.picking"] = [
@@ -467,8 +466,11 @@ def test_odoo_read_only_enforcement_no_full_fetch_no_publication(engine):
         run_id=run, company_id=3, selected_domains=["commercial"], odoo_client=fake, now=STAMP,
     )
     assert fake.calls
-    assert all(call.get("limit") is not None and call.get("fields") is not None for call in fake.calls)
-    assert all("offset" not in call for call in fake.calls)
+    search_calls = [call for call in fake.calls if call.get("method") != "get_model_fields"]
+    assert search_calls
+    assert all(call.get("limit") is not None and call.get("fields") is not None for call in search_calls)
+    assert all("offset" not in call for call in search_calls)
+    assert any(call.get("method") == "get_model_fields" for call in fake.calls)
     with pytest.raises(AssertionError, match="complete Odoo reads"):
         fake.read("sale.order", [1])
     assert _pointer(engine) == PHASE7_BASE_RUN_ID

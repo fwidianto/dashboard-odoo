@@ -879,6 +879,117 @@ class IncrementalChangeDetectionService:
         if updated.rowcount != 1:
             raise ChangeDetectionError("Detection progress is no longer writable after authoritative completion.")
 
+    def validate_completed_manifest(
+        self, *, run_id: str, company_id: int, selected_domains,
+        lock_held: bool = False,
+    ) -> dict[str, Any]:
+        """Validate a completed detection manifest exactly and return authoritative inputs.
+
+        Reuses the approved fingerprint/evidence logic and never contacts Odoo.
+        ``lock_held`` skips re-acquiring the global advisory lock when the caller
+        already owns it, avoiding nested-lock contention.  The validation is
+        state-independent and compares immutable manifest content (model,
+        record ID, source write date, parent hints, sequence) while ignoring
+        the mutable fetch/apply lifecycle status.
+        """
+        run_uuid = str(UUID(str(run_id)))
+        resolved_domains = tuple(domain.key for domain in resolve_domain_selection(selected_domains))
+        entries = resolve_execution_entries(resolved_domains)
+        models = tuple(entry.model_key for entry in entries)
+
+        def _validate() -> dict[str, Any]:
+            with self.pg.engine.begin() as conn:
+                header = conn.execute(text("""
+                    SELECT run_id::text, company_id, base_snapshot_run_id::text,
+                           selected_domains, models, status, contract_fingerprint,
+                           completion_contract_version, completion_fingerprint,
+                           manifest_row_count, model_row_counts, watermark_inputs
+                    FROM ct_change_detection_run
+                    WHERE run_id = CAST(:run_id AS UUID)
+                """), {"run_id": run_uuid}).mappings().first()
+                if not header:
+                    raise ChangeDetectionError("Completed change detection header is missing.")
+                if header["status"] != MANIFEST_COMPLETE:
+                    raise ChangeDetectionError("Change detection is not durably complete.")
+                if int(header["company_id"]) != company_id:
+                    raise ChangeDetectionError("Change detection belongs to another company.")
+                expected_domains = sorted(str(item) for item in resolved_domains)
+                if sorted(str(item) for item in (header["selected_domains"] or [])) != expected_domains:
+                    raise ChangeDetectionError("Completed manifest selected domains changed.")
+                if list(header["models"]) != list(models):
+                    raise ChangeDetectionError("Completed manifest resolved model plan changed.")
+                if header["completion_contract_version"] != COMPLETION_CONTRACT_VERSION:
+                    raise ChangeDetectionError("Completed manifest evidence version is missing or unsupported.")
+                run = conn.execute(text("""
+                    SELECT base_snapshot_run_id::text, progress
+                    FROM ct_extraction_run WHERE run_id = CAST(:run_id AS UUID)
+                """), {"run_id": run_uuid}).mappings().first()
+                if not run:
+                    raise ChangeDetectionError("Refresh run was not found.")
+                if str(run["base_snapshot_run_id"]) != str(header["base_snapshot_run_id"]):
+                    raise ChangeDetectionError("Completed manifest base snapshot changed.")
+                progress = parse_progress_json(run["progress"])
+                if not progress.get("change_detection_complete"):
+                    raise ChangeDetectionError("Completed manifest lacks a trusted completion progress marker.")
+                if progress.get("detection_models_planned") != list(models) or progress.get("detection_models_completed") != list(models):
+                    raise ChangeDetectionError("Completed manifest progress does not contain every planned model.")
+                if progress.get("detection_cursor_algorithm_version") != DETECTION_CURSOR_ALGORITHM_VERSION:
+                    raise ChangeDetectionError("Completed manifest cursor algorithm version changed.")
+                watermark_inputs = dict(header["watermark_inputs"] or {})
+                contract_fingerprint = _contract_fingerprint(
+                    company_id, str(header["base_snapshot_run_id"]), resolved_domains, entries,
+                    watermark_inputs,
+                    progress.get("detection_scan_upper_exclusives") or {},
+                )
+                if progress.get("detection_contract_fingerprint") != contract_fingerprint:
+                    raise ChangeDetectionError("Completed manifest progress contract fingerprint does not match.")
+                if header["contract_fingerprint"] != contract_fingerprint:
+                    raise ChangeDetectionError("Completed manifest header contract fingerprint does not match.")
+                manifest_rows = conn.execute(text("""
+                    SELECT company_id, business_domains, model, record_id, source_write_date,
+                           parent_model, parent_record_id, parent_hints, from_overlap,
+                           detection_sequence, detected_at, status
+                    FROM ct_change_manifest
+                    WHERE run_id = CAST(:run_id AS UUID)
+                    ORDER BY model, detection_sequence, record_id
+                    FOR UPDATE
+                """), {"run_id": run_uuid}).mappings().all()
+                row_count = len(manifest_rows)
+                model_counts_actual = {model: 0 for model in models}
+                for row in manifest_rows:
+                    if row["model"] not in model_counts_actual:
+                        raise ChangeDetectionError("Manifest contains an unexpected model.")
+                    model_counts_actual[row["model"]] += 1
+                if row_count != int(header["manifest_row_count"]):
+                    raise ChangeDetectionError("Completed manifest row count changed.")
+                if model_counts_actual != (dict(header["model_row_counts"] or {})):
+                    raise ChangeDetectionError("Completed manifest model row counts changed.")
+                content_chunks = [COMPLETION_CONTRACT_VERSION]
+                for row in sorted(manifest_rows, key=lambda r: (r["model"], r["detection_sequence"], r["record_id"])):
+                    canonical = _canonical_manifest_row(dict(row))
+                    canonical["status"] = DETECTION_STATUS
+                    content_chunks.append(json.dumps(canonical, sort_keys=True, separators=(",", ":")))
+                content_fingerprint = hashlib.sha256("\n".join(content_chunks).encode("utf-8")).hexdigest()
+                if content_fingerprint != header["completion_fingerprint"]:
+                    raise ChangeDetectionError("Completed manifest fingerprint changed.")
+                if content_fingerprint != progress.get("detection_completion_fingerprint"):
+                    raise ChangeDetectionError("Completed manifest progress fingerprint changed.")
+                if progress.get("detection_manifest_row_count") != row_count:
+                    raise ChangeDetectionError("Completed manifest progress row count changed.")
+                if progress.get("detection_model_row_counts") != model_counts_actual:
+                    raise ChangeDetectionError("Completed manifest progress model counts changed.")
+            return {
+                "manifest_completion_fingerprint": str(header["completion_fingerprint"]),
+                "manifest_row_count": int(header["manifest_row_count"]),
+                "models": list(models),
+                "model_row_counts": dict(header["model_row_counts"] or {}),
+                "manifest_rows": [dict(row) for row in manifest_rows],
+            }
+
+        if lock_held:
+            return _validate()
+        with _refresh_lock(self.pg):
+            return _validate()
     def _idempotent_result(self, run_id, inputs, company_id, models, entries, domains, contract_fingerprint, watermarks, bucket_page_size):
         progress = inputs["candidate_progress"]
         if not progress.get("change_detection_complete"):

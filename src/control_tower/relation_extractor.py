@@ -71,7 +71,7 @@ MODEL_SPECS: tuple[ModelSpec, ...] = (
     ModelSpec(
         "approval.request",
         (
-            "id", "name", "display_name", "request_status", "state", "category_id",
+            "id", "name", "display_name", "request_status", "category_id",
             "request_owner_id", "company_id", "write_date",
         ),
     ),
@@ -101,8 +101,8 @@ MODEL_SPECS: tuple[ModelSpec, ...] = (
         (
             "id", "order_id", "state", "product_id", "product_uom", "product_qty",
             "qty_received", "qty_invoiced", "x_studio_many2one_field_iJ0j0",
-            "x_studio_many2one_field_ij0j0", "x_studio_many2one_field_n6i7C",
-            "x_studio_many2one_field_n6i7c", "x_studio_jo", "company_id", "write_date",
+            "x_studio_many2one_field_n6i7C",
+            "x_studio_jo", "company_id", "write_date",
         ),
     ),
     ModelSpec(
@@ -153,10 +153,6 @@ LINK_SPECS: tuple[LinkSpec, ...] = (
     LinkSpec("sale.order.line", "order_id", "sale.order", "SO_TO_LINE"),
     LinkSpec("approval.product.line", "approval_request_id", "approval.request", "APPROVAL_TO_LINE"),
     LinkSpec("purchase.order.line", "order_id", "purchase.order", "PO_TO_LINE"),
-    LinkSpec("purchase.order.line", "x_studio_many2one_field_iJ0j0", "approval.request", "IO_TO_PO_LINE"),
-    LinkSpec("purchase.order.line", "x_studio_many2one_field_ij0j0", "approval.request", "IO_TO_PO_LINE"),
-    LinkSpec("purchase.order.line", "x_studio_many2one_field_n6i7C", "approval.request", "ROP_TO_PO_LINE"),
-    LinkSpec("purchase.order.line", "x_studio_many2one_field_n6i7c", "approval.request", "ROP_TO_PO_LINE"),
     # Custom fields berikut dapat berupa many2one pada Odoo. Bila ternyata char,
     # direct link dilewati dan exact-text secondary link tetap tersedia.
     LinkSpec("mrp.production", "x_studio_nomor_io", "approval.request", "IO_TO_MO_REFERENCE"),

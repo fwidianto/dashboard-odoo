@@ -17,6 +17,10 @@ depends_on: Union[str, None] = None
 
 def upgrade() -> None:
     op.execute("""
+        ALTER TABLE public.ct_extraction_run
+        ADD CONSTRAINT uq_ct_extraction_run_company UNIQUE (run_id, company_id)
+    """)
+    op.execute("""
         CREATE TABLE public.ct_fetch_apply_run (
             run_id UUID PRIMARY KEY REFERENCES public.ct_extraction_run(run_id) ON DELETE RESTRICT,
             company_id BIGINT NOT NULL CHECK (company_id > 0),
@@ -35,6 +39,10 @@ def upgrade() -> None:
             model_fetch_counts JSONB,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             CONSTRAINT uq_ct_fetch_apply_run_company UNIQUE (run_id, company_id),
+            CONSTRAINT fk_ct_fetch_apply_run_run_company
+                FOREIGN KEY (run_id, company_id)
+                REFERENCES public.ct_extraction_run(run_id, company_id)
+                ON DELETE RESTRICT,
             CHECK ((status = 'RUNNING' AND finished_at IS NULL AND duration_seconds IS NULL)
                 OR (status = 'COMPLETE' AND finished_at IS NOT NULL AND duration_seconds IS NOT NULL
                     AND length(btrim(completion_fingerprint)) = 64
@@ -68,14 +76,20 @@ def upgrade() -> None:
                 FOREIGN KEY (run_id, company_id)
                 REFERENCES public.ct_fetch_apply_run(run_id, company_id)
                 ON DELETE RESTRICT,
+            CHECK (payload_fingerprint IS NULL
+                OR (length(payload_fingerprint) = 64
+                    AND payload_fingerprint ~ '^[0-9a-f]{64}$')),
             CHECK (
                 (fetch_status = 'FETCHED' AND fetched_write_date IS NOT NULL
                  AND payload_fingerprint IS NOT NULL AND fetched_at IS NOT NULL
+                 AND applied_at IS NOT NULL
                  AND apply_status IN ('INSERTED', 'UPDATED', 'UNCHANGED'))
                 OR (fetch_status = 'MISSING_AT_FETCH' AND fetched_write_date IS NULL
                     AND payload_fingerprint IS NULL AND fetched_at IS NOT NULL
+                    AND applied_at IS NULL
                     AND apply_status = 'MISSING_AT_FETCH')
-            )
+            ),
+            CHECK (source_drift = FALSE OR (fetched_write_date > detection_source_write_date))
         )
     """)
     op.execute("""
@@ -107,6 +121,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute("""
+        UPDATE public.ct_change_manifest
+        SET status = 'DETECTED'
+        WHERE status = 'MISSING_AT_FETCH'
+    """)
     op.execute("ALTER TABLE public.ct_change_manifest DROP CONSTRAINT ct_change_manifest_status_check")
     op.execute("""
         ALTER TABLE public.ct_change_manifest ADD CONSTRAINT ct_change_manifest_status_check
@@ -116,3 +135,7 @@ def downgrade() -> None:
     op.execute("DROP TABLE public.ct_fetch_apply_evidence")
     op.execute("DROP INDEX public.idx_ct_fetch_apply_company_status")
     op.execute("DROP TABLE public.ct_fetch_apply_run")
+    op.execute("""
+        ALTER TABLE public.ct_extraction_run
+        DROP CONSTRAINT uq_ct_extraction_run_company
+    """)

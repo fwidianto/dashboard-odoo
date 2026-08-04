@@ -145,7 +145,7 @@ class RefreshPipelineOrchestrator:
         run = self._read_run(run_uuid)
         self._validate_run_inputs(run, company_id, resolved)
         if run["status"] in _ORCHESTRATION_BOUNDARY_STATES:
-            if run["status"] == "FETCHING":
+            if run["status"] in {"FETCHING", "RECONCILING"}:
                 return self._ensure_fetch_apply(run, company_id, resolved, odoo_client, timestamp)
             return self._idempotent_boundary_result(run, resolved)
         if run["status"] in _FAILED_OR_TERMINAL_STATES:
