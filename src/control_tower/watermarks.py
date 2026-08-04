@@ -1,4 +1,11 @@
-"""Control Tower watermark persistence with monotonic publication guards."""
+"""Control Tower watermark persistence with monotonic publication guards.
+
+Watermark semantics (Phase 8B-2B2R): the persisted timestamp is canonical
+timezone-aware UTC and its effective cursor precision is one displayed
+second.  Hidden Odoo microseconds are not represented; the persisted
+record ID is auxiliary evidence (the highest processed ID in the final
+completed bucket) and is never used to skip part of the watermark second.
+"""
 
 from __future__ import annotations
 
@@ -18,6 +25,17 @@ def normalize_utc(value: datetime) -> datetime:
     if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("Watermark timestamps must be timezone-aware datetimes.")
     return value.astimezone(timezone.utc)
+
+
+def watermark_displayed_second(value: datetime) -> datetime:
+    """Canonical one-second cursor precision for a watermark timestamp.
+
+    Odoo 18 exposes ``write_date`` at whole-second precision even though the
+    database keeps hidden microseconds.  The watermark's effective cursor
+    precision is therefore one second: this truncates an aware UTC timestamp
+    to the beginning of its displayed second.
+    """
+    return normalize_utc(value).replace(microsecond=0)
 
 
 def validate_overlap(overlap_seconds: int) -> int:

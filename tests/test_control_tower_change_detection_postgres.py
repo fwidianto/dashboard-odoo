@@ -1,4 +1,4 @@
-"""Disposable PostgreSQL proof for Phase 8B-2B1 detection."""
+"""Disposable PostgreSQL proof for Phase 8B-2B2R precision-safe detection."""
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -18,10 +18,12 @@ from sqlalchemy.exc import IntegrityError
 from src.control_tower.change_detection import (
     BootstrapRequired,
     ChangeDetectionError,
+    DETECTION_BUCKET_PAGE_SIZE,
+    DETECTION_CURSOR_ALGORITHM_VERSION,
     IncrementalChangeDetectionService,
 )
 from src.control_tower.progress import parse_progress_json
-from src.control_tower.watermarks import ControlTowerWatermarkStore
+from tests.control_tower_odoo_fake import FakeOdoo, UnfilteredOdoo
 from tests.test_control_tower_copy_forward_postgres import _candidate, _copy_service
 from tests.test_control_tower_refresh_contracts_postgres import (
     PHASE7_BASE_RUN_ID,
@@ -100,25 +102,6 @@ def _watermark(engine, model, *, company_id=3, stamp=datetime(2026, 1, 1, 10, tz
                "overlap": overlap, "run_id": PHASE7_BASE_RUN_ID})
 
 
-class FakeOdoo:
-    def __init__(self, rows, fail_model=None):
-        self.rows = rows
-        self.fail_model = fail_model
-        self.calls = []
-
-    def search_read(self, model, domain, *, fields, order):
-        self.calls.append((model, domain, fields, order))
-        if model == self.fail_model:
-            raise RuntimeError("injected Odoo read failure")
-        return self.rows.get(model, [])
-
-    def read(self, *args, **kwargs):
-        raise AssertionError("complete Odoo reads are outside detection")
-
-    def read_batched(self, *args, **kwargs):
-        raise AssertionError("complete Odoo reads are outside detection")
-
-
 def _ready_candidate(engine):
     candidate = _candidate(engine)
     _copy_service(engine).copy_forward(candidate, company_id=3)
@@ -133,12 +116,26 @@ def _seed_watermarks(engine):
 def _rows():
     return {
         "sale.order": [
-            {"id": 2, "write_date": "2026-01-01T10:00:01+00:00", "company_id": [3, "Nobi"]},
+            {"id": 2, "write_date": "2026-01-01 10:00:01", "company_id": [3, "Nobi"]},
         ],
         "sale.order.line": [
-            {"id": 4, "write_date": "2026-01-01T10:00:02+00:00", "company_id": [3, "Nobi"], "order_id": [2, "SO"]},
+            {"id": 4, "write_date": "2026-01-01 10:00:02", "company_id": [3, "Nobi"], "order_id": [2, "SO"]},
         ],
     }
+
+
+def _progress(engine, run_id):
+    with engine.connect() as conn:
+        return parse_progress_json(conn.execute(text("""
+            SELECT progress FROM ct_extraction_run WHERE run_id=CAST(:run_id AS UUID)
+        """), {"run_id": run_id}).scalar())
+
+
+def _header_fingerprint(engine, run_id):
+    with engine.connect() as conn:
+        return conn.execute(text("""
+            SELECT contract_fingerprint FROM ct_change_detection_run WHERE run_id=CAST(:run_id AS UUID)
+        """), {"run_id": run_id}).scalar()
 
 
 def test_upgrade_and_reversible_downgrade(engine):
@@ -229,11 +226,11 @@ def test_same_run_concurrency_cannot_write_conflicting_manifests(engine):
     release = Event()
 
     class BlockingOdoo(FakeOdoo):
-        def search_read(self, model, domain, *, fields, order):
+        def search_read(self, model, domain, *, fields=None, order=None, limit=None):
             entered.set()
             if not release.wait(timeout=10):
                 raise AssertionError("first detector did not release")
-            return super().search_read(model, domain, fields=fields, order=order)
+            return super().search_read(model, domain, fields=fields, order=order, limit=limit)
 
     first_service = IncrementalChangeDetectionService(_client(engine))
     second_service = IncrementalChangeDetectionService(_client(engine))
@@ -259,13 +256,13 @@ def test_wrong_company_response_is_rejected_without_manifest_rows(engine):
     candidate = _ready_candidate(engine)
     _seed_watermarks(engine)
     wrong = {
-        "sale.order": [{"id": 2, "write_date": "2026-01-01T10:00:01+00:00", "company_id": [4, "Other"]}],
+        "sale.order": [{"id": 2, "write_date": "2026-01-01 10:00:01", "company_id": [4, "Other"]}],
         "sale.order.line": [],
     }
     with pytest.raises(ChangeDetectionError, match="company scope"):
         IncrementalChangeDetectionService(_client(engine)).detect(
             run_id=candidate, company_id=3, selected_domains=["commercial"],
-            odoo_client=FakeOdoo(wrong),
+            odoo_client=UnfilteredOdoo(wrong),
         )
     with engine.connect() as conn:
         assert conn.execute(text("SELECT COUNT(*) FROM ct_change_manifest")).scalar() == 0
@@ -361,11 +358,7 @@ def test_forged_completion_progress_on_partial_run_remains_unreusable(engine):
             run_id=candidate, company_id=3, selected_domains=["commercial"],
             odoo_client=FakeOdoo(_rows(), fail_model="sale.order.line"),
         )
-    with engine.connect() as conn:
-        forged_progress = parse_progress_json(conn.execute(
-            text("SELECT progress FROM ct_extraction_run WHERE run_id=CAST(:run_id AS UUID)"),
-            {"run_id": candidate},
-        ).scalar())
+    forged_progress = _progress(engine, candidate)
     forged_progress.update({
         "change_detection_complete": True,
         "detection_selected_domains": ["commercial"],
@@ -375,6 +368,16 @@ def test_forged_completion_progress_on_partial_run_remains_unreusable(engine):
         "detection_finished_at": "2026-01-01T10:00:00+00:00",
         "detection_elapsed_seconds": 0,
         "detection_contract_fingerprint": "a" * 64,
+        "detection_cursor_algorithm_version": DETECTION_CURSOR_ALGORITHM_VERSION,
+        "detection_bucket_page_size": DETECTION_BUCKET_PAGE_SIZE,
+        "detection_replay_start_seconds": {
+            "sale.order": "2026-01-01T10:00:00+00:00",
+            "sale.order.line": "2026-01-01T10:00:00+00:00",
+        },
+        "detection_scan_upper_exclusives": {
+            "sale.order": "2026-01-01T10:00:02+00:00",
+            "sale.order.line": "2026-01-01T10:00:03+00:00",
+        },
         "detection_completion_fingerprint": "b" * 64,
         "detection_completion_contract_version": "ct-change-manifest-v1",
         "detection_manifest_row_count": 1,
@@ -395,12 +398,199 @@ def test_completed_progress_cannot_be_overwritten_by_stale_writer(engine):
     _seed_watermarks(engine)
     service = IncrementalChangeDetectionService(_client(engine))
     service.detect(run_id=candidate, company_id=3, selected_domains=["commercial"], odoo_client=FakeOdoo(_rows()))
-    with engine.connect() as conn:
-        before = parse_progress_json(conn.execute(text("SELECT progress FROM ct_extraction_run WHERE run_id=CAST(:run_id AS UUID)"), {"run_id": candidate}).scalar())
+    before = _progress(engine, candidate)
     stale = dict(before, change_detection_complete=False, detection_current_model="sale.order")
     with pytest.raises(ChangeDetectionError, match="no longer writable"):
         with engine.begin() as conn:
             service._update_run_progress(conn, candidate, stale)
+    assert _progress(engine, candidate) == before
+
+
+# --- Phase 8B-2B2R new contract coverage -------------------------------------
+
+def test_real_format_timestamps_persist_as_aware_utc_timestamptz(engine):
+    candidate = _ready_candidate(engine)
+    _seed_watermarks(engine)
+    IncrementalChangeDetectionService(_client(engine)).detect(
+        run_id=candidate, company_id=3, selected_domains=["commercial"], odoo_client=FakeOdoo(_rows()),
+    )
     with engine.connect() as conn:
-        after = parse_progress_json(conn.execute(text("SELECT progress FROM ct_extraction_run WHERE run_id=CAST(:run_id AS UUID)"), {"run_id": candidate}).scalar())
-    assert after == before
+        rows = conn.execute(text("""
+            SELECT model, record_id, source_write_date
+            FROM ct_change_manifest WHERE run_id=CAST(:run_id AS UUID)
+            ORDER BY model, record_id
+        """), {"run_id": candidate}).all()
+    assert rows[0][0:2] == ("sale.order", 2)
+    assert rows[1][0:2] == ("sale.order.line", 4)
+    for row in rows:
+        assert row[2].tzinfo is not None
+        assert row[2].microsecond == 0
+    assert rows[0][2].astimezone(timezone.utc) == datetime(2026, 1, 1, 10, 0, 1, tzinfo=timezone.utc)
+    assert rows[1][2].astimezone(timezone.utc) == datetime(2026, 1, 1, 10, 0, 2, tzinfo=timezone.utc)
+
+
+def test_completed_evidence_includes_cursor_contract_version_and_final_fingerprint(engine):
+    candidate = _ready_candidate(engine)
+    _seed_watermarks(engine)
+    service = IncrementalChangeDetectionService(_client(engine))
+    service.detect(run_id=candidate, company_id=3, selected_domains=["commercial"], odoo_client=FakeOdoo(_rows()))
+    progress = _progress(engine, candidate)
+    header_fingerprint = _header_fingerprint(engine, candidate)
+    assert progress["detection_cursor_algorithm_version"] == DETECTION_CURSOR_ALGORITHM_VERSION
+    assert progress["detection_bucket_page_size"] == DETECTION_BUCKET_PAGE_SIZE
+    assert progress["detection_contract_fingerprint"] == header_fingerprint
+    assert len(header_fingerprint) == 64
+
+
+def test_replay_start_and_scan_upper_persist_deterministically(engine):
+    candidate = _ready_candidate(engine)
+    _seed_watermarks(engine)
+    IncrementalChangeDetectionService(_client(engine)).detect(
+        run_id=candidate, company_id=3, selected_domains=["commercial"], odoo_client=FakeOdoo(_rows()),
+    )
+    progress = _progress(engine, candidate)
+    assert progress["detection_replay_start_seconds"] == {
+        "sale.order": "2026-01-01T10:00:00+00:00",
+        "sale.order.line": "2026-01-01T10:00:00+00:00",
+    }
+    assert progress["detection_scan_upper_exclusives"] == {
+        "sale.order": "2026-01-01T10:00:02+00:00",
+        "sale.order.line": "2026-01-01T10:00:03+00:00",
+    }
+
+
+def test_completed_manifest_reuse_succeeds_with_identical_bucket_inputs(engine):
+    candidate = _ready_candidate(engine)
+    _seed_watermarks(engine)
+    service = IncrementalChangeDetectionService(_client(engine))
+    first = service.detect(run_id=candidate, company_id=3, selected_domains=["commercial"], odoo_client=FakeOdoo(_rows()))
+    class NoCall:
+        def search_read(self, *args, **kwargs):
+            raise AssertionError("idempotent detection must not call Odoo")
+    second = service.detect(run_id=candidate, company_id=3, selected_domains=["commercial"], odoo_client=NoCall())
+    assert first["manifest_rows"] == second["manifest_rows"] == 2
+    assert second["idempotent"] is True
+
+
+def test_changed_cursor_version_rejects_reuse(engine):
+    candidate = _ready_candidate(engine)
+    _seed_watermarks(engine)
+    service = IncrementalChangeDetectionService(_client(engine))
+    service.detect(run_id=candidate, company_id=3, selected_domains=["commercial"], odoo_client=FakeOdoo(_rows()))
+    with engine.begin() as conn:
+        progress = parse_progress_json(conn.execute(text("""
+            SELECT progress FROM ct_extraction_run WHERE run_id=CAST(:run_id AS UUID)
+        """), {"run_id": candidate}).scalar())
+        progress["detection_cursor_algorithm_version"] = "ct-second-bucket-stale"
+        conn.execute(text("""
+            UPDATE ct_extraction_run SET progress = CAST(:progress AS JSONB)
+            WHERE run_id=CAST(:run_id AS UUID)
+        """), {"run_id": candidate, "progress": json.dumps(progress)})
+    with pytest.raises(ChangeDetectionError, match="cursor algorithm"):
+        service.detect(run_id=candidate, company_id=3, selected_domains=["commercial"], odoo_client=FakeOdoo(_rows()))
+
+
+def test_changed_replay_start_rejects_reuse(engine):
+    candidate = _ready_candidate(engine)
+    _seed_watermarks(engine)
+    service = IncrementalChangeDetectionService(_client(engine))
+    service.detect(run_id=candidate, company_id=3, selected_domains=["commercial"], odoo_client=FakeOdoo(_rows()))
+    with engine.begin() as conn:
+        conn.execute(text("""
+            UPDATE ct_control_tower_watermark
+            SET last_successful_write_date = last_successful_write_date + interval '1 second'
+            WHERE company_id=3 AND model='sale.order'
+        """))
+    with pytest.raises(ChangeDetectionError, match="watermark inputs changed"):
+        service.detect(run_id=candidate, company_id=3, selected_domains=["commercial"], odoo_client=FakeOdoo(_rows()))
+
+
+def test_changed_scan_upper_boundary_rejects_reuse(engine):
+    candidate = _ready_candidate(engine)
+    _seed_watermarks(engine)
+    service = IncrementalChangeDetectionService(_client(engine))
+    service.detect(run_id=candidate, company_id=3, selected_domains=["commercial"], odoo_client=FakeOdoo(_rows()))
+    with engine.begin() as conn:
+        progress = parse_progress_json(conn.execute(text("""
+            SELECT progress FROM ct_extraction_run WHERE run_id=CAST(:run_id AS UUID)
+        """), {"run_id": candidate}).scalar())
+        progress["detection_scan_upper_exclusives"]["sale.order"] = "2026-01-01T10:00:03+00:00"
+        conn.execute(text("""
+            UPDATE ct_extraction_run SET progress = CAST(:progress AS JSONB)
+            WHERE run_id=CAST(:run_id AS UUID)
+        """), {"run_id": candidate, "progress": json.dumps(progress)})
+    with pytest.raises(ChangeDetectionError, match="contract inputs changed"):
+        service.detect(run_id=candidate, company_id=3, selected_domains=["commercial"], odoo_client=FakeOdoo(_rows()))
+
+
+def test_changed_page_size_rejects_reuse(engine):
+    candidate = _ready_candidate(engine)
+    _seed_watermarks(engine)
+    service = IncrementalChangeDetectionService(_client(engine))
+    service.detect(run_id=candidate, company_id=3, selected_domains=["commercial"], odoo_client=FakeOdoo(_rows()), bucket_page_size=50)
+    with pytest.raises(ChangeDetectionError, match="contract inputs changed"):
+        service.detect(run_id=candidate, company_id=3, selected_domains=["commercial"], odoo_client=FakeOdoo(_rows()))
+
+
+def test_hidden_precision_rows_produce_deterministic_manifest_evidence(engine):
+    rows = {
+        "sale.order": [],
+        "sale.order.line": [
+            {"id": 101, "write_date": "2026-01-01 10:00:00", "company_id": [3, "Nobi"], "order_id": [2, "SO"],
+             "_true_write_date": datetime(2026, 1, 1, 10, 0, 0, 500000, tzinfo=timezone.utc)},
+            {"id": 102, "write_date": "2026-01-01 10:00:00", "company_id": [3, "Nobi"], "order_id": [2, "SO"],
+             "_true_write_date": datetime(2026, 1, 1, 10, 0, 0, 750000, tzinfo=timezone.utc)},
+            {"id": 103, "write_date": "2026-01-01 10:00:00", "company_id": [3, "Nobi"], "order_id": [2, "SO"],
+             "_true_write_date": datetime(2026, 1, 1, 10, 0, 0, 999000, tzinfo=timezone.utc)},
+        ],
+    }
+    first_candidate = _ready_candidate(engine)
+    _seed_watermarks(engine)
+    service = IncrementalChangeDetectionService(_client(engine))
+    fixed_now = datetime(2026, 1, 1, 10, tzinfo=timezone.utc)
+    first = service.detect(run_id=first_candidate, company_id=3, selected_domains=["commercial"], odoo_client=FakeOdoo(rows), now=fixed_now)
+    second_candidate = _ready_candidate(engine)
+    second = service.detect(run_id=second_candidate, company_id=3, selected_domains=["commercial"], odoo_client=FakeOdoo(rows), now=fixed_now)
+    assert first["manifest_rows"] == second["manifest_rows"] == 3
+    first_progress = _progress(engine, first_candidate)
+    second_progress = _progress(engine, second_candidate)
+    assert first_progress["detection_completion_fingerprint"] == second_progress["detection_completion_fingerprint"]
+    with engine.connect() as conn:
+        manifest = conn.execute(text("""
+            SELECT record_id, source_write_date, detection_sequence
+            FROM ct_change_manifest WHERE run_id=CAST(:run_id AS UUID)
+            ORDER BY record_id
+        """), {"run_id": first_candidate}).all()
+    assert [row[0] for row in manifest] == [101, 102, 103]
+    assert [row[2] for row in manifest] == [1, 2, 3]
+    assert all(row[1] == datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc) for row in manifest)
+
+
+def test_mandatory_watermark_second_replay_with_zero_overlap(engine):
+    candidate = _ready_candidate(engine)
+    _seed_watermarks(engine)
+    rows = {
+        "sale.order": [],
+        "sale.order.line": [
+            {"id": 9, "write_date": "2026-01-01 10:00:00", "company_id": [3, "Nobi"], "order_id": [2, "SO"]},
+            {"id": 11, "write_date": "2026-01-01 10:00:00", "company_id": [3, "Nobi"], "order_id": [2, "SO"]},
+            {"id": 12, "write_date": "2026-01-01 10:00:01", "company_id": [3, "Nobi"], "order_id": [2, "SO"]},
+        ],
+    }
+    result = IncrementalChangeDetectionService(_client(engine)).detect(
+        run_id=candidate, company_id=3, selected_domains=["commercial"], odoo_client=FakeOdoo(rows),
+    )
+    assert result["manifest_rows"] == 3
+    with engine.connect() as conn:
+        manifest = conn.execute(text("""
+            SELECT record_id, from_overlap, detection_sequence
+            FROM ct_change_manifest WHERE run_id=CAST(:run_id AS UUID)
+            ORDER BY detection_sequence
+        """), {"run_id": candidate}).all()
+        assert [(row[0], row[1]) for row in manifest] == [(9, True), (11, True), (12, False)]
+        assert [row[2] for row in manifest] == [1, 2, 3]
+    progress = _progress(engine, candidate)
+    assert progress["detection_configured_overlap_rows"] == 0
+    assert progress["detection_watermark_second_replay_rows"] == 2
+    assert progress["detection_genuinely_newer_rows"] == 1
+    assert progress["detection_overlap_rows_rechecked"] == 2

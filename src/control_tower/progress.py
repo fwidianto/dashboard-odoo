@@ -29,6 +29,10 @@ DETECTION_COUNT_FIELDS = (
     "detection_newer_rows_detected", "detection_duplicate_rows_removed",
     "detection_manifest_rows_persisted", "detection_manifest_row_count",
     "detection_parent_hints_identified",
+    "detection_bucket_page_size",
+    "detection_configured_overlap_rows",
+    "detection_watermark_second_replay_rows",
+    "detection_genuinely_newer_rows",
 )
 DETECTION_NUMBER_FIELDS = ("detection_elapsed_seconds",)
 DETECTION_LIST_FIELDS = (
@@ -39,10 +43,12 @@ DETECTION_TEXT_FIELDS = (
     "detection_current_model", "detection_started_at", "detection_finished_at",
     "detection_contract_fingerprint", "detection_completion_fingerprint",
     "detection_completion_contract_version",
+    "detection_cursor_algorithm_version",
 )
 DETECTION_MAP_FIELDS = (
     "detection_watermarks", "detection_overlap_lower_bounds",
     "detection_model_completed_at", "detection_model_row_counts",
+    "detection_replay_start_seconds", "detection_scan_upper_exclusives",
 )
 KNOWN_FIELDS = frozenset(
     (
@@ -209,6 +215,17 @@ def validate_progress_payload(payload: Mapping[str, Any] | None) -> dict[str, An
         value = payload[field]
         if not isinstance(value, Mapping) or not all(isinstance(key, str) for key in value):
             raise ValueError(f"Detection progress map must have string keys: {field}")
+        if field in {"detection_replay_start_seconds", "detection_scan_upper_exclusives"}:
+            normalized_seconds = {}
+            for key, timestamp in value.items():
+                if timestamp is None:
+                    normalized_seconds[key] = None
+                elif isinstance(timestamp, str):
+                    normalized_seconds[key] = _normalize_copy_forward_timestamp(timestamp, field)
+                else:
+                    raise ValueError(f"Detection second map must contain ISO strings or null: {field}")
+            result[field] = {key: normalized_seconds[key] for key in sorted(normalized_seconds)}
+            continue
         if field == "detection_model_row_counts":
             normalized_counts = {}
             for key, count in value.items():
@@ -303,6 +320,8 @@ def validate_progress_payload(payload: Mapping[str, Any] | None) -> dict[str, An
             "detection_completion_contract_version", "detection_manifest_row_count",
             "detection_model_row_counts", "detection_manifest_rows_persisted",
             "detection_started_at", "detection_finished_at", "detection_elapsed_seconds",
+            "detection_cursor_algorithm_version", "detection_bucket_page_size",
+            "detection_replay_start_seconds", "detection_scan_upper_exclusives",
         }
         if not required.issubset(result):
             raise ValueError("Completed detection requires complete completion evidence.")
