@@ -129,33 +129,58 @@ class RefreshContinuationService:
             "reconciliation_started_at": started.isoformat(),
             "reconciliation_sets_planned": list(progress.get("reconciliation_sets_planned") or []),
             "reconciliation_sets_completed_list": list(progress.get("reconciliation_sets_completed_list") or []),
+            "reconciliation_sets_enqueued": 0,
+            "reconciliation_sets_completed": 0,
+            "reconciliation_records_read": 0,
+            "reconciliation_records_removed": 0,
         })
         self._write_progress(run["run_id"], progress)
 
         enqueued = self._reconciliation.enqueue_from_manifest(
             run_id=run["run_id"], company_id=company_id,
         )
-        planned = list(progress.get("reconciliation_sets_planned") or [])
-        progress["reconciliation_sets_enqueued"] = enqueued
+        total_pending = self._reconciliation.pending_count(run["run_id"], company_id)
+        progress["reconciliation_sets_enqueued"] = total_pending
 
-        try:
-            summary = self._reconciliation.execute(
-                run_id=run["run_id"], company_id=company_id, odoo_client=odoo_client,
-                worker_id=f"run-{run['run_id']}", now=timestamp,
-            )
-        except Exception as exc:
-            if isinstance(exc, RefreshContinuationError):
-                raise
-            raise RefreshContinuationError(
-                f"Reconciliation failed closed; evidence is preserved and a linked retry is required: {exc}",
-                requires_new_retry=True,
-            ) from exc
+        totals = {"sets_completed": 0, "records_read": 0, "records_removed": 0}
+        while True:
+            pending = self._reconciliation.pending_count(run["run_id"], company_id)
+            if pending == 0:
+                break
+            try:
+                summary = self._reconciliation.execute(
+                    run_id=run["run_id"], company_id=company_id, odoo_client=odoo_client,
+                    worker_id=f"run-{run['run_id']}", now=timestamp,
+                )
+            except Exception as exc:
+                if isinstance(exc, RefreshContinuationError):
+                    raise
+                raise RefreshContinuationError(
+                    f"Reconciliation failed closed; evidence is preserved and a linked retry is required: {exc}",
+                    requires_new_retry=True,
+                ) from exc
+            if int(summary.get("sets_claimed", 0)) == 0:
+                raise RefreshContinuationError(
+                    "Reconciliation made no forward progress while supported sets remain pending.",
+                    requires_new_retry=True,
+                )
+            totals["sets_completed"] += int(summary["sets_completed"])
+            totals["records_read"] += int(summary["records_read"])
+            totals["records_removed"] += int(summary["records_removed"])
+            progress.update({
+                "reconciliation_sets_completed": totals["sets_completed"],
+                "reconciliation_records_read": totals["records_read"],
+                "reconciliation_records_removed": totals["records_removed"],
+                "reconciliation_elapsed_seconds": _elapsed(started, _utc(timestamp)),
+            })
+            self._write_progress(run["run_id"], progress)
+
         finished = _utc(timestamp)
         progress.update({
-            "reconciliation_sets_enqueued": enqueued,
-            "reconciliation_sets_completed": summary["sets_completed"],
-            "reconciliation_records_read": summary["records_read"],
-            "reconciliation_records_removed": summary["records_removed"],
+            "reconciliation_sets_enqueued": total_pending,
+            "reconciliation_sets_completed": totals["sets_completed"],
+            "reconciliation_records_read": totals["records_read"],
+            "reconciliation_records_removed": totals["records_removed"],
             "reconciliation_finished_at": finished.isoformat(),
             "reconciliation_elapsed_seconds": _elapsed(started, finished),
             "reconciliation_complete": True,
@@ -201,10 +226,7 @@ class RefreshContinuationService:
         timestamp: datetime,
     ) -> dict[str, Any]:
         progress = parse_progress_json(run["progress"])
-        no_changes = bool(
-            progress.get("orchestration_no_changes")
-            or progress.get("detection_manifest_row_count", 0) == 0
-        )
+        no_changes = self._effective_no_changes(run)
         if progress.get("validation_complete"):
             return self._finalize_validated(run, company_id, timestamp, no_changes=no_changes)
 
@@ -224,6 +246,38 @@ class RefreshContinuationService:
         })
         self._write_progress(run["run_id"], progress)
         return self._finalize_validated(run, company_id, timestamp, no_changes=no_changes)
+
+    def _effective_no_changes(self, run: dict[str, Any]) -> bool:
+        """Truthful effective no-change, including mandatory watermark-second replay.
+
+        Manifest presence alone does not prove a business-data change: precision
+        replay re-reads the whole displayed watermark second and may produce
+        manifest rows whose fetched payloads are identical to the trusted base.
+        The durable source of truth is the fetch/apply mutation evidence plus
+        reconciliation removals, never elapsed time or the manifest count alone.
+        """
+        progress = parse_progress_json(run["progress"])
+        manifest_rows = int(progress.get("detection_manifest_row_count", 0))
+        if manifest_rows == 0:
+            return True
+        if not progress.get("fetch_apply_complete"):
+            return False
+        with self.pg.engine.connect() as conn:
+            row = conn.execute(text("""
+                SELECT COUNT(*) AS total,
+                       COUNT(*) FILTER (
+                           WHERE apply_status IN ('INSERTED', 'UPDATED', 'MISSING_AT_FETCH')
+                       ) AS mutated
+                FROM ct_fetch_apply_evidence
+                WHERE run_id = CAST(:run_id AS UUID)
+            """), {"run_id": run["run_id"]}).mappings().one()
+        if int(row["total"]) == 0:
+            return False
+        if int(row["mutated"]) > 0:
+            return False
+        if int(progress.get("reconciliation_records_removed", 0)) > 0:
+            return False
+        return True
 
     def _finalize_validated(
         self, run: dict[str, Any], company_id: int, timestamp: datetime, *, no_changes: bool,
@@ -452,12 +506,14 @@ class RefreshContinuationService:
                 "Candidate change detection is not durably complete.",
                 requires_new_retry=True,
             )
+        manifest_rows = int(progress.get("detection_manifest_row_count", 0))
         if no_changes:
-            if int(progress.get("detection_manifest_row_count", 0)) != 0:
-                raise RefreshContinuationError(
-                    "Candidate no-change evidence contradicts the manifest row count.",
-                    requires_new_retry=True,
-                )
+            if manifest_rows > 0:
+                if not self._effective_no_changes(run):
+                    raise RefreshContinuationError(
+                        "Candidate no-change evidence contradicts durable mutation evidence.",
+                        requires_new_retry=True,
+                    )
             self._validate_pointer_unchanged(run, company_id)
             return
         if not progress.get("fetch_apply_complete"):

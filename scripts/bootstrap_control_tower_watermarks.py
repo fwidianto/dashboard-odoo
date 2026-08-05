@@ -43,19 +43,18 @@ def main() -> int:
 
     pg = PostgresClient()
     try:
-        result = bootstrap_watermarks_from_trusted_snapshot(pg, company_id=args.company_id)
+        try:
+            result = bootstrap_watermarks_from_trusted_snapshot(pg, company_id=args.company_id)
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
     finally:
         pg.close()
 
     print(json.dumps(result, indent=2, default=str))
     if result.get("pointer_moved") is not False or result.get("odoo_contacted") is not False:
-        print("FATAL: watermark adoption must not move the pointer or contact Odoo.")
+        print("FATAL: watermark adoption must not move the pointer or contact Odoo.", file=sys.stderr)
         return 1
-    if result.get("models_missing_evidence"):
-        print(
-            "WARNING: the trusted snapshot lacks approved model evidence for: "
-            + ", ".join(result["models_missing_evidence"])
-        )
     print("Watermark adoption completed. Odoo was not contacted and the trusted pointer is unchanged.")
     return 0
 

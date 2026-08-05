@@ -34,6 +34,7 @@ SQL_PATHS = (
     PROJECT_ROOT / "sql" / "13_control_tower_temuan_v01.sql",
 )
 REFRESH_LOCK_KEY = 8247135091
+RUN_CREATE_ADVISORY_LOCK_KEY = 8247135093
 DEFAULT_STALE_RUN_MINUTES = 30
 BENCHMARK_THRESHOLD_SECONDS = 30 * 60
 
@@ -542,14 +543,9 @@ class IncrementalRefreshCoordinator:
                 raise RefreshAlreadyRunning("A Control Tower refresh request is already active.")
             pg = self._pg_factory()
             try:
-                existing = find_active_durable_run(pg, company_id=company_id)
-                if existing:
-                    raise RefreshAlreadyRunning(
-                        "A Control Tower refresh run is already active for this company."
-                    )
                 from src.control_tower.refresh_state import RefreshRunStateService
                 state = RefreshRunStateService(pg)
-                run = state.create_run(
+                run = state.create_run_if_no_active(
                     company_id=company_id,
                     selected_domains=list(selected_domains),
                     requested_by=requested_by,
@@ -577,20 +573,26 @@ class IncrementalRefreshCoordinator:
         Only ``FAILED_TRANSIENT`` or ``INTERRUPTED`` runs are retryable.  The
         server selects the latest eligible run; the browser never submits an
         arbitrary run ID.  A permanent failure is never retried automatically.
+        The same atomic active-run exclusion applies to retry creation.
         """
         with self._state_lock:
             if self._thread and self._thread.is_alive():
                 raise RefreshAlreadyRunning("A Control Tower refresh request is already active.")
             pg = self._pg_factory()
             try:
-                from src.control_tower.refresh_state import RefreshRunStateService
+                from src.control_tower.refresh_state import (
+                    DURABLE_ACTIVE_STATES,
+                    RefreshRunStateService,
+                )
                 state = RefreshRunStateService(pg)
                 source = _latest_retryable_run(pg, company_id=company_id)
                 if source is None:
                     raise RefreshLifecycleError(
                         "No transient-failed or interrupted refresh run is eligible for retry."
                     )
-                retry = state.create_retry(source["run_id"], requested_by=requested_by)
+                retry = state.create_retry_if_no_active(
+                    source["run_id"], requested_by=requested_by, company_id=company_id,
+                )
                 run_id = retry["run_id"]
             finally:
                 pg.close()

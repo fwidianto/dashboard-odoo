@@ -266,11 +266,11 @@ class ReconciliationExecutionService:
                     requires_new_retry=True,
                 ) from exc
 
-        remaining = self._pending_count(run_id, company_id)
+        remaining = self.pending_count(run_id, company_id)
         totals["next_required_stage"] = "VALIDATING" if remaining == 0 else "RECONCILING"
         return totals
 
-    def _pending_count(self, run_id: str, company_id: int) -> int:
+    def pending_count(self, run_id: str, company_id: int) -> int:
         with self.pg.engine.connect() as conn:
             return int(conn.execute(text("""
                 SELECT COUNT(*) FROM ct_parent_reconciliation_queue

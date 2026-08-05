@@ -14,6 +14,10 @@ from src.control_tower.refresh import sanitize_diagnostic
 from src.control_tower.schema_guard import ensure_phase8_schema_ready
 
 REFRESH_STATES = ("REQUESTED", "PREPARING", "DETECTING_CHANGES", "FETCHING", "RECONCILING", "VALIDATING", "REFRESHING_DERIVED_DATA", "PUBLISHING", "SUCCEEDED", "SUCCEEDED_NO_CHANGES", "FAILED_TRANSIENT", "FAILED_PERMANENT", "INTERRUPTED", "ABORTED")
+DURABLE_ACTIVE_STATES = frozenset({
+    "REQUESTED", "PREPARING", "DETECTING_CHANGES", "FETCHING", "RECONCILING",
+    "VALIDATING", "REFRESHING_DERIVED_DATA", "PUBLISHING",
+})
 TERMINAL_STATES = frozenset({"SUCCEEDED", "SUCCEEDED_NO_CHANGES", "FAILED_TRANSIENT", "FAILED_PERMANENT", "INTERRUPTED", "ABORTED", "COMPLETED", "FAILED"})
 LEGACY_STATUS_PROJECTION = {"RUNNING": "FETCHING", "READY_FOR_PUBLISH": "PUBLISHING", "COMPLETED": "SUCCEEDED", "FAILED": "FAILED_PERMANENT", "ABORTED": "ABORTED"}
 FAILURE_CLASSES = frozenset({"TRANSIENT", "PERMANENT", "INTERRUPTED", "ABORTED"})
@@ -98,6 +102,48 @@ class RefreshRunStateService:
             """), {"run_id": run_id, "started_at": timestamp, "requested_at": timestamp, "company_id": company_id, "requested_by": requested_by, "retry_of": retry_of_run_id, "base": str(pointer) if pointer else None, "attempt": attempt, "domains": json.dumps(domains)})
         return {"run_id": run_id, "status": "REQUESTED", "company_id": company_id, "attempt": attempt}
 
+    def create_run_if_no_active(self, *, company_id: int, selected_domains: list[str], requested_by: Optional[str] = None, now: Optional[datetime] = None) -> dict[str, Any]:
+        """Atomically create one REQUESTED run only when no active durable run exists.
+
+        The active-run check and the run insert happen in one transaction-scoped
+        advisory lock, so two simultaneous start attempts cannot both create
+        active durable runs.  Raises ``RefreshAlreadyRunning`` when an active run
+        exists for the company.
+        """
+        from src.control_tower.contracts import resolve_domain_selection
+        from src.control_tower.refresh import RUN_CREATE_ADVISORY_LOCK_KEY, RefreshAlreadyRunning
+
+        run_id = str(uuid4())
+        timestamp = _utc(now)
+        domains = [domain.key for domain in resolve_domain_selection(selected_domains)]
+        with self.pg.engine.begin() as conn:
+            conn.execute(
+                text("SELECT pg_advisory_xact_lock(CAST(:lock_key AS BIGINT))"),
+                {"lock_key": RUN_CREATE_ADVISORY_LOCK_KEY},
+            )
+            active = conn.execute(text("""
+                SELECT run_id FROM ct_extraction_run
+                WHERE company_id = :company_id
+                  AND status = ANY(:states)
+                ORDER BY started_at DESC
+                LIMIT 1
+                FOR UPDATE
+            """), {"company_id": company_id, "states": list(DURABLE_ACTIVE_STATES)}).first()
+            if active:
+                raise RefreshAlreadyRunning(
+                    "A Control Tower refresh run is already active for this company."
+                )
+            pointer = conn.execute(text("SELECT run_id FROM ct_published_snapshot WHERE company_id = :company_id FOR UPDATE"), {"company_id": company_id}).scalar()
+            conn.execute(text("""
+                INSERT INTO ct_extraction_run
+                    (run_id, started_at, requested_at, status, stage, company_id, requested_by,
+                     retry_of_run_id, base_snapshot_run_id, attempt, selected_domains, progress)
+                VALUES (CAST(:run_id AS UUID), :started_at, :requested_at, 'REQUESTED', 'REQUESTED',
+                        :company_id, :requested_by, CAST(:retry_of AS UUID), CAST(:base AS UUID),
+                        1, CAST(:domains AS JSONB), '{}'::jsonb)
+            """), {"run_id": run_id, "started_at": timestamp, "requested_at": timestamp, "company_id": company_id, "requested_by": requested_by, "retry_of": None, "base": str(pointer) if pointer else None, "domains": json.dumps(domains)})
+        return {"run_id": run_id, "status": "REQUESTED", "company_id": company_id, "attempt": 1}
+
     def transition(self, run_id: str, target: str, *, failure_class: Optional[str] = None, error_message: Optional[str] = None, progress: Optional[dict[str, Any]] = None, now: Optional[datetime] = None) -> None:
         timestamp = _utc(now)
         serialized_progress = serialize_progress(progress) if progress is not None else None
@@ -160,6 +206,84 @@ class RefreshRunStateService:
             if not source:
                 raise ValueError("Refresh run was not found.")
             validate_retry_source_status(source["status"])
+            if isinstance(source["attempt"], bool) or not isinstance(source["attempt"], int) or source["attempt"] < 1:
+                raise ValueError("Retry source has an invalid attempt number.")
+            if not isinstance(source["selected_domains"], list) or not all(isinstance(domain, str) for domain in source["selected_domains"]):
+                raise ValueError("Retry source has malformed selected domains.")
+            if str(source["run_id"]) == new_id:
+                raise ValueError("A retry cannot reference itself.")
+            lineage = conn.execute(text("""
+                WITH RECURSIVE chain(run_id, retry_of_run_id, path, has_cycle) AS (
+                    SELECT run_id, retry_of_run_id, ARRAY[run_id], FALSE
+                    FROM ct_extraction_run WHERE run_id = CAST(:run_id AS UUID)
+                    UNION ALL
+                    SELECT parent.run_id, parent.retry_of_run_id,
+                           chain.path || parent.run_id,
+                           parent.run_id = ANY(chain.path)
+                    FROM ct_extraction_run parent JOIN chain
+                      ON parent.run_id = chain.retry_of_run_id
+                    WHERE NOT chain.has_cycle
+                ) SELECT COALESCE(bool_or(has_cycle), FALSE) FROM chain
+            """), {"run_id": run_id}).scalar()
+            missing_parent = conn.execute(text("""
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM ct_extraction_run child
+                    LEFT JOIN ct_extraction_run parent
+                      ON parent.run_id = child.retry_of_run_id
+                    WHERE child.run_id = CAST(:run_id AS UUID)
+                      AND child.retry_of_run_id IS NOT NULL
+                      AND parent.run_id IS NULL
+                )
+            """), {"run_id": run_id}).scalar()
+            if lineage or missing_parent:
+                raise ValueError("Retry lineage contains a cycle or malformed parent reference.")
+            conn.execute(text("""
+                INSERT INTO ct_extraction_run
+                    (run_id, started_at, requested_at, status, stage, company_id, requested_by,
+                     retry_of_run_id, base_snapshot_run_id, attempt, selected_domains, progress)
+                VALUES (CAST(:new_id AS UUID), :now, :now, 'REQUESTED', 'REQUESTED', :company_id, :requested_by,
+                        CAST(:source AS UUID), CAST(:base AS UUID), :attempt, CAST(:domains AS JSONB), '{}'::jsonb)
+            """), {"new_id": new_id, "now": timestamp, "company_id": source["company_id"], "requested_by": requested_by, "source": run_id, "base": str(source["base_snapshot_run_id"]) if source["base_snapshot_run_id"] else None, "attempt": source["attempt"] + 1, "domains": json.dumps(source["selected_domains"] or [])})
+        return {"run_id": new_id, "status": "REQUESTED", "company_id": source["company_id"], "attempt": source["attempt"] + 1, "retry_of_run_id": run_id}
+
+    def create_retry_if_no_active(self, run_id: str, *, requested_by: Optional[str] = None, now: Optional[datetime] = None, company_id: int | None = None) -> dict[str, Any]:
+        """Create one linked retry under the same atomic active-run exclusion.
+
+        The retry source is a terminal run (FAILED_TRANSIENT/INTERRUPTED), so it
+        never matches the active-state check; the advisory lock serializes retry
+        creation against ordinary run creation across processes.  Raises
+        ``RefreshAlreadyRunning`` when another active durable run exists.
+        """
+        from src.control_tower.refresh import RUN_CREATE_ADVISORY_LOCK_KEY, RefreshAlreadyRunning
+
+        new_id = str(uuid4())
+        timestamp = _utc(now)
+        with self.pg.engine.begin() as conn:
+            conn.execute(
+                text("SELECT pg_advisory_xact_lock(CAST(:lock_key AS BIGINT))"),
+                {"lock_key": RUN_CREATE_ADVISORY_LOCK_KEY},
+            )
+            source = conn.execute(text("SELECT run_id, company_id, status, attempt, selected_domains, base_snapshot_run_id FROM ct_extraction_run WHERE run_id = CAST(:run_id AS UUID) FOR UPDATE"), {"run_id": run_id}).mappings().first()
+            if not source:
+                raise ValueError("Refresh run was not found.")
+            validate_retry_source_status(source["status"])
+            resolved_company = int(source["company_id"]) if company_id is None else company_id
+            if int(source["company_id"]) != resolved_company:
+                raise ValueError("Retry source belongs to a different company.")
+            active = conn.execute(text("""
+                SELECT run_id FROM ct_extraction_run
+                WHERE company_id = :company_id
+                  AND status = ANY(:states)
+                  AND run_id <> CAST(:run_id AS UUID)
+                ORDER BY started_at DESC
+                LIMIT 1
+                FOR UPDATE
+            """), {"company_id": resolved_company, "states": list(DURABLE_ACTIVE_STATES), "run_id": run_id}).first()
+            if active:
+                raise RefreshAlreadyRunning(
+                    "A Control Tower refresh run is already active for this company."
+                )
             if isinstance(source["attempt"], bool) or not isinstance(source["attempt"], int) or source["attempt"] < 1:
                 raise ValueError("Retry source has an invalid attempt number.")
             if not isinstance(source["selected_domains"], list) or not all(isinstance(domain, str) for domain in source["selected_domains"]):

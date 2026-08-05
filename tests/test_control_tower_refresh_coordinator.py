@@ -8,10 +8,12 @@ snapshot, and the router endpoints.  Real Odoo is never contacted.
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+from threading import Barrier
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 
@@ -104,6 +106,46 @@ def _run_row(engine, run_id):
     return dict(row)
 
 
+def _enqueue_sets(engine, run_id, count, *, start_parent_id=7001):
+    """Insert `count` pending reconciliation sets attributed to the run."""
+    with engine.begin() as conn:
+        for offset in range(count):
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO ct_parent_reconciliation_queue
+                        (company_id, parent_model, parent_id, child_model, reason,
+                         source_run_id, generation, last_touched_at, created_at, updated_at)
+                    VALUES (3, 'sale.order', :parent_id, 'sale.order.line', 'changed_child_set',
+                            CAST(:run_id AS UUID), 1, :now, :now, :now)
+                    ON CONFLICT (company_id, parent_model, parent_id, child_model) DO UPDATE SET
+                        reason = EXCLUDED.reason, source_run_id = EXCLUDED.source_run_id,
+                        generation = ct_parent_reconciliation_queue.generation + 1,
+                        last_touched_at = EXCLUDED.last_touched_at,
+                        updated_at = EXCLUDED.updated_at,
+                        status = 'PENDING'
+                    """
+                ),
+                {"parent_id": start_parent_id + offset, "run_id": run_id, "now": STAMP},
+            )
+
+
+def _queue_counts(engine, run_id):
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT COUNT(*) AS total,
+                       COUNT(*) FILTER (WHERE status = 'COMPLETED') AS completed
+                FROM ct_parent_reconciliation_queue
+                WHERE source_run_id = CAST(:run_id AS UUID)
+                """
+            ),
+            {"run_id": run_id},
+        ).mappings().one()
+    return int(row["total"]), int(row["completed"])
+
+
 def _pointer(engine):
     with engine.connect() as conn:
         return conn.execute(
@@ -117,6 +159,43 @@ def _wm_statuses(engine):
             SELECT model, status FROM ct_control_tower_watermark WHERE company_id=3 ORDER BY model
         """)).mappings().all()
     return {row["model"]: row["status"] for row in rows}
+
+
+def _approved_models():
+    from src.control_tower.relation_extractor import MODEL_SPECS
+    return [spec.model for spec in MODEL_SPECS]
+
+
+def _seed_full_model_evidence(engine, *, models=None):
+    """Insert minimal trusted snapshot evidence for every required model."""
+    from src.control_tower.relation_extractor import MODEL_SPECS
+
+    models = models or [spec.model for spec in MODEL_SPECS]
+    with engine.begin() as conn:
+        for index, model in enumerate(models):
+            record_id = 700000 + index
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO public.ct_native_record_snapshot
+                        (extraction_run_id, model, record_id, document_number, state,
+                         company_id, company_name, write_date, payload, extracted_at)
+                    VALUES (CAST(:run_id AS UUID), :model, :record_id, :document_number,
+                            'sale', 3, 'PT Nobi Putra Angkasa', :write_date,
+                            CAST(:payload AS JSONB), :extracted_at)
+                    ON CONFLICT (extraction_run_id, model, record_id) DO NOTHING
+                    """
+                ),
+                {
+                    "run_id": PHASE7_BASE_RUN_ID,
+                    "model": model,
+                    "record_id": record_id,
+                    "document_number": f"{model}-evidence",
+                    "write_date": datetime(2026, 1, 1, 9, 55),
+                    "payload": json.dumps({"id": record_id, "name": f"{model}-evidence"}),
+                    "extracted_at": STAMP,
+                },
+            )
 
 
 def _make_active_durable_run(engine, status="REQUESTED"):
@@ -182,6 +261,44 @@ def test_coordinator_start_creates_run_and_accepts(engine, monkeypatch):
     assert row["requested_by"] == "admin"
 
 
+def _count_active_runs(engine):
+    with engine.connect() as conn:
+        return conn.execute(text("""
+            SELECT COUNT(*) FROM ct_extraction_run
+            WHERE company_id = 3 AND status IN (
+                'REQUESTED','PREPARING','DETECTING_CHANGES','FETCHING','RECONCILING',
+                'VALIDATING','REFRESHING_DERIVED_DATA','PUBLISHING'
+            )
+        """)).scalar()
+
+
+def test_atomic_single_active_run_creation_across_connections(engine, monkeypatch):
+    """Two simultaneous start attempts must create exactly one active run."""
+    barrier = Barrier(2)
+    outcomes = {}
+
+    def attempt(label):
+        coordinator = IncrementalRefreshCoordinator(postgres_factory=lambda: _TestPg(engine))
+        monkeypatch.setattr(coordinator, "_start_thread", lambda **kwargs: None)
+        barrier.wait(timeout=30)
+        try:
+            result = coordinator.start(requested_by=f"user-{label}", company_id=3, selected_domains=["commercial"])
+            outcomes[label] = ("ok", result["run_id"])
+        except Exception as exc:
+            outcomes[label] = ("error", type(exc).__name__)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(attempt, label) for label in ("a", "b")]
+        for future in futures:
+            future.result(timeout=60)
+
+    results = list(outcomes.values())
+    assert sum(1 for status, _ in results if status == "ok") == 1
+    assert sum(1 for status, _ in results if status == "error") == 1
+    assert any(name == "RefreshAlreadyRunning" for _, name in results if isinstance(name, str) and _ == "error")
+    assert _count_active_runs(engine) == 1
+
+
 def test_latest_retryable_run_requires_transient_or_interrupted(engine):
     transient = _make_active_durable_run(engine, status="FAILED_TRANSIENT")
     assert _latest_retryable_run(engine, company_id=3)["run_id"] == transient
@@ -222,21 +339,41 @@ def test_retry_rejects_when_no_eligible_run(engine, monkeypatch):
 # --- watermark bootstrap -----------------------------------------------------
 
 def test_bootstrap_watermarks_from_trusted_snapshot(engine):
+    _seed_full_model_evidence(engine)
     result = bootstrap_watermarks_from_trusted_snapshot(engine, company_id=3)
     assert result["published_run_id"] == PHASE7_BASE_RUN_ID
     assert result["pointer_moved"] is False
     assert result["odoo_contacted"] is False
-    assert "sale.order" in result["models_adopted"]
+    assert result["models_missing_evidence"] == []
     statuses = _wm_statuses(engine)
-    assert statuses.get("sale.order") == "READY"
+    for model in _approved_models():
+        assert statuses.get(model) == "READY"
     assert _pointer(engine) == PHASE7_BASE_RUN_ID
 
 
 def test_bootstrap_is_idempotent(engine):
+    _seed_full_model_evidence(engine)
     bootstrap_watermarks_from_trusted_snapshot(engine, company_id=3)
     first = bootstrap_watermarks_from_trusted_snapshot(engine, company_id=3)
     assert first["models_adopted"] == []
-    assert "sale.order" in first["models_already_ready"]
+    assert set(first["models_already_ready"]) == set(_approved_models())
+
+
+def test_bootstrap_missing_model_writes_nothing(engine):
+    """All-or-nothing: one missing model must leave all watermarks unwritten."""
+    _seed_full_model_evidence(engine)
+    # Remove evidence for one required model only.
+    with engine.begin() as conn:
+        conn.execute(
+            text("DELETE FROM ct_native_record_snapshot WHERE extraction_run_id = CAST(:run_id AS UUID) AND model = 'sale.order.line'"),
+            {"run_id": PHASE7_BASE_RUN_ID},
+        )
+    before = _wm_statuses(engine)
+    with pytest.raises(ValueError, match="sale.order.line"):
+        bootstrap_watermarks_from_trusted_snapshot(engine, company_id=3)
+    after = _wm_statuses(engine)
+    assert after == before
+    assert _pointer(engine) == PHASE7_BASE_RUN_ID
 
 
 def test_bootstrap_requires_published_pointer(engine):
@@ -338,6 +475,7 @@ def _user_session():
 
 
 def test_bootstrap_endpoint_admin_only(engine):
+    _seed_full_model_evidence(engine)
     app.dependency_overrides[service_dependency] = lambda: StubRefreshService(engine)
     try:
         status, _ = asyncio.run(_asgi_request(

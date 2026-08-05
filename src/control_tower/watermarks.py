@@ -262,6 +262,7 @@ def bootstrap_watermarks_from_trusted_snapshot(
             raise ValueError("The published trusted snapshot has malformed model counts.")
 
         tuples: list[tuple[str, datetime, int]] = []
+        missing: list[str] = []
         for model in models:
             row = conn.execute(text("""
                 SELECT MAX(write_date) AS max_write_date,
@@ -275,6 +276,7 @@ def bootstrap_watermarks_from_trusted_snapshot(
                   AND model = :model
             """), {"run_id": run["run_id"], "model": model}).mappings().first()
             if row is None or row["max_write_date"] is None:
+                missing.append(model)
                 continue
             write_date = row["max_write_date"]
             if isinstance(write_date, datetime) and write_date.tzinfo is None:
@@ -283,6 +285,11 @@ def bootstrap_watermarks_from_trusted_snapshot(
             record_id = validate_record_id(row["max_id"])
             tuples.append((model, watermark_displayed_second(write_date), record_id))
 
+        if missing:
+            raise ValueError(
+                "Watermark bootstrap requires trusted evidence for every required model; "
+                f"missing evidence for: {sorted(missing)}"
+            )
         if not tuples:
             raise ValueError("The published trusted snapshot contains no approved model evidence to adopt.")
 
@@ -316,7 +323,7 @@ def bootstrap_watermarks_from_trusted_snapshot(
         "published_run_id": run["run_id"],
         "models_adopted": adopted,
         "models_already_ready": already_ready,
-        "models_missing_evidence": [model for model in models if model not in adopted and model not in already_ready],
+        "models_missing_evidence": [],
         "pointer_moved": False,
         "odoo_contacted": False,
     }

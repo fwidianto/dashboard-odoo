@@ -227,6 +227,61 @@ def test_no_change_run_completes_to_succeeded_no_changes(engine):
     assert wm["sale.order"][2] == "READY"
 
 
+def test_replay_all_unchanged_finalizes_effective_no_change(engine):
+    """Mandatory watermark-second replay with identical payloads is no change.
+
+    A first refresh publishes the rows; the second refresh replays the full
+    displayed watermark second, re-fetches the same payloads (all UNCHANGED),
+    reconciles with no removals, and must finalize SUCCEEDED_NO_CHANGES without
+    publishing a replacement snapshot or running the production derived bundle.
+    """
+    _seed_watermarks(engine, COMMERCIAL_MODELS)
+    fake = FakeOdoo(_rows())
+
+    first = _create_run(engine, ["commercial"])
+    _orchestrate_to_boundary(engine, first, fake)
+    result1 = _continuation(engine).complete(run_id=first, company_id=3, odoo_client=fake, now=STAMP)
+    assert result1["current_state"] == "SUCCEEDED"
+    assert _pointer(engine) == first
+
+    second = _create_run(engine, ["commercial"])
+    _orchestrate_to_boundary(engine, second, fake)
+    assert _run_row(engine, second)["status"] == "RECONCILING"
+
+    before_pointer = _pointer(engine)
+    bad_bundle = ROOT / "tests" / "no_such_derived_bundle.sql"
+    result2 = _continuation(engine, sql_paths=(bad_bundle,)).complete(
+        run_id=second, company_id=3, odoo_client=fake, now=STAMP,
+    )
+    assert result2["current_state"] == "SUCCEEDED_NO_CHANGES"
+    assert result2["no_changes"] is True
+    row = _run_row(engine, second)
+    assert row["status"] == "SUCCEEDED_NO_CHANGES"
+    assert row["published_at"] is not None
+    assert _pointer(engine) == before_pointer == first
+    with engine.connect() as conn:
+        evidence = conn.execute(text("""
+            SELECT published_run_id::text FROM vw_ct_test_published_evidence
+        """)).mappings().first()
+    assert evidence["published_run_id"] == first
+
+
+def test_replay_with_mutation_still_publishes_changed(engine):
+    """Replay rows that mutate (state change) must still publish as changed."""
+    _seed_watermarks(engine, COMMERCIAL_MODELS)
+    changed = _rows()
+    changed["sale.order"][0] = dict(changed["sale.order"][0])
+    changed["sale.order"][0]["state"] = "cancel"
+    changed["sale.order"][0]["write_date"] = "2026-01-01 10:00:01"
+    fake = FakeOdoo(changed)
+
+    run = _create_run(engine, ["commercial"])
+    _orchestrate_to_boundary(engine, run, fake)
+    result = _continuation(engine).complete(run_id=run, company_id=3, odoo_client=fake, now=STAMP)
+    assert result["current_state"] == "SUCCEEDED"
+    assert _pointer(engine) == run
+
+
 def test_failure_during_reconciliation_keeps_pointer(engine):
     run = _create_run(engine, ["commercial"])
     _seed_watermarks(engine, COMMERCIAL_MODELS)
@@ -241,6 +296,76 @@ def test_failure_during_reconciliation_keeps_pointer(engine):
     assert _pointer(engine) == before_pointer
     assert _watermarks(engine) == before_wm
     assert _run_row(engine, run)["status"] in {"RECONCILING", "FAILED_TRANSIENT", "INTERRUPTED"}
+
+
+def _enqueue_many_sets(engine, run_id, count, start_parent=7001):
+    with engine.begin() as conn:
+        for offset in range(count):
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO ct_parent_reconciliation_queue
+                        (company_id, parent_model, parent_id, child_model, reason,
+                         source_run_id, generation, last_touched_at, created_at, updated_at)
+                    VALUES (3, 'sale.order', :parent_id, 'sale.order.line', 'changed_child_set',
+                            CAST(:run_id AS UUID), 1, :now, :now, :now)
+                    ON CONFLICT (company_id, parent_model, parent_id, child_model) DO UPDATE SET
+                        reason = EXCLUDED.reason, source_run_id = EXCLUDED.source_run_id,
+                        generation = ct_parent_reconciliation_queue.generation + 1,
+                        last_touched_at = EXCLUDED.last_touched_at,
+                        updated_at = EXCLUDED.updated_at,
+                        status = 'PENDING'
+                    """
+                ),
+                {"parent_id": start_parent + offset, "run_id": run_id, "now": STAMP},
+            )
+
+
+def _queue_status(engine, run_id):
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT status, COUNT(*) AS total
+            FROM ct_parent_reconciliation_queue
+            WHERE source_run_id = CAST(:run_id AS UUID)
+            GROUP BY status
+        """), {"run_id": run_id}).mappings().all()
+    return {row["status"]: int(row["total"]) for row in rows}
+
+
+def test_reconciliation_drains_all_pending_batches(engine):
+    """More than one claim batch (limit 100) must all reconcile before publish."""
+    run = _create_run(engine, ["commercial"])
+    _seed_watermarks(engine, COMMERCIAL_MODELS)
+    fake = FakeOdoo(_rows())
+    _orchestrate_to_boundary(engine, run, fake)
+    _enqueue_many_sets(engine, run, 105, start_parent=7001)
+    before_pointer = _pointer(engine)
+    before_wm = _watermarks(engine)
+
+    result = _continuation(engine).complete(run_id=run, company_id=3, odoo_client=fake, now=STAMP)
+    assert result["current_state"] == "SUCCEEDED"
+    status = _queue_status(engine, run)
+    assert status.get("COMPLETED", 0) >= 105
+    assert status.get("PENDING", 0) == 0
+    assert _pointer(engine) != before_pointer
+    assert _watermarks(engine) != before_wm
+
+
+def test_reconciliation_later_batch_failure_keeps_pointer(engine):
+    """A failure in a later reconciliation batch must not publish or move watermarks."""
+    run = _create_run(engine, ["commercial"])
+    _seed_watermarks(engine, COMMERCIAL_MODELS)
+    _orchestrate_to_boundary(engine, run, FakeOdoo(_rows()))
+    _enqueue_many_sets(engine, run, 105, start_parent=7001)
+    before_pointer = _pointer(engine)
+    before_wm = _watermarks(engine)
+
+    failing = FakeOdoo(_rows(), fail_model="sale.order.line")
+    with pytest.raises(RefreshContinuationError) as excinfo:
+        _continuation(engine).complete(run_id=run, company_id=3, odoo_client=failing, now=STAMP)
+    assert excinfo.value.requires_new_retry is True
+    assert _pointer(engine) == before_pointer
+    assert _watermarks(engine) == before_wm
 
 
 def test_failure_during_publication_keeps_pointer_and_watermarks(engine):
