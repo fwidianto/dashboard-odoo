@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 import pytest
 
 from src.api import DASHBOARD_SESSION_COOKIE, app
-from src.control_tower.refresh import RefreshAlreadyRunning
+from src.control_tower.refresh import RefreshAlreadyRunning, RefreshLifecycleError
 from src.control_tower.refresh_ui import refresh_ui_projection
 from src.control_tower.router import service_dependency
 from src.dashboard_auth import sign_dashboard_session
@@ -32,6 +32,7 @@ def _attempt(
     model_counts=None,
     error_message=None,
     duration_seconds=None,
+    trigger="manual",
 ):
     return {
         "run_id": "00000000-0000-4000-8000-000000000102",
@@ -43,7 +44,7 @@ def _attempt(
         "company_id": 3,
         "error_message": error_message,
         "model_counts": model_counts,
-        "trigger": "manual",
+        "trigger": trigger,
         "requested_by": "admin",
     }
 
@@ -70,8 +71,8 @@ def _health(**overrides):
     return health
 
 
-def _ui(health, coordinator=None, can_refresh=True):
-    return refresh_ui_projection(health, coordinator or {"active_request": False}, can_refresh)
+def _ui(health, coordinator=None, can_refresh=True, can_recover_stale=False):
+    return refresh_ui_projection(health, coordinator or {"active_request": False}, can_refresh, can_recover_stale)
 
 
 def test_reading_stage_uses_durable_started_at_and_no_fabricated_counts():
@@ -212,6 +213,7 @@ async def _asgi_request(method, path, cookies=None, body=b""):
 class StubRefreshService:
     def __init__(self, health_payload):
         self._health = health_payload
+        self.pg = "stub-pg"
 
     def health(self):
         return dict(self._health)
@@ -221,12 +223,13 @@ class StubRefreshService:
 
 
 class StubCoordinator:
-    def __init__(self, *, raise_conflict=False, start_result=None):
+    def __init__(self, *, raise_conflict=False, start_result=None, active=False):
         self.raise_conflict = raise_conflict
+        self.active = active
         self.start_result = start_result or {"job_id": "job-1", "status": "ACCEPTED", "company_id": 3}
 
     def status(self):
-        return {"active_request": False, "job_id": None, "last_result": None}
+        return {"active_request": self.active, "job_id": None, "last_result": None}
 
     def start(self, **kwargs):
         if self.raise_conflict:
@@ -333,5 +336,173 @@ def test_refresh_endpoint_exposes_ui_projection_fields(monkeypatch, field):
         ))
         assert status == 200
         assert field in json.loads(body)
+    finally:
+        app.dependency_overrides.pop(service_dependency, None)
+
+
+def _stale_health():
+    return _health(
+        latest_attempt=_attempt(status="RUNNING", started_at=NOW - timedelta(hours=2)),
+        latest_refresh_attempt_status="RUNNING",
+        latest_refresh_attempt_stale=True,
+        latest_failure_message="Refresh attempt exceeded the stale threshold; administrator recovery is required.",
+    )
+
+
+def _recovered_health():
+    return _health(
+        latest_attempt=_attempt(
+            status="ABORTED",
+            started_at=NOW - timedelta(hours=2),
+            trigger="recovery",
+        ),
+        latest_refresh_attempt_status="ABORTED",
+    )
+
+
+def test_stale_admin_can_recover_but_not_refresh():
+    ui = _ui(_stale_health(), can_refresh=False, can_recover_stale=True)
+    assert ui["status"] == "STALE"
+    assert ui["can_refresh"] is False
+    assert ui["can_recover_stale"] is True
+
+
+def test_stale_normal_user_cannot_recover():
+    ui = _ui(_stale_health(), can_refresh=False, can_recover_stale=False)
+    assert ui["status"] == "STALE"
+    assert ui["can_recover_stale"] is False
+
+
+def test_recovered_attempt_is_shown_truthfully():
+    ui = _ui(_recovered_health(), can_refresh=True, can_recover_stale=False)
+    assert ui["status"] == "RECOVERED"
+    assert ui["stage_label"] == "Pembaruan lama ditutup"
+    assert "Anda dapat memulai Refresh Data kembali." in ui["message"]
+    assert ui["can_refresh"] is True
+    assert ui["can_recover_stale"] is False
+    assert ui["trusted"]["timestamp"] == TRUSTED_AT
+
+
+def test_recovered_state_requires_recovery_trigger():
+    aborted = _health(
+        latest_attempt=_attempt(status="ABORTED", trigger="manual"),
+        latest_refresh_attempt_status="ABORTED",
+    )
+    ui = _ui(aborted, can_refresh=True)
+    assert ui["status"] == "FAILED"
+    assert ui["stage_label"] == "Gagal"
+
+
+def _stale_service():
+    return StubRefreshService(_stale_health())
+
+
+def _post_recover(cookies):
+    return asyncio.run(_asgi_request(
+        "POST", "/api/control-tower/refresh/recover", cookies=cookies
+    ))
+
+
+def test_recover_unauthenticated_rejected():
+    status, _ = _post_recover(None)
+    assert status == 401
+
+
+def test_recover_non_admin_forbidden():
+    status, _ = _post_recover({DASHBOARD_SESSION_COOKIE: _user_session()})
+    assert status == 403
+
+
+def test_recover_without_stale_attempt_conflicts():
+    service = StubRefreshService(_health())
+    app.dependency_overrides[service_dependency] = lambda: service
+    try:
+        status, body = _post_recover({DASHBOARD_SESSION_COOKIE: _admin_session()})
+        assert status == 409
+        assert "no stale" in json.loads(body)["detail"].lower()
+    finally:
+        app.dependency_overrides.pop(service_dependency, None)
+
+
+def test_recover_blocked_while_coordinator_active():
+    import src.control_tower.router as router_module
+
+    monkeypatch = __import__("pytest").MonkeyPatch()
+    monkeypatch.setattr(router_module, "REFRESH_COORDINATOR", StubCoordinator(active=True))
+    app.dependency_overrides[service_dependency] = lambda: _stale_service()
+    try:
+        status, body = _post_recover({DASHBOARD_SESSION_COOKIE: _admin_session()})
+        assert status == 409
+        assert "already running" in json.loads(body)["detail"].lower()
+    finally:
+        monkeypatch.undo()
+        app.dependency_overrides.pop(service_dependency, None)
+
+
+def test_recover_uses_server_selected_stale_run_and_delegates(monkeypatch):
+    import src.control_tower.router as router_module
+
+    calls = {}
+
+    def fake_recover(pg, **kwargs):
+        calls["pg"] = pg
+        calls.update(kwargs)
+        return {"run_id": kwargs["run_id"], "status": "ABORTED"}
+
+    monkeypatch.setattr(router_module, "recover_stale_run", fake_recover)
+    monkeypatch.setattr(router_module, "REFRESH_COORDINATOR", StubCoordinator())
+    app.dependency_overrides[service_dependency] = lambda: _stale_service()
+    try:
+        status, body = _post_recover({DASHBOARD_SESSION_COOKIE: _admin_session()})
+        assert status == 200
+        payload = json.loads(body)
+        assert payload["status"] == "RECOVERED"
+        assert payload["run_id"] == "00000000-0000-4000-8000-000000000102"
+        assert payload["trusted_run_id"] == TRUSTED_RUN_ID
+        assert calls["run_id"] == "00000000-0000-4000-8000-000000000102"
+        assert calls["requested_by"] == "admin"
+        assert calls["company_id"] == 3
+        assert calls["pg"] == "stub-pg"
+        assert "Administrator closed stale refresh" in calls["reason"]
+    finally:
+        app.dependency_overrides.pop(service_dependency, None)
+
+
+def test_recover_lifecycle_conflict_returns_sanitized_409(monkeypatch):
+    import src.control_tower.router as router_module
+
+    def fake_recover(pg, **kwargs):
+        raise RefreshLifecycleError("connection refused: postgresql://user:secret@host:5432/db")
+
+    monkeypatch.setattr(router_module, "recover_stale_run", fake_recover)
+    monkeypatch.setattr(router_module, "REFRESH_COORDINATOR", StubCoordinator())
+    app.dependency_overrides[service_dependency] = lambda: _stale_service()
+    try:
+        status, body = _post_recover({DASHBOARD_SESSION_COOKIE: _admin_session()})
+        assert status == 409
+        detail = json.loads(body)["detail"]
+        assert "postgresql://[redacted]" in detail
+        assert "secret" not in detail
+    finally:
+        app.dependency_overrides.pop(service_dependency, None)
+
+
+def test_status_after_recovery_allows_refresh(monkeypatch):
+    import src.control_tower.router as router_module
+
+    recovered = StubRefreshService(_recovered_health())
+    app.dependency_overrides[service_dependency] = lambda: recovered
+    monkeypatch.setattr(router_module, "REFRESH_COORDINATOR", StubCoordinator())
+    try:
+        status, body = asyncio.run(_asgi_request(
+            "GET", "/api/control-tower/refresh", cookies={DASHBOARD_SESSION_COOKIE: _admin_session()}
+        ))
+        assert status == 200
+        payload = json.loads(body)
+        assert payload["stale_attempt"] is False
+        assert payload["can_recover_stale"] is False
+        assert payload["can_refresh"] is True
+        assert payload["refresh_ui"]["status"] == "RECOVERED"
+        assert payload["latest_trusted_refresh_at"] == TRUSTED_AT
     finally:
         app.dependency_overrides.pop(service_dependency, None)

@@ -13,6 +13,10 @@ assert.match(page, /data-ct-refresh-trusted/);
 assert.match(page, /data-ct-refresh-elapsed/);
 assert.match(page, /data-ct-refresh-counts/);
 assert.match(page, /data-ct-refresh-minimize/);
+assert.match(page, /data-ct-refresh-recover/);
+assert.match(page, /data-ct-refresh-recover-action/);
+assert.match(page, /Tutup percobaan lama/);
+assert.match(page, /Percobaan pembaruan yang terhenti akan ditutup\./);
 assert.match(page, /Data terakhir diperbarui/);
 assert.match(page, /<button class="ct-refresh-compact" data-ct-refresh="" type="button" hidden>Refresh Data<\/button>/);
 
@@ -20,6 +24,10 @@ assert.match(page, /<button class="ct-refresh-compact" data-ct-refresh="" type="
 assert.match(shell, /function refreshPanelState/);
 assert.match(shell, /function startRefreshPolling/);
 assert.match(shell, /async function requestRefresh/);
+assert.match(shell, /async function requestRecoverStale/);
+assert.match(shell, /\/api\/control-tower\/refresh\/recover/);
+assert.match(shell, /refreshRecoverAction\.disabled = true/);
+assert.match(shell, /refreshRecover\.hidden = !\(state\.canRecoverStale && state\.panelState === "STALE"\)/);
 assert.match(shell, /refreshReloadEvidence/);
 assert.match(shell, /refreshButton\.hidden = !state\.canRefresh \|\| state\.active/);
 assert.match(shell, /Pembaruan Odoo gagal\. Control Tower tetap menampilkan snapshot terakhir yang berhasil\./);
@@ -104,5 +112,43 @@ assert.equal(noTrust.trustedText, 'Belum ada snapshot terpercaya');
 const unavailable = refreshPanelState(null);
 assert.equal(unavailable.panelState, 'UNAVAILABLE');
 assert.equal(unavailable.canRefresh, false);
+
+// Stale administrator sees the recovery action and no Refresh Data.
+const staleAdmin = refreshPanelState({
+  refresh_ui: {
+    status: 'STALE',
+    stage_label: 'Pembaruan terhenti',
+    outcome: 'INTERRUPTED',
+    can_recover_stale: true,
+    can_refresh: false,
+    latest_attempt: { error_message: 'Refresh attempt exceeded the stale threshold' }
+  }
+});
+assert.equal(staleAdmin.panelState, 'STALE');
+assert.equal(staleAdmin.canRecoverStale, true);
+assert.equal(staleAdmin.canRefresh, false);
+
+// Stale normal user receives no enabled recovery action.
+const staleUser = refreshPanelState({
+  refresh_ui: { status: 'STALE', stage_label: 'Pembaruan terhenti', can_recover_stale: false, can_refresh: false }
+});
+assert.equal(staleUser.canRecoverStale, false);
+assert.equal(staleUser.canRefresh, false);
+
+// Recovered state is truthful and reveals Refresh Data.
+const recovered = refreshPanelState({
+  refresh_ui: {
+    status: 'RECOVERED',
+    stage_label: 'Pembaruan lama ditutup',
+    outcome: 'RECOVERED',
+    can_recover_stale: false,
+    can_refresh: true,
+    trusted: { timestamp: '2026-08-05T01:00:00Z' }
+  }
+});
+assert.equal(recovered.panelState, 'RECOVERED');
+assert.equal(recovered.stageLabel, 'Pembaruan lama ditutup');
+assert.equal(recovered.canRecoverStale, false);
+assert.equal(recovered.canRefresh, true);
 
 console.log('Control Tower refresh UI static contracts passed');

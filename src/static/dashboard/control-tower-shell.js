@@ -14,6 +14,8 @@
   const refreshTrusted = document.querySelector("[data-ct-refresh-trusted]");
   const refreshElapsed = document.querySelector("[data-ct-refresh-elapsed]");
   const refreshCounts = document.querySelector("[data-ct-refresh-counts]");
+  const refreshRecover = document.querySelector("[data-ct-refresh-recover]");
+  const refreshRecoverAction = document.querySelector("[data-ct-refresh-recover-action]");
   const params = new URLSearchParams(window.location.search);
   let refreshReloadEvidence = null;
   let refreshPollTimer = 0;
@@ -120,6 +122,7 @@
     else if (status === "DONE") panelState = outcome === "SUCCESS" ? "SUCCESS" : "IDLE";
     else if (status === "FAILED") panelState = "FAILED";
     else if (status === "STALE") panelState = "STALE";
+    else if (status === "RECOVERED") panelState = "RECOVERED";
     else if (status === "NO_COMPLETED_EXTRACTION") panelState = "NO_COMPLETED_EXTRACTION";
     let message = ui.message || "";
     if (panelState === "FAILED" && !message) message = failureMessage;
@@ -138,7 +141,8 @@
       elapsedText: formatElapsed(ui.elapsed_seconds),
       countsText,
       active: Boolean(ui.active),
-      canRefresh: Boolean(ui.can_refresh)
+      canRefresh: Boolean(ui.can_refresh),
+      canRecoverStale: Boolean(ui.can_recover_stale)
     };
   }
 
@@ -162,6 +166,7 @@
     if (refreshElapsed) refreshElapsed.textContent = state.elapsedText;
     if (refreshCounts) refreshCounts.textContent = state.countsText || "—";
     if (refreshButton) refreshButton.hidden = !state.canRefresh || state.active;
+    if (refreshRecover) refreshRecover.hidden = !(state.canRecoverStale && state.panelState === "STALE");
     return state;
   }
 
@@ -297,6 +302,37 @@
     }
   }
 
+  async function requestRecoverStale() {
+    if (!refreshRecoverAction) return;
+    const proceed = window.confirm(
+      "Percobaan pembaruan lama akan ditutup. Snapshot terpercaya tidak akan diubah. Lanjutkan?"
+    );
+    if (!proceed) return;
+    refreshRecoverAction.disabled = true;
+    if (refreshStage) refreshStage.textContent = "Menutup percobaan pembaruan lama";
+    if (refreshMessage) refreshMessage.textContent = "Memproses penutupan percobaan pembaruan lama...";
+    try {
+      const response = await fetch("/api/control-tower/refresh/recover", {
+        method: "POST",
+        headers: { Accept: "application/json" },
+        credentials: "same-origin"
+      });
+      let payload = {};
+      try { payload = await response.json(); } catch { /* response body is optional */ }
+      if (!response.ok) throw new Error(payload.detail || `Permintaan gagal (${response.status}).`);
+      await loadRefreshStatus();
+    } catch (error) {
+      if (refreshPanel) {
+        refreshPanel.dataset.state = "FAILED";
+        refreshPanel.hidden = false;
+      }
+      if (refreshStage) refreshStage.textContent = "Gagal menutup percobaan pembaruan";
+      if (refreshMessage) refreshMessage.textContent = error.message || "Status pembaruan tidak dapat dibaca.";
+    } finally {
+      refreshRecoverAction.disabled = false;
+    }
+  }
+
   if (freshness) {
     loadRefreshStatus().then((payload) => {
       const state = refreshPanelState(payload || {});
@@ -305,6 +341,7 @@
     });
   }
   refreshButton?.addEventListener("click", requestRefresh);
+  refreshRecoverAction?.addEventListener("click", requestRecoverStale);
   refreshMinimize?.addEventListener("click", () => {
     if (!refreshPanel) return;
     setRefreshPanelMinimized(!refreshPanel.classList.contains("is-minimized"));

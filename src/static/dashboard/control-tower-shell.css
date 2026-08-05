@@ -2210,6 +2210,58 @@ body[data-ct-page="control-tower"] .ct-freshness-time {
   color: var(--ct-success);
 }
 
+.ct-refresh-recover {
+  display: grid;
+  gap: 8px;
+  margin-top: 2px;
+  border: 1px dashed var(--ct-border-strong);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--ct-surface-subtle);
+}
+
+.ct-refresh-recover-copy {
+  margin: 0;
+  color: var(--ct-text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.ct-refresh-recover-action {
+  justify-self: start;
+  min-height: 32px;
+  border: 1px solid var(--ct-critical);
+  border-radius: 8px;
+  padding: 0 12px;
+  background: var(--ct-critical-soft);
+  color: var(--ct-critical);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ct-refresh-recover-action:hover,
+.ct-refresh-recover-action:focus-visible {
+  border-color: var(--ct-critical);
+  background: var(--ct-critical);
+  color: var(--ct-surface);
+}
+
+.ct-refresh-recover-action:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.ct-refresh-panel[data-state="RECOVERED"] .ct-refresh-stage {
+  color: var(--ct-success);
+}
+
+.ct-refresh-panel[data-state="RECOVERED"] .ct-refresh-note {
+  border-left-color: var(--ct-success);
+  background: var(--ct-success-soft);
+  color: var(--ct-success);
+}
+
 @media (max-width: 760px) {
   .ct-refresh-panel {
     top: 70px;

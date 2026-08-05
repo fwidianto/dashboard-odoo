@@ -7,7 +7,13 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 
-from src.control_tower.refresh import REFRESH_COORDINATOR, RefreshAlreadyRunning
+from src.control_tower.refresh import (
+    REFRESH_COORDINATOR,
+    RefreshAlreadyRunning,
+    RefreshLifecycleError,
+    recover_stale_run,
+    sanitize_diagnostic,
+)
 from src.control_tower.refresh_ui import refresh_ui_projection
 from src.control_tower.service import (
     COMPANY_ID,
@@ -62,10 +68,18 @@ def control_tower_refresh_status(
     stale_attempt = bool(health.get("latest_refresh_attempt_stale"))
     active = coordinator["active_request"] or (attempt_status in {"RUNNING", "READY_FOR_PUBLISH"} and not stale_attempt)
     can_refresh = is_admin(request) and not candidate_pending and not stale_attempt
+    latest_attempt = health.get("latest_attempt") or {}
+    can_recover_stale = (
+        is_admin(request)
+        and bool(stale_attempt)
+        and not coordinator["active_request"]
+        and bool(latest_attempt.get("run_id"))
+    )
     return {
         "company_id": COMPANY_ID,
         "active": active,
         "can_refresh": can_refresh,
+        "can_recover_stale": can_recover_stale,
         "candidate_pending": candidate_pending,
         "stale_attempt": stale_attempt,
         "coordinator": coordinator,
@@ -76,7 +90,58 @@ def control_tower_refresh_status(
         "serving_older_trusted_snapshot": health.get("serving_older_trusted_snapshot"),
         "freshness": health.get("freshness"),
         "freshness_classification": health.get("freshness_classification"),
-        "refresh_ui": refresh_ui_projection(health, coordinator, can_refresh),
+        "refresh_ui": refresh_ui_projection(health, coordinator, can_refresh, can_recover_stale),
+    }
+
+
+@router.post("/refresh/recover", status_code=status.HTTP_200_OK)
+def recover_stale_control_tower_refresh(
+    request: Request,
+    _: None = Depends(require_dashboard_admin),
+    service: ControlTowerService = Depends(service_dependency),
+):
+    coordinator = REFRESH_COORDINATOR.status()
+    if coordinator["active_request"]:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A Control Tower refresh is already running.",
+        )
+
+    health = service.health()
+    latest_attempt = health.get("latest_attempt") or {}
+    stale_attempt = bool(health.get("latest_refresh_attempt_stale"))
+    if not stale_attempt:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No stale refresh attempt is available to close.",
+        )
+    run_id = latest_attempt.get("run_id")
+    if not run_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The latest refresh attempt has no usable run identifier.",
+        )
+    payload = session_payload(request) or {}
+    requested_by = str(payload.get("dashboard_username") or "administrator")[:80]
+    try:
+        result = recover_stale_run(
+            service.pg,
+            run_id=run_id,
+            requested_by=requested_by,
+            reason="Administrator closed stale refresh from Control Tower",
+            company_id=COMPANY_ID,
+        )
+    except RefreshLifecycleError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=sanitize_diagnostic(str(exc)),
+        ) from exc
+
+    return {
+        "status": "RECOVERED",
+        "run_id": run_id,
+        "attempt_status": result.get("status"),
+        "trusted_run_id": health.get("latest_trusted_run_id"),
     }
 
 

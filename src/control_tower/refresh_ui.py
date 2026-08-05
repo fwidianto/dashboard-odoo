@@ -15,6 +15,13 @@ FAILURE_MESSAGE = (
     "Pembaruan Odoo gagal. Control Tower tetap menampilkan snapshot terakhir yang berhasil."
 )
 
+RECOVERED_STAGE_LABEL = "Pembaruan lama ditutup"
+RECOVERED_MESSAGE = (
+    "Percobaan pembaruan lama telah ditutup. "
+    "Snapshot terpercaya tetap digunakan. "
+    "Anda dapat memulai Refresh Data kembali."
+)
+
 
 def _parse_timestamp(value: Any) -> Optional[datetime]:
     if not value:
@@ -46,6 +53,7 @@ def refresh_ui_projection(
     health: Mapping[str, Any],
     coordinator: Mapping[str, Any],
     can_refresh: bool,
+    can_recover_stale: bool = False,
 ) -> dict[str, Any]:
     """Map durable refresh evidence to one stable user-facing payload."""
     attempt = health.get("latest_attempt") or {}
@@ -58,6 +66,10 @@ def refresh_ui_projection(
     trusted_at = health.get("latest_trusted_completed_at")
     trusted_run_id = health.get("latest_trusted_run_id")
     failure_message = health.get("latest_failure_message")
+    recovered = (
+        status == "ABORTED"
+        and attempt.get("trigger") == "recovery"
+    )
 
     counts = None
     model_counts = attempt.get("model_counts")
@@ -87,6 +99,11 @@ def refresh_ui_projection(
             "Pembaruan terhenti karena melewati batas waktu. "
             "Snapshot terpercaya tetap ditampilkan."
         )
+    elif recovered:
+        stage = "RECOVERED"
+        stage_label = RECOVERED_STAGE_LABEL
+        outcome = "RECOVERED"
+        message = RECOVERED_MESSAGE
     elif status == "COMPLETED":
         stage = "DONE"
         stage_label = "Selesai"
@@ -109,6 +126,7 @@ def refresh_ui_projection(
         "message": message,
         "active": active,
         "can_refresh": bool(can_refresh),
+        "can_recover_stale": bool(can_recover_stale),
         "stale_attempt": stale,
         "candidate_pending": candidate_pending,
         "elapsed_seconds": (
@@ -127,6 +145,8 @@ def refresh_ui_projection(
                 "finished_at": attempt.get("finished_at")
                 or attempt.get("completed_at"),
                 "error_message": attempt.get("error_message"),
+                "trigger": attempt.get("trigger"),
+                "run_id": attempt.get("run_id"),
             }
             if attempt
             else None
