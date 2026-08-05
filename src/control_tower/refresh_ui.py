@@ -22,6 +22,34 @@ RECOVERED_MESSAGE = (
     "Anda dapat memulai Refresh Data kembali."
 )
 
+NO_CHANGE_STAGE_LABEL = "Tidak ada perubahan"
+NO_CHANGE_MESSAGE = (
+    "Tidak ada perubahan terdeteksi di Odoo. "
+    "Snapshot terpercaya tetap digunakan."
+)
+
+_ACTIVE_STATES = frozenset({
+    "REQUESTED", "PREPARING", "DETECTING_CHANGES", "FETCHING", "RECONCILING",
+    "VALIDATING", "REFRESHING_DERIVED_DATA", "PUBLISHING", "RUNNING",
+    "READY_FOR_PUBLISH",
+})
+_FAILED_STATES = frozenset({
+    "FAILED", "FAILED_TRANSIENT", "FAILED_PERMANENT", "INTERRUPTED", "ABORTED",
+})
+
+_STAGE_LABEL_BY_STATE = {
+    "REQUESTED": "Menyiapkan pembaruan",
+    "PREPARING": "Menyiapkan pembaruan",
+    "DETECTING_CHANGES": "Memeriksa perubahan",
+    "FETCHING": "Membaca perubahan dari Odoo",
+    "RECONCILING": "Menyesuaikan data terkait",
+    "VALIDATING": "Memvalidasi hasil",
+    "REFRESHING_DERIVED_DATA": "Memperbarui data turunan",
+    "PUBLISHING": "Menerbitkan hasil",
+    "RUNNING": "Membaca perubahan dari Odoo",
+    "READY_FOR_PUBLISH": "Memeriksa hasil",
+}
+
 
 def _parse_timestamp(value: Any) -> Optional[datetime]:
     if not value:
@@ -54,6 +82,7 @@ def refresh_ui_projection(
     coordinator: Mapping[str, Any],
     can_refresh: bool,
     can_recover_stale: bool = False,
+    can_retry: bool = False,
 ) -> dict[str, Any]:
     """Map durable refresh evidence to one stable user-facing payload."""
     attempt = health.get("latest_attempt") or {}
@@ -61,7 +90,7 @@ def refresh_ui_projection(
     stale = bool(health.get("latest_refresh_attempt_stale"))
     candidate_pending = bool(health.get("latest_refresh_candidate_pending"))
     active = bool(coordinator.get("active_request")) or (
-        status in {"RUNNING", "READY_FOR_PUBLISH"} and not stale
+        status in _ACTIVE_STATES and not stale
     )
     trusted_at = health.get("latest_trusted_completed_at")
     trusted_run_id = health.get("latest_trusted_run_id")
@@ -84,12 +113,12 @@ def refresh_ui_projection(
     outcome = None
     message = None
     if active:
-        if status == "READY_FOR_PUBLISH":
+        if status == "READY_FOR_PUBLISH" or status == "PUBLISHING":
             stage = "CHECKING"
             stage_label = "Memeriksa hasil"
         else:
             stage = "READING"
-            stage_label = "Membaca perubahan dari Odoo"
+            stage_label = _STAGE_LABEL_BY_STATE.get(status, "Membaca perubahan dari Odoo")
         message = "Pembaruan sedang berjalan. Control Tower tetap menampilkan snapshot terpercaya."
     elif stale:
         stage = "STALE"
@@ -104,16 +133,21 @@ def refresh_ui_projection(
         stage_label = RECOVERED_STAGE_LABEL
         outcome = "RECOVERED"
         message = RECOVERED_MESSAGE
-    elif status == "COMPLETED":
+    elif status in {"COMPLETED", "SUCCEEDED"}:
         stage = "DONE"
         stage_label = "Selesai"
         outcome = "SUCCESS"
         message = "Pembaruan selesai. Control Tower menampilkan snapshot terbaru yang berhasil."
-    elif status in {"FAILED", "ABORTED"}:
+    elif status == "SUCCEEDED_NO_CHANGES":
+        stage = "DONE"
+        stage_label = NO_CHANGE_STAGE_LABEL
+        outcome = "NO_CHANGES"
+        message = NO_CHANGE_MESSAGE
+    elif status in _FAILED_STATES:
         stage = "FAILED"
         stage_label = "Gagal"
         outcome = "FAILED"
-        message = FAILURE_MESSAGE
+        message = failure_message or FAILURE_MESSAGE
     elif not trusted_at:
         stage = "NO_COMPLETED_EXTRACTION"
         stage_label = "Belum ada snapshot"
@@ -127,6 +161,7 @@ def refresh_ui_projection(
         "active": active,
         "can_refresh": bool(can_refresh),
         "can_recover_stale": bool(can_recover_stale),
+        "can_retry": bool(can_retry),
         "stale_attempt": stale,
         "candidate_pending": candidate_pending,
         "elapsed_seconds": (

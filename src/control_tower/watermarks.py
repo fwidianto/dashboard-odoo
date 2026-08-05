@@ -145,7 +145,7 @@ class ControlTowerWatermarkStore:
             raise ValueError("No-change watermark requires the trusted base snapshot to remain current.")
         return run, pointer
 
-    def advance_after_publication(self, *, company_id: int, model: str, run_id: str, write_date: datetime, record_id: int, overlap_seconds: int = 0, status: str = "READY", now: Optional[datetime] = None) -> None:
+    def advance_after_publication(self, *, company_id: int, model: str, run_id: str, write_date: datetime, record_id: int, overlap_seconds: int = 0, status: str = "READY", now: Optional[datetime] = None, connection=None) -> None:
         validate_watermark_identity(company_id, model)
         write_date = normalize_utc(write_date)
         validate_record_id(record_id)
@@ -153,43 +153,170 @@ class ControlTowerWatermarkStore:
         if status not in VALID_WATERMARK_STATUSES or status != "READY":
             raise ValueError("Published watermark advancement requires status READY.")
         checked_at = normalize_utc(now) if now else datetime.now(timezone.utc)
+        if connection is not None:
+            self._advance_after_publication(
+                connection, company_id=company_id, model=model, run_id=run_id,
+                write_date=write_date, record_id=record_id, overlap_seconds=overlap_seconds,
+                checked_at=checked_at,
+            )
+            return
         with self.pg.engine.begin() as conn:
-            self._published_run(conn, company_id, run_id)
-            current = conn.execute(text("SELECT company_id, model, last_successful_write_date, last_successful_id, overlap_seconds, published_run_id, checked_at, status, created_at, updated_at FROM ct_control_tower_watermark WHERE company_id = :company_id AND model = :model FOR UPDATE"), {"company_id": company_id, "model": model}).mappings().first()
-            if current:
-                current = validate_watermark_row(dict(current), company_id=company_id, model=model)
-            if current and current["last_successful_write_date"] is not None:
-                old = (current["last_successful_write_date"], current["last_successful_id"])
-                comparison = compare_tuples((write_date, record_id), old)
-                if comparison < 0:
-                    raise ValueError("Watermark advancement would move backward.")
+            self._advance_after_publication(
+                conn, company_id=company_id, model=model, run_id=run_id,
+                write_date=write_date, record_id=record_id, overlap_seconds=overlap_seconds,
+                checked_at=checked_at,
+            )
+
+    def _advance_after_publication(
+        self, conn, *, company_id: int, model: str, run_id: str,
+        write_date: datetime, record_id: int, overlap_seconds: int, checked_at: datetime,
+    ) -> None:
+        self._published_run(conn, company_id, run_id)
+        current = conn.execute(text("SELECT company_id, model, last_successful_write_date, last_successful_id, overlap_seconds, published_run_id, checked_at, status, created_at, updated_at FROM ct_control_tower_watermark WHERE company_id = :company_id AND model = :model FOR UPDATE"), {"company_id": company_id, "model": model}).mappings().first()
+        if current:
+            current = validate_watermark_row(dict(current), company_id=company_id, model=model)
+        if current and current["last_successful_write_date"] is not None:
+            old = (current["last_successful_write_date"], current["last_successful_id"])
+            comparison = compare_tuples((write_date, record_id), old)
+            if comparison < 0:
+                raise ValueError("Watermark advancement would move backward.")
+        conn.execute(text("""
+            INSERT INTO ct_control_tower_watermark
+                (company_id, model, last_successful_write_date, last_successful_id, overlap_seconds, published_run_id, checked_at, status, created_at, updated_at)
+            VALUES (:company_id, :model, :write_date, :record_id, :overlap_seconds, CAST(:run_id AS UUID), :checked_at, :status, :checked_at, :checked_at)
+            ON CONFLICT (company_id, model) DO UPDATE SET
+                last_successful_write_date = EXCLUDED.last_successful_write_date,
+                last_successful_id = EXCLUDED.last_successful_id,
+                overlap_seconds = EXCLUDED.overlap_seconds,
+                published_run_id = EXCLUDED.published_run_id,
+                checked_at = EXCLUDED.checked_at, status = EXCLUDED.status, updated_at = EXCLUDED.updated_at
+            WHERE (ct_control_tower_watermark.last_successful_write_date IS NULL
+                OR (EXCLUDED.last_successful_write_date, EXCLUDED.last_successful_id)
+                   >= (ct_control_tower_watermark.last_successful_write_date, ct_control_tower_watermark.last_successful_id))
+        """), {"company_id": company_id, "model": model, "write_date": write_date, "record_id": record_id, "overlap_seconds": overlap_seconds, "run_id": run_id, "checked_at": checked_at, "status": "READY"})
+
+    def record_no_change_checked_at(self, *, company_id: int, model: str, run_id: str, now: Optional[datetime] = None, connection=None) -> None:
+        validate_watermark_identity(company_id, model)
+        checked_at = normalize_utc(now) if now else datetime.now(timezone.utc)
+        if connection is not None:
+            self._record_no_change_checked_at(
+                connection, company_id=company_id, model=model, run_id=run_id, checked_at=checked_at,
+            )
+            return
+        with self.pg.engine.begin() as conn:
+            self._record_no_change_checked_at(
+                conn, company_id=company_id, model=model, run_id=run_id, checked_at=checked_at,
+            )
+
+    def _record_no_change_checked_at(self, conn, *, company_id: int, model: str, run_id: str, checked_at: datetime) -> None:
+        self._no_change_run(conn, company_id, run_id)
+        row = conn.execute(text("SELECT company_id, model, last_successful_write_date, last_successful_id, overlap_seconds, published_run_id, checked_at, status, created_at, updated_at FROM ct_control_tower_watermark WHERE company_id = :company_id AND model = :model FOR UPDATE"), {"company_id": company_id, "model": model}).mappings().first()
+        if not row:
+            raise ValueError("No watermark exists for the no-change check.")
+        validate_watermark_row(dict(row), company_id=company_id, model=model)
+        result = conn.execute(text("UPDATE ct_control_tower_watermark SET checked_at = :checked_at, updated_at = :checked_at WHERE company_id = :company_id AND model = :model"), {"company_id": company_id, "model": model, "checked_at": checked_at})
+        if result.rowcount != 1:
+            raise ValueError("No watermark exists for the no-change check.")
+
+    def record_no_change(self, *, company_id: int, model: str, run_id: str, now: Optional[datetime] = None, connection=None) -> None:
+        self.record_no_change_checked_at(company_id=company_id, model=model, run_id=run_id, now=now, connection=connection)
+
+
+def bootstrap_watermarks_from_trusted_snapshot(
+    postgres_client,
+    *,
+    company_id: int = 3,
+) -> dict[str, Any]:
+    """Adopt Phase 3 watermarks from the currently published trusted snapshot.
+
+    This is an explicit administrator/maintenance operation, not an automatic
+    ordinary-refresh fallback.  It:
+
+    - verifies the published pointer points to a completed trusted run;
+    - verifies approved model coverage in that run;
+    - derives each model's canonical successful watermark tuple from the trusted
+      snapshot evidence (max displayed-second write date and max ID in that
+      second);
+    - binds the watermark to the currently published run;
+    - writes all required watermarks atomically without moving the pointer;
+    - never contacts Odoo;
+    - is idempotent and reports already-ready state truthfully.
+    """
+    if isinstance(company_id, bool) or not isinstance(company_id, int) or company_id <= 0:
+        raise ValueError("Watermark bootstrap company_id must be a positive integer.")
+
+    from src.control_tower.relation_extractor import MODEL_SPECS
+
+    models = tuple(spec.model for spec in MODEL_SPECS)
+    with postgres_client.engine.begin() as conn:
+        pointer = conn.execute(text("SELECT run_id::text, published_at FROM ct_published_snapshot WHERE company_id = :company_id FOR UPDATE"), {"company_id": company_id}).mappings().first()
+        if not pointer:
+            raise ValueError("No published trusted snapshot exists to bootstrap watermarks from.")
+        run = conn.execute(text("SELECT run_id::text, company_id, status, published_at, model_counts FROM ct_extraction_run WHERE run_id = CAST(:run_id AS UUID) FOR SHARE"), {"run_id": pointer["run_id"]}).mappings().first()
+        if not run or int(run["company_id"]) != company_id:
+            raise ValueError("The published trusted snapshot points to a missing or foreign run.")
+        if run["status"] not in {"COMPLETED", "SUCCEEDED"} or run["published_at"] is None:
+            raise ValueError("The published trusted snapshot is not a completed, published run.")
+        model_counts = run.get("model_counts") or {}
+        if not isinstance(model_counts, dict):
+            raise ValueError("The published trusted snapshot has malformed model counts.")
+
+        tuples: list[tuple[str, datetime, int]] = []
+        for model in models:
+            row = conn.execute(text("""
+                SELECT MAX(write_date) AS max_write_date,
+                       MAX(record_id) FILTER (
+                           WHERE write_date = (SELECT MAX(write_date) FROM ct_native_record_snapshot
+                                               WHERE extraction_run_id = CAST(:run_id AS UUID)
+                                                 AND model = :model)
+                       ) AS max_id
+                FROM ct_native_record_snapshot
+                WHERE extraction_run_id = CAST(:run_id AS UUID)
+                  AND model = :model
+            """), {"run_id": run["run_id"], "model": model}).mappings().first()
+            if row is None or row["max_write_date"] is None:
+                continue
+            write_date = row["max_write_date"]
+            if isinstance(write_date, datetime) and write_date.tzinfo is None:
+                write_date = write_date.replace(tzinfo=timezone.utc)
+            write_date = normalize_utc(write_date)
+            record_id = validate_record_id(row["max_id"])
+            tuples.append((model, watermark_displayed_second(write_date), record_id))
+
+        if not tuples:
+            raise ValueError("The published trusted snapshot contains no approved model evidence to adopt.")
+
+        already_ready: list[str] = []
+        adopted: list[str] = []
+        checked_at = datetime.now(timezone.utc)
+        for model, write_date, record_id in tuples:
+            existing = conn.execute(text("SELECT status FROM ct_control_tower_watermark WHERE company_id = :company_id AND model = :model FOR UPDATE"), {"company_id": company_id, "model": model}).mappings().first()
+            if existing and existing["status"] == "READY":
+                already_ready.append(model)
+                continue
             conn.execute(text("""
                 INSERT INTO ct_control_tower_watermark
-                    (company_id, model, last_successful_write_date, last_successful_id, overlap_seconds, published_run_id, checked_at, status, created_at, updated_at)
-                VALUES (:company_id, :model, :write_date, :record_id, :overlap_seconds, CAST(:run_id AS UUID), :checked_at, :status, :checked_at, :checked_at)
+                    (company_id, model, last_successful_write_date, last_successful_id,
+                     overlap_seconds, published_run_id, checked_at, status, created_at, updated_at)
+                VALUES (:company_id, :model, :write_date, :record_id, 0, CAST(:run_id AS UUID),
+                        :checked_at, 'READY', :checked_at, :checked_at)
                 ON CONFLICT (company_id, model) DO UPDATE SET
                     last_successful_write_date = EXCLUDED.last_successful_write_date,
                     last_successful_id = EXCLUDED.last_successful_id,
                     overlap_seconds = EXCLUDED.overlap_seconds,
                     published_run_id = EXCLUDED.published_run_id,
-                    checked_at = EXCLUDED.checked_at, status = EXCLUDED.status, updated_at = EXCLUDED.updated_at
-                WHERE (ct_control_tower_watermark.last_successful_write_date IS NULL
-                    OR (EXCLUDED.last_successful_write_date, EXCLUDED.last_successful_id)
-                       >= (ct_control_tower_watermark.last_successful_write_date, ct_control_tower_watermark.last_successful_id))
-            """), {"company_id": company_id, "model": model, "write_date": write_date, "record_id": record_id, "overlap_seconds": overlap_seconds, "run_id": run_id, "checked_at": checked_at, "status": status})
+                    checked_at = EXCLUDED.checked_at,
+                    status = EXCLUDED.status,
+                    updated_at = EXCLUDED.updated_at
+            """), {"company_id": company_id, "model": model, "write_date": write_date, "record_id": record_id, "run_id": run["run_id"], "checked_at": checked_at})
+            adopted.append(model)
 
-    def record_no_change_checked_at(self, *, company_id: int, model: str, run_id: str, now: Optional[datetime] = None) -> None:
-        validate_watermark_identity(company_id, model)
-        checked_at = normalize_utc(now) if now else datetime.now(timezone.utc)
-        with self.pg.engine.begin() as conn:
-            self._no_change_run(conn, company_id, run_id)
-            row = conn.execute(text("SELECT company_id, model, last_successful_write_date, last_successful_id, overlap_seconds, published_run_id, checked_at, status, created_at, updated_at FROM ct_control_tower_watermark WHERE company_id = :company_id AND model = :model FOR UPDATE"), {"company_id": company_id, "model": model}).mappings().first()
-            if not row:
-                raise ValueError("No watermark exists for the no-change check.")
-            validate_watermark_row(dict(row), company_id=company_id, model=model)
-            result = conn.execute(text("UPDATE ct_control_tower_watermark SET checked_at = :checked_at, updated_at = :checked_at WHERE company_id = :company_id AND model = :model"), {"company_id": company_id, "model": model, "checked_at": checked_at})
-            if result.rowcount != 1:
-                raise ValueError("No watermark exists for the no-change check.")
-
-    def record_no_change(self, *, company_id: int, model: str, run_id: str, now: Optional[datetime] = None) -> None:
-        self.record_no_change_checked_at(company_id=company_id, model=model, run_id=run_id, now=now)
+    return {
+        "company_id": company_id,
+        "published_run_id": run["run_id"],
+        "models_adopted": adopted,
+        "models_already_ready": already_ready,
+        "models_missing_evidence": [model for model in models if model not in adopted and model not in already_ready],
+        "pointer_moved": False,
+        "odoo_contacted": False,
+    }

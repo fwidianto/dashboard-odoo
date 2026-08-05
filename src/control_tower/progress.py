@@ -91,6 +91,32 @@ FETCH_APPLY_TEXT_FIELDS = (
     "fetch_apply_contract_version",
 )
 FETCH_APPLY_BOOL_FIELDS = ("fetch_apply_complete",)
+RECONCILIATION_COUNT_FIELDS = (
+    "reconciliation_sets_enqueued",
+    "reconciliation_sets_completed",
+    "reconciliation_records_read",
+    "reconciliation_records_removed",
+)
+RECONCILIATION_NUMBER_FIELDS = ("reconciliation_elapsed_seconds",)
+RECONCILIATION_LIST_FIELDS = ("reconciliation_sets_planned", "reconciliation_sets_completed_list")
+RECONCILIATION_TEXT_FIELDS = (
+    "reconciliation_current_parent",
+    "reconciliation_started_at",
+    "reconciliation_finished_at",
+)
+RECONCILIATION_BOOL_FIELDS = ("reconciliation_complete",)
+VALIDATION_COUNT_FIELDS = ("validation_issues",)
+VALIDATION_NUMBER_FIELDS = ("validation_elapsed_seconds",)
+VALIDATION_TEXT_FIELDS = ("validation_started_at", "validation_finished_at")
+VALIDATION_BOOL_FIELDS = ("validation_complete",)
+DERIVED_COUNT_FIELDS = ("derived_sql_files_applied",)
+DERIVED_NUMBER_FIELDS = ("derived_sql_elapsed_seconds",)
+DERIVED_TEXT_FIELDS = ("derived_started_at", "derived_finished_at")
+DERIVED_BOOL_FIELDS = ("derived_refresh_complete",)
+PUBLICATION_COUNT_FIELDS = ("watermarks_advanced",)
+PUBLICATION_NUMBER_FIELDS = ("publication_elapsed_seconds",)
+PUBLICATION_TEXT_FIELDS = ("publication_started_at", "publication_finished_at")
+PUBLICATION_BOOL_FIELDS = ("publication_complete",)
 KNOWN_FIELDS = frozenset(
     (
         *COUNT_FIELDS,
@@ -111,6 +137,15 @@ KNOWN_FIELDS = frozenset(
         *FETCH_APPLY_COUNT_FIELDS, *FETCH_APPLY_NUMBER_FIELDS,
         *FETCH_APPLY_LIST_FIELDS, *FETCH_APPLY_TEXT_FIELDS,
         *FETCH_APPLY_BOOL_FIELDS,
+        *RECONCILIATION_COUNT_FIELDS, *RECONCILIATION_NUMBER_FIELDS,
+        *RECONCILIATION_LIST_FIELDS, *RECONCILIATION_TEXT_FIELDS,
+        *RECONCILIATION_BOOL_FIELDS,
+        *VALIDATION_COUNT_FIELDS, *VALIDATION_NUMBER_FIELDS,
+        *VALIDATION_TEXT_FIELDS, *VALIDATION_BOOL_FIELDS,
+        *DERIVED_COUNT_FIELDS, *DERIVED_NUMBER_FIELDS,
+        *DERIVED_TEXT_FIELDS, *DERIVED_BOOL_FIELDS,
+        *PUBLICATION_COUNT_FIELDS, *PUBLICATION_NUMBER_FIELDS,
+        *PUBLICATION_TEXT_FIELDS, *PUBLICATION_BOOL_FIELDS,
     )
 )
 
@@ -177,6 +212,34 @@ def validate_progress_payload(payload: Mapping[str, Any] | None) -> dict[str, An
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise ValueError(f"Progress count must be a non-negative integer: {field}")
         result[field] = value
+    for field in RECONCILIATION_COUNT_FIELDS:
+        value = payload.get(field)
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"Progress count must be a non-negative integer: {field}")
+        result[field] = value
+    for field in VALIDATION_COUNT_FIELDS:
+        value = payload.get(field)
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"Progress count must be a non-negative integer: {field}")
+        result[field] = value
+    for field in DERIVED_COUNT_FIELDS:
+        value = payload.get(field)
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"Progress count must be a non-negative integer: {field}")
+        result[field] = value
+    for field in PUBLICATION_COUNT_FIELDS:
+        value = payload.get(field)
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"Progress count must be a non-negative integer: {field}")
+        result[field] = value
     for field in DETECTION_NUMBER_FIELDS:
         value = payload.get(field)
         if value is None:
@@ -197,6 +260,54 @@ def validate_progress_payload(payload: Mapping[str, Any] | None) -> dict[str, An
             raise ValueError(f"Progress duration must be a non-negative number: {field}")
         result[field] = value
     for field in FETCH_APPLY_NUMBER_FIELDS:
+        value = payload.get(field)
+        if value is None:
+            continue
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or value < 0
+            or not math.isfinite(value)
+        ):
+            raise ValueError(f"Progress duration must be a non-negative number: {field}")
+        result[field] = value
+    for field in RECONCILIATION_NUMBER_FIELDS:
+        value = payload.get(field)
+        if value is None:
+            continue
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or value < 0
+            or not math.isfinite(value)
+        ):
+            raise ValueError(f"Progress duration must be a non-negative number: {field}")
+        result[field] = value
+    for field in VALIDATION_NUMBER_FIELDS:
+        value = payload.get(field)
+        if value is None:
+            continue
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or value < 0
+            or not math.isfinite(value)
+        ):
+            raise ValueError(f"Progress duration must be a non-negative number: {field}")
+        result[field] = value
+    for field in DERIVED_NUMBER_FIELDS:
+        value = payload.get(field)
+        if value is None:
+            continue
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or value < 0
+            or not math.isfinite(value)
+        ):
+            raise ValueError(f"Progress duration must be a non-negative number: {field}")
+        result[field] = value
+    for field in PUBLICATION_NUMBER_FIELDS:
         value = payload.get(field)
         if value is None:
             continue
@@ -262,6 +373,15 @@ def validate_progress_payload(payload: Mapping[str, Any] | None) -> dict[str, An
             raise ValueError(f"Fetch/apply progress list must contain strings: {field}")
         if len(value) != len(set(value)):
             raise ValueError(f"Fetch/apply progress list must contain unique strings: {field}")
+        result[field] = list(value)
+    for field in RECONCILIATION_LIST_FIELDS:
+        if field not in payload:
+            continue
+        value = payload[field]
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise ValueError(f"Reconciliation progress list must contain strings: {field}")
+        if len(value) != len(set(value)):
+            raise ValueError(f"Reconciliation progress list must contain unique strings: {field}")
         result[field] = list(value)
     if "fetch_apply_models_completed" in result:
         planned = result.get("fetch_apply_models_planned")
@@ -357,6 +477,66 @@ def validate_progress_payload(payload: Mapping[str, Any] | None) -> dict[str, An
             continue
         if not isinstance(payload[field], bool):
             raise ValueError(f"Fetch/apply progress marker must be boolean: {field}")
+        result[field] = payload[field]
+    for field in RECONCILIATION_TEXT_FIELDS:
+        if field not in payload or payload[field] is None:
+            continue
+        if not isinstance(payload[field], str):
+            raise ValueError(f"Reconciliation progress text field must be a string: {field}")
+        if field in {"reconciliation_started_at", "reconciliation_finished_at"}:
+            result[field] = _normalize_copy_forward_timestamp(payload[field], field)
+        else:
+            result[field] = payload[field]
+    for field in RECONCILIATION_BOOL_FIELDS:
+        if field not in payload:
+            continue
+        if not isinstance(payload[field], bool):
+            raise ValueError(f"Reconciliation progress marker must be boolean: {field}")
+        result[field] = payload[field]
+    for field in VALIDATION_TEXT_FIELDS:
+        if field not in payload or payload[field] is None:
+            continue
+        if not isinstance(payload[field], str):
+            raise ValueError(f"Validation progress text field must be a string: {field}")
+        if field in {"validation_started_at", "validation_finished_at"}:
+            result[field] = _normalize_copy_forward_timestamp(payload[field], field)
+        else:
+            result[field] = payload[field]
+    for field in VALIDATION_BOOL_FIELDS:
+        if field not in payload:
+            continue
+        if not isinstance(payload[field], bool):
+            raise ValueError(f"Validation progress marker must be boolean: {field}")
+        result[field] = payload[field]
+    for field in DERIVED_TEXT_FIELDS:
+        if field not in payload or payload[field] is None:
+            continue
+        if not isinstance(payload[field], str):
+            raise ValueError(f"Derived progress text field must be a string: {field}")
+        if field in {"derived_started_at", "derived_finished_at"}:
+            result[field] = _normalize_copy_forward_timestamp(payload[field], field)
+        else:
+            result[field] = payload[field]
+    for field in DERIVED_BOOL_FIELDS:
+        if field not in payload:
+            continue
+        if not isinstance(payload[field], bool):
+            raise ValueError(f"Derived progress marker must be boolean: {field}")
+        result[field] = payload[field]
+    for field in PUBLICATION_TEXT_FIELDS:
+        if field not in payload or payload[field] is None:
+            continue
+        if not isinstance(payload[field], str):
+            raise ValueError(f"Publication progress text field must be a string: {field}")
+        if field in {"publication_started_at", "publication_finished_at"}:
+            result[field] = _normalize_copy_forward_timestamp(payload[field], field)
+        else:
+            result[field] = payload[field]
+    for field in PUBLICATION_BOOL_FIELDS:
+        if field not in payload:
+            continue
+        if not isinstance(payload[field], bool):
+            raise ValueError(f"Publication progress marker must be boolean: {field}")
         result[field] = payload[field]
     for field in DETECTION_MAP_FIELDS:
         if field not in payload:
@@ -522,6 +702,28 @@ def validate_progress_payload(payload: Mapping[str, Any] | None) -> dict[str, An
             raise ValueError("Detection model row counts must equal the manifest row count.")
         if result["detection_manifest_rows_persisted"] != result["detection_manifest_row_count"]:
             raise ValueError("Persisted manifest rows must equal the completion row count.")
+    if result.get("reconciliation_complete"):
+        if not result.get("reconciliation_started_at") or not result.get("reconciliation_finished_at"):
+            raise ValueError("Completed reconciliation requires start and finish timestamps.")
+        if result.get("reconciliation_sets_enqueued", 0) < result.get("reconciliation_sets_completed", 0):
+            raise ValueError("Completed reconciliation sets cannot exceed enqueued sets.")
+        for completed_field, planned_field in (
+            ("reconciliation_sets_completed_list", "reconciliation_sets_planned"),
+        ):
+            if completed_field in result:
+                if planned_field not in result:
+                    raise ValueError(f"Completed reconciliation requires planned sets: {completed_field}")
+                if not set(result[completed_field]).issubset(result[planned_field]):
+                    raise ValueError(f"Completed reconciliation sets must be a subset of planned sets.")
+    if result.get("validation_complete"):
+        if not result.get("validation_started_at") or not result.get("validation_finished_at"):
+            raise ValueError("Completed validation requires start and finish timestamps.")
+    if result.get("derived_refresh_complete"):
+        if not result.get("derived_started_at") or not result.get("derived_finished_at"):
+            raise ValueError("Completed derived refresh requires start and finish timestamps.")
+    if result.get("publication_complete"):
+        if not result.get("publication_started_at") or not result.get("publication_finished_at"):
+            raise ValueError("Completed publication requires start and finish timestamps.")
     return result
 
 

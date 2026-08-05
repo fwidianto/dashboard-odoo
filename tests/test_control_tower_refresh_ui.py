@@ -168,6 +168,71 @@ def test_can_refresh_flows_through_and_active_coordinator_wins():
     assert ui["can_refresh"] is False
 
 
+def test_durable_succeeded_maps_to_done():
+    ui = _ui(_health(
+        latest_attempt=_attempt(status="SUCCEEDED"),
+        latest_refresh_attempt_status="SUCCEEDED",
+    ))
+    assert ui["status"] == "DONE"
+    assert ui["outcome"] == "SUCCESS"
+    assert ui["stage_label"] == "Selesai"
+
+
+def test_durable_no_changes_maps_to_done_no_changes():
+    ui = _ui(_health(
+        latest_attempt=_attempt(status="SUCCEEDED_NO_CHANGES"),
+        latest_refresh_attempt_status="SUCCEEDED_NO_CHANGES",
+    ))
+    assert ui["status"] == "DONE"
+    assert ui["outcome"] == "NO_CHANGES"
+    assert ui["stage_label"] == "Tidak ada perubahan"
+    assert "Tidak ada perubahan" in ui["message"]
+
+
+def test_durable_active_state_is_reading():
+    ui = _ui(_health(
+        latest_attempt=_attempt(status="FETCHING"),
+        latest_refresh_attempt_status="FETCHING",
+    ))
+    assert ui["active"] is True
+    assert ui["status"] == "READING"
+
+
+def test_durable_failed_transient_maps_to_failed():
+    ui = _ui(_health(
+        latest_attempt=_attempt(status="FAILED_TRANSIENT", error_message="boom"),
+        latest_refresh_attempt_status="FAILED_TRANSIENT",
+        latest_failure_message="Pembaruan Odoo gagal. Control Tower tetap menampilkan snapshot terakhir yang berhasil.",
+    ))
+    assert ui["status"] == "FAILED"
+    assert ui["outcome"] == "FAILED"
+    assert ui["message"] == "Pembaruan Odoo gagal. Control Tower tetap menampilkan snapshot terakhir yang berhasil."
+
+
+def test_durable_interrupted_maps_to_failed():
+    ui = _ui(_health(
+        latest_attempt=_attempt(status="INTERRUPTED"),
+        latest_refresh_attempt_status="INTERRUPTED",
+        latest_failure_message="Pembaruan terhenti. Snapshot terpercaya tetap ditampilkan; percobaan baru dapat dijalankan.",
+    ))
+    assert ui["status"] == "FAILED"
+    assert ui["outcome"] == "FAILED"
+
+
+def test_can_retry_flag_flows_through_projection():
+    ui = refresh_ui_projection(
+        _health(
+            latest_attempt=_attempt(status="FAILED_TRANSIENT"),
+            latest_refresh_attempt_status="FAILED_TRANSIENT",
+        ),
+        {"active_request": False},
+        can_refresh=False,
+        can_recover_stale=False,
+        can_retry=True,
+    )
+    assert ui["can_retry"] is True
+
+
 async def _asgi_request(method, path, cookies=None, body=b""):
     parsed = urlsplit(path)
     headers = []

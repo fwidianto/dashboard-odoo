@@ -1,7 +1,10 @@
 """Safe Control Tower refresh lifecycle helpers.
 
-The lifecycle keeps extraction candidates separate from the published pointer.
-Odoo access remains delegated to the existing read-only relation extractor.
+The normal Refresh Data path is incremental: a durable run is created and
+executed end to end through copy-forward, detection, fetch/apply,
+reconciliation, validation, derived-data refresh, atomic publication, and
+watermark advancement.  The legacy full-extraction pipeline remains callable
+only as an explicit maintenance/bootstrap/recovery operation.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from uuid import uuid4
 
 from sqlalchemy import text
 
+from src.clients.odoo_client import OdooClient
 from src.clients.postgres_client import PostgresClient
 
 
@@ -254,7 +258,14 @@ def run_refresh_pipeline(
     requested_by: Optional[str] = None,
     sql_paths: Sequence[Path] = SQL_PATHS,
 ) -> dict[str, Any]:
-    """Run full extraction and publish only after SQL/finding rebuild succeeds."""
+    """MAINTENANCE-ONLY: run full approved-dataset extraction and publish.
+
+    This is the legacy bootstrap/full-refresh operation.  The normal Control
+    Tower ``Refresh Data`` action MUST use the incremental pipeline
+    (``IncrementalRefreshCoordinator``).  Do not call this function from the
+    normal refresh path and do not use it as a fallback when incremental
+    refresh fails.
+    """
     from src.control_tower.relation_extractor import ControlTowerRelationExtractor
 
     pg = PostgresClient()
@@ -311,7 +322,11 @@ def recover_stale_run(
     company_id: int = 3,
     max_age_minutes: int = DEFAULT_STALE_RUN_MINUTES,
 ) -> dict[str, Any]:
-    """Explicitly transition one stale candidate to ABORTED; never delete data."""
+    """Explicitly transition one stale candidate to INTERRUPTED; never delete data.
+
+    Durable incremental runs in any active stage are interrupted (retryable).
+    Legacy ``RUNNING``/``READY_FOR_PUBLISH`` candidates are aborted as before.
+    """
     ensure_refresh_schema(pg)
     with pg.engine.begin() as conn:
         row = conn.execute(text("""
@@ -324,16 +339,19 @@ def recover_stale_run(
             raise RefreshLifecycleError("Requested refresh run was not found.")
         if int(row["company_id"] or 0) != company_id:
             raise RefreshLifecycleError("Requested refresh run is outside company 3 scope.")
-        if row["status"] not in {"RUNNING", "READY_FOR_PUBLISH"}:
+        recoverable_active = DURABLE_ACTIVE_STATES | {"RUNNING", "READY_FOR_PUBLISH"}
+        if row["status"] not in recoverable_active:
             raise RefreshLifecycleError(f"Refresh run is {row['status']} and cannot be recovered.")
         age_seconds = (datetime.now(timezone.utc) - row["started_at"]).total_seconds()
         if age_seconds < max_age_minutes * 60:
             raise RefreshLifecycleError("Refresh run is not older than the configured stale threshold.")
         finished_at = datetime.now(timezone.utc)
-        audit_message = f"ABORTED_BY_ADMIN: {sanitize_diagnostic(reason, 180)}"
+        target = "INTERRUPTED" if row["status"] in DURABLE_ACTIVE_STATES else "ABORTED"
+        audit_message = f"{target}_BY_ADMIN: {sanitize_diagnostic(reason, 180)}"
         conn.execute(text("""
             UPDATE ct_extraction_run
-            SET status = 'ABORTED', finished_at = :finished_at,
+            SET status = :target, stage = :target, finished_at = :finished_at,
+                failure_class = :failure_class,
                 duration_seconds = EXTRACT(EPOCH FROM (:finished_at - started_at)),
                 error_message = :error_message,
                 trigger = 'recovery', requested_by = :requested_by,
@@ -341,16 +359,23 @@ def recover_stale_run(
             WHERE run_id = CAST(:run_id AS UUID)
         """), {
             "run_id": run_id,
+            "target": target,
+            "failure_class": "INTERRUPTED" if target == "INTERRUPTED" else "ABORTED",
             "finished_at": finished_at,
             "error_message": audit_message,
             "requested_by": requested_by,
             "audit": json.dumps({"recovery_reason": sanitize_diagnostic(reason, 180)}),
         })
-    return _run_row(pg, run_id) or {"run_id": run_id, "status": "ABORTED"}
+    return _run_row(pg, run_id) or {"run_id": run_id, "status": target}
 
 
 class RefreshCoordinator:
-    """One-process request guard around the database-wide refresh lock."""
+    """Maintenance-only full-extraction request guard.
+
+    ``start`` runs the legacy full approved-dataset extraction pipeline.  This
+    is an explicit maintenance/bootstrap/recovery operation only.  The normal
+    Refresh Data path uses ``IncrementalRefreshCoordinator`` instead.
+    """
 
     def __init__(self) -> None:
         self._state_lock = Lock()
@@ -403,4 +428,272 @@ class RefreshCoordinator:
             }
 
 
-REFRESH_COORDINATOR = RefreshCoordinator()
+DURABLE_ACTIVE_STATES = frozenset({
+    "REQUESTED", "PREPARING", "DETECTING_CHANGES", "FETCHING", "RECONCILING",
+    "VALIDATING", "REFRESHING_DERIVED_DATA", "PUBLISHING",
+})
+
+
+def find_active_durable_run(pg: PostgresClient, *, company_id: int = 3) -> Optional[dict[str, Any]]:
+    """Detect a conflicting durable refresh run across process boundaries."""
+    ensure_refresh_schema(pg)
+    with pg.engine.connect() as conn:
+        row = conn.execute(text("""
+            SELECT run_id::text, status, stage, started_at, requested_by
+            FROM ct_extraction_run
+            WHERE company_id = :company_id
+              AND status = ANY(:states)
+            ORDER BY started_at DESC
+            LIMIT 1
+        """), {"company_id": company_id, "states": list(DURABLE_ACTIVE_STATES)}).mappings().first()
+    return dict(row) if row else None
+
+
+def _latest_retryable_run(pg: PostgresClient, *, company_id: int = 3) -> Optional[dict[str, Any]]:
+    """Return the latest eligible retry source run for the company."""
+    ensure_refresh_schema(pg)
+    with pg.engine.connect() as conn:
+        row = conn.execute(text("""
+            SELECT run_id::text, company_id, status, selected_domains
+            FROM ct_extraction_run
+            WHERE company_id = :company_id
+              AND status IN ('FAILED_TRANSIENT', 'INTERRUPTED')
+            ORDER BY started_at DESC
+            LIMIT 1
+        """), {"company_id": company_id}).mappings().first()
+    if row is None:
+        return None
+    return {
+        "run_id": str(row["run_id"]),
+        "company_id": int(row["company_id"]),
+        "status": str(row["status"]),
+        "selected_domains": list(row["selected_domains"] or []),
+    }
+
+
+def _mark_durable_run_failed(
+    pg: PostgresClient,
+    run_id: str,
+    error: Any,
+    *,
+    company_id: int = 3,
+) -> None:
+    """Durably finalize a failed incremental run without moving the pointer."""
+    from src.control_tower.refresh_state import RefreshRunStateService, validate_transition
+
+    ensure_refresh_schema(pg)
+    try:
+        with pg.engine.begin() as conn:
+            status = conn.execute(
+                text("SELECT status FROM ct_extraction_run WHERE run_id = CAST(:run_id AS UUID) FOR UPDATE"),
+                {"run_id": run_id},
+            ).scalar()
+        if status is None or status in {
+            "SUCCEEDED", "SUCCEEDED_NO_CHANGES", "COMPLETED",
+            "FAILED_TRANSIENT", "FAILED_PERMANENT", "INTERRUPTED", "ABORTED", "FAILED",
+        }:
+            return
+        service = RefreshRunStateService(pg)
+        try:
+            service.transition(
+                run_id, "FAILED_TRANSIENT", failure_class="TRANSIENT",
+                error_message=sanitize_diagnostic(error),
+            )
+        except ValueError:
+            try:
+                service.transition(
+                    run_id, "FAILED_PERMANENT", failure_class="PERMANENT",
+                    error_message=sanitize_diagnostic(error),
+                )
+            except ValueError:
+                pass
+    except Exception:
+        pass
+
+
+class IncrementalRefreshCoordinator:
+    """Background coordinator for the normal incremental Refresh Data path.
+
+    ``start`` creates one durable run for the approved domain selection and
+    executes the incremental lifecycle in a daemon thread.  It rejects a second
+    ordinary refresh while one durable run is active (across process
+    boundaries), records the authenticated dashboard user as ``requested_by``,
+    closes PostgreSQL and Odoo clients safely, and sanitizes diagnostics.  It
+    never invokes the full approved-dataset extractor.
+    """
+
+    def __init__(self, postgres_factory=None) -> None:
+        self._state_lock = Lock()
+        self._thread: Optional[Thread] = None
+        self._run_id: Optional[str] = None
+        self._last_result: Optional[dict[str, Any]] = None
+        self._pg_factory = postgres_factory or PostgresClient
+
+    def start(
+        self,
+        *,
+        requested_by: str,
+        company_id: int = 3,
+        selected_domains: Sequence[str] = ("all",),
+        bucket_page_size: int = 500,
+    ) -> dict[str, Any]:
+        with self._state_lock:
+            if self._thread and self._thread.is_alive():
+                raise RefreshAlreadyRunning("A Control Tower refresh request is already active.")
+            pg = self._pg_factory()
+            try:
+                existing = find_active_durable_run(pg, company_id=company_id)
+                if existing:
+                    raise RefreshAlreadyRunning(
+                        "A Control Tower refresh run is already active for this company."
+                    )
+                from src.control_tower.refresh_state import RefreshRunStateService
+                state = RefreshRunStateService(pg)
+                run = state.create_run(
+                    company_id=company_id,
+                    selected_domains=list(selected_domains),
+                    requested_by=requested_by,
+                )
+                run_id = run["run_id"]
+            finally:
+                pg.close()
+            self._start_thread(
+                run_id=run_id,
+                requested_by=requested_by,
+                company_id=company_id,
+                selected_domains=list(selected_domains),
+                bucket_page_size=bucket_page_size,
+            )
+            return {
+                "run_id": run_id,
+                "job_id": run_id,
+                "status": "ACCEPTED",
+                "company_id": company_id,
+            }
+
+    def retry(self, *, requested_by: str, company_id: int = 3) -> dict[str, Any]:
+        """Create one linked retry for the latest eligible run and start it.
+
+        Only ``FAILED_TRANSIENT`` or ``INTERRUPTED`` runs are retryable.  The
+        server selects the latest eligible run; the browser never submits an
+        arbitrary run ID.  A permanent failure is never retried automatically.
+        """
+        with self._state_lock:
+            if self._thread and self._thread.is_alive():
+                raise RefreshAlreadyRunning("A Control Tower refresh request is already active.")
+            pg = self._pg_factory()
+            try:
+                from src.control_tower.refresh_state import RefreshRunStateService
+                state = RefreshRunStateService(pg)
+                source = _latest_retryable_run(pg, company_id=company_id)
+                if source is None:
+                    raise RefreshLifecycleError(
+                        "No transient-failed or interrupted refresh run is eligible for retry."
+                    )
+                retry = state.create_retry(source["run_id"], requested_by=requested_by)
+                run_id = retry["run_id"]
+            finally:
+                pg.close()
+            self._start_thread(
+                run_id=run_id,
+                requested_by=requested_by,
+                company_id=company_id,
+                selected_domains=source["selected_domains"] or ("all",),
+                bucket_page_size=500,
+            )
+            return {
+                "run_id": run_id,
+                "job_id": run_id,
+                "status": "ACCEPTED",
+                "company_id": company_id,
+                "retry_of_run_id": source["run_id"],
+            }
+
+    def _start_thread(
+        self,
+        *,
+        run_id: str,
+        requested_by: str,
+        company_id: int,
+        selected_domains: Sequence[str],
+        bucket_page_size: int,
+    ) -> None:
+        self._run_id = run_id
+        self._last_result = None
+        self._thread = Thread(
+            target=self._run,
+            kwargs={
+                "run_id": run_id,
+                "requested_by": requested_by,
+                "company_id": company_id,
+                "selected_domains": list(selected_domains),
+                "bucket_page_size": bucket_page_size,
+            },
+            name="control-tower-incremental-refresh",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def _run(
+        self,
+        *,
+        run_id: str,
+        requested_by: str,
+        company_id: int,
+        selected_domains: Sequence[str],
+        bucket_page_size: int,
+    ) -> None:
+        pg: Optional[PostgresClient] = None
+        odoo: Optional[OdooClient] = None
+        try:
+            pg = self._pg_factory()
+            odoo = OdooClient()
+            from src.control_tower.orchestration import RefreshPipelineOrchestrator
+            from src.control_tower.refresh_continuation import RefreshContinuationService
+
+            orchestrator = RefreshPipelineOrchestrator(pg)
+            orchestrator.orchestrate(
+                run_id=run_id,
+                company_id=company_id,
+                selected_domains=list(selected_domains),
+                odoo_client=odoo,
+                bucket_page_size=bucket_page_size,
+            )
+            continuation = RefreshContinuationService(pg)
+            result = continuation.complete(
+                run_id=run_id,
+                company_id=company_id,
+                odoo_client=odoo,
+            )
+        except Exception as exc:
+            _mark_durable_run_failed(pg, run_id, exc, company_id=company_id)
+            result = {
+                "run_id": run_id,
+                "job_id": run_id,
+                "status": "FAILED",
+                "error_message": sanitize_diagnostic(exc),
+            }
+        result["job_id"] = run_id
+        result["run_id"] = run_id
+        result["requested_by"] = requested_by
+        with self._state_lock:
+            self._last_result = result
+        if pg is not None:
+            pg.close()
+        if odoo is not None:
+            try:
+                odoo.close()
+            except Exception:
+                pass
+
+    def status(self) -> dict[str, Any]:
+        with self._state_lock:
+            active = bool(self._thread and self._thread.is_alive())
+            return {
+                "active_request": active,
+                "run_id": self._run_id,
+                "job_id": self._run_id,
+                "last_result": self._last_result,
+            }
+
+REFRESH_COORDINATOR = IncrementalRefreshCoordinator()

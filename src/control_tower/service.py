@@ -13,7 +13,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from src.clients.postgres_client import PostgresClient
 from src.control_tower.freshness import freshness_classification, refresh_attempt_is_stale
-from src.control_tower.refresh import sanitize_diagnostic
+from src.control_tower.refresh import DURABLE_ACTIVE_STATES, sanitize_diagnostic
 
 
 COMPANY_ID = 3
@@ -250,19 +250,26 @@ class ControlTowerService:
         latest_run_id = run.get("run_id") if run else None
         attempt_status = attempt.get("status") if attempt else None
         attempt_run_id = attempt.get("run_id") if attempt else None
-        stale_attempt = attempt_status in {"RUNNING", "READY_FOR_PUBLISH"} and refresh_attempt_is_stale(
+        active_states = DURABLE_ACTIVE_STATES | {"RUNNING", "READY_FOR_PUBLISH"}
+        success_states = {"COMPLETED", "SUCCEEDED", "SUCCEEDED_NO_CHANGES"}
+        stale_attempt = attempt_status in active_states and refresh_attempt_is_stale(
             attempt.get("started_at") if attempt else None
         )
         serving_older = bool(
             latest_run_id
             and attempt_run_id
             and attempt_run_id != latest_run_id
-            and attempt_status != "COMPLETED"
+            and attempt_status not in success_states
         )
-        candidate_pending = attempt_status == "READY_FOR_PUBLISH"
+        candidate_pending = attempt_status in {"READY_FOR_PUBLISH", "PUBLISHING"}
         failure_message = None
-        if attempt and attempt_status in {"FAILED", "ABORTED"}:
+        if attempt and attempt_status in {"FAILED", "FAILED_TRANSIENT", "FAILED_PERMANENT", "ABORTED"}:
             failure_message = sanitize_diagnostic(attempt.get("error_message"))
+        elif attempt and attempt_status == "INTERRUPTED":
+            failure_message = (
+                "Pembaruan terhenti. Snapshot terpercaya tetap ditampilkan; "
+                "percobaan baru dapat dijalankan."
+            )
         elif stale_attempt:
             failure_message = "Refresh attempt exceeded the stale threshold; administrator recovery is required."
         elif candidate_pending:

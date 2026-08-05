@@ -15,8 +15,11 @@ assert.match(page, /data-ct-refresh-counts/);
 assert.match(page, /data-ct-refresh-minimize/);
 assert.match(page, /data-ct-refresh-recover/);
 assert.match(page, /data-ct-refresh-recover-action/);
+assert.match(page, /data-ct-refresh-retry/);
+assert.match(page, /data-ct-refresh-retry-action/);
 assert.match(page, /Tutup percobaan lama/);
 assert.match(page, /Percobaan pembaruan yang terhenti akan ditutup\./);
+assert.match(page, /Coba Lagi/);
 assert.match(page, /Data terakhir diperbarui/);
 assert.match(page, /<button class="ct-refresh-compact" data-ct-refresh="" type="button" hidden>Refresh Data<\/button>/);
 
@@ -25,9 +28,12 @@ assert.match(shell, /function refreshPanelState/);
 assert.match(shell, /function startRefreshPolling/);
 assert.match(shell, /async function requestRefresh/);
 assert.match(shell, /async function requestRecoverStale/);
+assert.match(shell, /async function requestRetry/);
 assert.match(shell, /\/api\/control-tower\/refresh\/recover/);
+assert.match(shell, /\/api\/control-tower\/refresh\/retry/);
 assert.match(shell, /refreshRecoverAction\.disabled = true/);
 assert.match(shell, /refreshRecover\.hidden = !\(state\.canRecoverStale && state\.panelState === "STALE"\)/);
+assert.match(shell, /refreshRetry\.hidden = !\(state\.canRetry && \(state\.panelState === "FAILED" \|\| state\.panelState === "STALE"\)\)/);
 assert.match(shell, /refreshReloadEvidence/);
 assert.match(shell, /refreshButton\.hidden = !state\.canRefresh \|\| state\.active/);
 assert.match(shell, /Pembaruan Odoo gagal\. Control Tower tetap menampilkan snapshot terakhir yang berhasil\./);
@@ -75,6 +81,17 @@ const success = refreshPanelState({
 assert.equal(success.panelState, 'SUCCESS');
 assert.notEqual(success.trustedText, 'Belum ada snapshot terpercaya');
 
+const noChanges = refreshPanelState({
+  refresh_ui: {
+    status: 'DONE',
+    stage_label: 'Tidak ada perubahan',
+    outcome: 'NO_CHANGES',
+    trusted: { timestamp: '2026-08-05T01:00:00Z' }
+  }
+});
+assert.equal(noChanges.panelState, 'NO_CHANGES');
+assert.equal(noChanges.stageLabel, 'Tidak ada perubahan');
+
 const failed = refreshPanelState({
   refresh_ui: {
     status: 'FAILED',
@@ -90,6 +107,19 @@ assert.equal(
   'Pembaruan Odoo gagal. Control Tower tetap menampilkan snapshot terakhir yang berhasil.'
 );
 assert.equal(failed.diagnostic, 'Odoo unreachable');
+
+const retryable = refreshPanelState({
+  refresh_ui: {
+    status: 'FAILED',
+    stage_label: 'Gagal',
+    outcome: 'FAILED',
+    can_retry: true,
+    can_refresh: false,
+    trusted: { timestamp: '2026-08-05T01:00:00Z' }
+  }
+});
+assert.equal(retryable.canRetry, true);
+assert.equal(retryable.canRefresh, false);
 
 const stale = refreshPanelState({
   refresh_ui: { status: 'STALE', outcome: 'INTERRUPTED', stage_label: 'Pembaruan terhenti' }

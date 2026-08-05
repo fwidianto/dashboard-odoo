@@ -16,6 +16,8 @@
   const refreshCounts = document.querySelector("[data-ct-refresh-counts]");
   const refreshRecover = document.querySelector("[data-ct-refresh-recover]");
   const refreshRecoverAction = document.querySelector("[data-ct-refresh-recover-action]");
+  const refreshRetry = document.querySelector("[data-ct-refresh-retry]");
+  const refreshRetryAction = document.querySelector("[data-ct-refresh-retry-action]");
   const params = new URLSearchParams(window.location.search);
   let refreshReloadEvidence = null;
   let refreshPollTimer = 0;
@@ -119,7 +121,7 @@
     let panelState = "IDLE";
     if (status === "UNAVAILABLE") panelState = "UNAVAILABLE";
     else if (status === "READING" || status === "CHECKING") panelState = "ACTIVE";
-    else if (status === "DONE") panelState = outcome === "SUCCESS" ? "SUCCESS" : "IDLE";
+    else if (status === "DONE") panelState = outcome === "SUCCESS" ? "SUCCESS" : (outcome === "NO_CHANGES" ? "NO_CHANGES" : "IDLE");
     else if (status === "FAILED") panelState = "FAILED";
     else if (status === "STALE") panelState = "STALE";
     else if (status === "RECOVERED") panelState = "RECOVERED";
@@ -142,7 +144,8 @@
       countsText,
       active: Boolean(ui.active),
       canRefresh: Boolean(ui.can_refresh),
-      canRecoverStale: Boolean(ui.can_recover_stale)
+      canRecoverStale: Boolean(ui.can_recover_stale),
+      canRetry: Boolean(ui.can_retry)
     };
   }
 
@@ -167,6 +170,7 @@
     if (refreshCounts) refreshCounts.textContent = state.countsText || "—";
     if (refreshButton) refreshButton.hidden = !state.canRefresh || state.active;
     if (refreshRecover) refreshRecover.hidden = !(state.canRecoverStale && state.panelState === "STALE");
+    if (refreshRetry) refreshRetry.hidden = !(state.canRetry && (state.panelState === "FAILED" || state.panelState === "STALE"));
     return state;
   }
 
@@ -340,7 +344,36 @@
       if (state.active) void startRefreshPolling();
     });
   }
+  async function requestRetry() {
+    if (!refreshRetryAction) return;
+    refreshRetryAction.disabled = true;
+    openRefreshPanel();
+    if (refreshStage) refreshStage.textContent = "Menyiapkan percobaan ulang";
+    if (refreshMessage) refreshMessage.textContent = "Membuat percobaan pembaruan baru dari snapshot terpercaya...";
+    try {
+      const response = await fetch("/api/control-tower/refresh/retry", {
+        method: "POST",
+        headers: { Accept: "application/json" },
+        credentials: "same-origin"
+      });
+      let payload = {};
+      try { payload = await response.json(); } catch { /* response body is optional */ }
+      if (!response.ok) throw new Error(payload.detail || `Permintaan gagal (${response.status}).`);
+      await startRefreshPolling();
+    } catch (error) {
+      if (refreshPanel) {
+        refreshPanel.dataset.state = "FAILED";
+        refreshPanel.hidden = false;
+      }
+      if (refreshStage) refreshStage.textContent = "Gagal memulai percobaan ulang";
+      if (refreshMessage) refreshMessage.textContent = error.message || "Status pembaruan tidak dapat dibaca.";
+    } finally {
+      refreshRetryAction.disabled = false;
+    }
+  }
+
   refreshButton?.addEventListener("click", requestRefresh);
+  refreshRetryAction?.addEventListener("click", requestRetry);
   refreshRecoverAction?.addEventListener("click", requestRecoverStale);
   refreshMinimize?.addEventListener("click", () => {
     if (!refreshPanel) return;

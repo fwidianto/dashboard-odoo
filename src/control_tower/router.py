@@ -8,9 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 
 from src.control_tower.refresh import (
+    DURABLE_ACTIVE_STATES,
     REFRESH_COORDINATOR,
     RefreshAlreadyRunning,
     RefreshLifecycleError,
+    find_active_durable_run,
     recover_stale_run,
     sanitize_diagnostic,
 )
@@ -64,14 +66,24 @@ def control_tower_refresh_status(
     health = service.health()
     coordinator = REFRESH_COORDINATOR.status()
     attempt_status = health.get("latest_refresh_attempt_status")
-    candidate_pending = attempt_status == "READY_FOR_PUBLISH"
+    candidate_pending = attempt_status in {"READY_FOR_PUBLISH", "PUBLISHING"}
     stale_attempt = bool(health.get("latest_refresh_attempt_stale"))
-    active = coordinator["active_request"] or (attempt_status in {"RUNNING", "READY_FOR_PUBLISH"} and not stale_attempt)
-    can_refresh = is_admin(request) and not candidate_pending and not stale_attempt
+    active = (
+        coordinator["active_request"]
+        or (attempt_status in DURABLE_ACTIVE_STATES | {"RUNNING", "READY_FOR_PUBLISH"} and not stale_attempt)
+    )
+    can_refresh = is_admin(request) and not active and not stale_attempt and not candidate_pending
     latest_attempt = health.get("latest_attempt") or {}
     can_recover_stale = (
         is_admin(request)
         and bool(stale_attempt)
+        and not coordinator["active_request"]
+        and bool(latest_attempt.get("run_id"))
+    )
+    retryable_status = attempt_status in {"FAILED_TRANSIENT", "INTERRUPTED"}
+    can_retry = (
+        is_admin(request)
+        and bool(retryable_status)
         and not coordinator["active_request"]
         and bool(latest_attempt.get("run_id"))
     )
@@ -80,8 +92,10 @@ def control_tower_refresh_status(
         "active": active,
         "can_refresh": can_refresh,
         "can_recover_stale": can_recover_stale,
+        "can_retry": can_retry,
         "candidate_pending": candidate_pending,
         "stale_attempt": stale_attempt,
+        "retryable": bool(retryable_status),
         "coordinator": coordinator,
         "latest_attempt": health.get("latest_attempt"),
         "latest_trusted_run_id": health.get("latest_trusted_run_id"),
@@ -90,8 +104,46 @@ def control_tower_refresh_status(
         "serving_older_trusted_snapshot": health.get("serving_older_trusted_snapshot"),
         "freshness": health.get("freshness"),
         "freshness_classification": health.get("freshness_classification"),
-        "refresh_ui": refresh_ui_projection(health, coordinator, can_refresh, can_recover_stale),
+        "refresh_ui": refresh_ui_projection(health, coordinator, can_refresh, can_recover_stale, can_retry),
     }
+
+
+@router.post("/refresh/retry", status_code=status.HTTP_202_ACCEPTED)
+def retry_control_tower_refresh(
+    request: Request,
+    _: None = Depends(require_dashboard_admin),
+):
+    payload = session_payload(request) or {}
+    requested_by = str(payload.get("dashboard_username") or "administrator")[:80]
+    try:
+        return REFRESH_COORDINATOR.retry(
+            requested_by=requested_by,
+            company_id=COMPANY_ID,
+        )
+    except RefreshAlreadyRunning as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except RefreshLifecycleError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=sanitize_diagnostic(str(exc)),
+        ) from exc
+
+
+@router.post("/refresh/bootstrap-watermarks", status_code=status.HTTP_200_OK)
+def bootstrap_control_tower_watermarks(
+    _: None = Depends(require_dashboard_admin),
+    service: ControlTowerService = Depends(service_dependency),
+):
+    from src.control_tower.watermarks import bootstrap_watermarks_from_trusted_snapshot
+
+    try:
+        result = bootstrap_watermarks_from_trusted_snapshot(service.pg, company_id=COMPANY_ID)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=sanitize_diagnostic(str(exc)),
+        ) from exc
+    return result
 
 
 @router.post("/refresh/recover", status_code=status.HTTP_200_OK)

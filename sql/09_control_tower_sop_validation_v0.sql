@@ -27,7 +27,7 @@ SELECT
 FROM ct_extraction_run run
 LEFT JOIN ct_published_snapshot pointer
   ON pointer.company_id = run.company_id
-WHERE run.status = 'COMPLETED'
+WHERE run.status IN ('COMPLETED', 'SUCCEEDED')
   AND (
       pointer.run_id = run.run_id
       OR NOT EXISTS (

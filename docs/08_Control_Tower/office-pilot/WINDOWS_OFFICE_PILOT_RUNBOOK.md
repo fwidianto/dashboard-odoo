@@ -33,6 +33,84 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\office_pilot\R
 
 Expected result: the run is serialized, the candidate remains separate until the full safe pipeline succeeds, SQL validation/publication runs, and the trusted pointer is promoted atomically. Odoo remains read-only.
 
+## Owner staging test — Phase 3 real incremental Refresh Data
+
+This section is the exact controlled staging test for the incremental refresh
+capability (CT-8E1). Run it on the staging host with company 3 after this
+implementation commit is installed.
+
+### 0. Confirm the new implementation is active
+
+1. Confirm the deployed commit is the incremental implementation commit
+   (`feat(control-tower): complete incremental refresh path`).
+2. Confirm the application uses the normal incremental coordinator: pressing
+   `Refresh Data` must create a durable run and never run the 2–3 hour full
+   approved-dataset extraction. The full extractor remains maintenance-only
+   through the explicit CLI.
+
+### 1. Confirm trusted snapshot and watermarks are ready
+
+1. Open the authenticated Control Tower and confirm the trusted snapshot
+   timestamp and company-3 scope are visible.
+2. If Phase 3 watermarks are not yet READY, run the explicit adoption
+   operation once (administrator action, not an ordinary-refresh fallback):
+
+   ```powershell
+   & .\venv\Scripts\python.exe scripts\bootstrap_control_tower_watermarks.py `
+     --company-id 3
+   ```
+
+   Expected: the command reports `pointer_moved: false` and `odoo_contacted:
+   false`, and marks the approved models READY. It must not contact Odoo and
+   must not move the trusted pointer. If it reports missing evidence, stop and
+   report the exact missing approved model evidence instead of inventing a
+   watermark.
+
+### 2. Baseline
+
+1. Note one existing Sales Order and its current visible evidence in Control
+   Tower (e.g. document number, Temuan category, and Process Map badge).
+
+### 3. Make one harmless staging-only change
+
+1. In the approved staging Odoo only, make one harmless Sales Order change,
+   for example edit a non-material field on the Sales Order (and its line if
+   required) that does not affect any business decision.
+2. Do not change payment, profitability, or company scope.
+
+### 4. Run Refresh Data and observe progress
+
+1. Press `Refresh Data`.
+2. Confirm the progress panel stays minimizable and the user can keep using
+   the page.
+3. Confirm the previous trusted evidence remains visible while the refresh
+   runs.
+4. Confirm progress is truthful (stage, model, counts, elapsed) and is not a
+   fabricated fixed number.
+
+### 5. Verify safe publication
+
+1. Wait for success.
+2. Confirm changed evidence appears only after successful publication.
+3. Confirm the exact Sales Order evidence and the trusted timestamp updated
+   after success.
+4. Confirm the reported changed/new/missing counts match what was changed.
+5. Confirm the trusted pointer advanced only after all stages succeeded.
+
+### 6. Verify a no-change refresh
+
+1. Press `Refresh Data` again without making another Odoo change.
+2. Confirm the result is a truthful no-change outcome (`Tidak ada perubahan`
+   / equivalent) and the trusted snapshot is not replaced.
+3. Record both durations (changed refresh and no-change refresh).
+
+### 7. Verify Odoo remained read-only
+
+1. Confirm the Control Tower performed no Odoo write during the test.
+2. If a failure is induced during staging, confirm the previous trusted
+   snapshot and successful watermarks remain unchanged and the failed stage is
+   named in plain language.
+
 ## Inspect logs and recover
 
 - Application stdout/stderr: `logs\office-pilot\control-tower-stdout.log` and `control-tower-stderr.log`.

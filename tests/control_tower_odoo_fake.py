@@ -164,11 +164,16 @@ class FakeOdoo:
         if field == "write_date":
             actual = self._true_ts(row)
             value = _aware(value)
-        elif field == "company_id":
-            actual = row.get("company_id")
-            actual = actual[0] if isinstance(actual, list) else actual
         else:
             actual = row.get(field)
+            # many2one/many2many relation pairs are stored as [id, name]; a
+            # scalar domain value compares against the native id.
+            if (
+                isinstance(actual, (list, tuple))
+                and len(actual) == 2
+                and not isinstance(value, (list, tuple))
+            ):
+                actual = actual[0]
         if operator == "=":
             return actual == value
         if operator == "in":
