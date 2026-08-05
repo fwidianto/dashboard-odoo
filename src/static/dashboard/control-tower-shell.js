@@ -6,7 +6,19 @@
   const modeToggle = document.querySelector("[data-ct-mode-toggle]");
   const freshness = document.querySelector("[data-ct-freshness]");
   const refreshButton = document.querySelector("[data-ct-refresh]");
+  const refreshPanel = document.querySelector("[data-ct-refresh-panel]");
+  const refreshMinimize = document.querySelector("[data-ct-refresh-minimize]");
+  const refreshStage = document.querySelector("[data-ct-refresh-stage]");
+  const refreshMessage = document.querySelector("[data-ct-refresh-message]");
+  const refreshDiagnostic = document.querySelector("[data-ct-refresh-diagnostic]");
+  const refreshTrusted = document.querySelector("[data-ct-refresh-trusted]");
+  const refreshElapsed = document.querySelector("[data-ct-refresh-elapsed]");
+  const refreshCounts = document.querySelector("[data-ct-refresh-counts]");
   const params = new URLSearchParams(window.location.search);
+  let refreshReloadEvidence = null;
+  let refreshPollTimer = 0;
+  let refreshPollCount = 0;
+  let refreshPanelOpen = false;
 
   function safeReturnPath(raw) {
     if (typeof raw !== "string" || !raw.startsWith("/") || raw.startsWith("//") || raw.includes("\\") || /^[a-z][a-z\d+.-]*:/i.test(raw)) return "";
@@ -66,17 +78,91 @@
   modeToggle?.addEventListener("click", () => setMode(window.controlTowerOfficeMode ? "desk" : "office", true));
 
   function formatFreshnessTime(value) {
-    if (!value) return "Timestamp unavailable";
+    if (!value) return "Belum ada timestamp";
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return String(value);
     return date.toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" });
   }
 
-  function freshnessState(payload) {
-    const attempt = payload?.latest_refresh_attempt_status;
-    if (attempt === "RUNNING") return "REFRESHING";
-    if (["FAILED", "ABORTED"].includes(attempt)) return "FAILED";
-    return payload?.freshness_classification?.state || payload?.freshness || "FAILED";
+  function formatElapsed(seconds) {
+    if (seconds === null || seconds === undefined || Number.isNaN(Number(seconds))) return "—";
+    const total = Math.max(0, Math.round(Number(seconds)));
+    const minutes = Math.floor(total / 60);
+    const rest = total % 60;
+    return minutes === 0 ? `${rest} dtk` : `${minutes} mnt ${rest} dtk`;
+  }
+
+  function chipStateLabel(payload) {
+    const ui = (payload && payload.refresh_ui) || {};
+    if (ui.active) return "Memperbarui";
+    if (ui.status === "FAILED") return "Gagal";
+    if (ui.status === "STALE") return "Pembaruan terhenti";
+    if (ui.status === "NO_COMPLETED_EXTRACTION") return "Belum ada data";
+    const freshnessState = payload?.freshness_classification?.state || payload?.freshness || "UNAVAILABLE";
+    return {
+      CURRENT: "Terkini",
+      STALE: "Perlu diperbarui",
+      CRITICALLY_STALE: "Kedaluwarsa",
+      UNAVAILABLE: "Tidak tersedia"
+    }[freshnessState] || freshnessState;
+  }
+
+  function refreshPanelState(payload) {
+    const ui = (payload && payload.refresh_ui) || {};
+    const status = String(ui.status || "UNAVAILABLE");
+    const outcome = ui.outcome || null;
+    const trusted = ui.trusted || null;
+    const attempt = ui.latest_attempt || {};
+    const failureMessage = "Pembaruan Odoo gagal. Control Tower tetap menampilkan snapshot terakhir yang berhasil.";
+    let panelState = "IDLE";
+    if (status === "UNAVAILABLE") panelState = "UNAVAILABLE";
+    else if (status === "READING" || status === "CHECKING") panelState = "ACTIVE";
+    else if (status === "DONE") panelState = outcome === "SUCCESS" ? "SUCCESS" : "IDLE";
+    else if (status === "FAILED") panelState = "FAILED";
+    else if (status === "STALE") panelState = "STALE";
+    else if (status === "NO_COMPLETED_EXTRACTION") panelState = "NO_COMPLETED_EXTRACTION";
+    let message = ui.message || "";
+    if (panelState === "FAILED" && !message) message = failureMessage;
+    if (panelState === "UNAVAILABLE" && !message) message = "Status pembaruan tidak dapat dibaca.";
+    const diagnostic = attempt.error_message && attempt.error_message !== message ? attempt.error_message : "";
+    const counts = ui.counts || null;
+    const countsText = counts && typeof counts.models_completed === "number"
+      ? `${counts.models_completed} model selesai · ${counts.records ?? 0} record`
+      : "";
+    return {
+      panelState,
+      stageLabel: ui.stage_label || "Status tidak tersedia",
+      message,
+      diagnostic,
+      trustedText: trusted && trusted.timestamp ? formatFreshnessTime(trusted.timestamp) : "Belum ada snapshot terpercaya",
+      elapsedText: formatElapsed(ui.elapsed_seconds),
+      countsText,
+      active: Boolean(ui.active),
+      canRefresh: Boolean(ui.can_refresh)
+    };
+  }
+
+  function renderRefreshPanel(payload) {
+    const state = refreshPanelState(payload);
+    const forceOpen = state.active || state.panelState === "FAILED" || state.panelState === "STALE";
+    if (refreshPanel) {
+      refreshPanel.dataset.state = state.panelState;
+      if (refreshPanelOpen || forceOpen) {
+        refreshPanel.hidden = false;
+        refreshPanelOpen = true;
+      }
+    }
+    if (refreshStage) refreshStage.textContent = state.stageLabel;
+    if (refreshMessage) refreshMessage.textContent = state.message;
+    if (refreshDiagnostic) {
+      refreshDiagnostic.hidden = !state.diagnostic;
+      refreshDiagnostic.textContent = state.diagnostic;
+    }
+    if (refreshTrusted) refreshTrusted.textContent = state.trustedText;
+    if (refreshElapsed) refreshElapsed.textContent = state.elapsedText;
+    if (refreshCounts) refreshCounts.textContent = state.countsText || "—";
+    if (refreshButton) refreshButton.hidden = !state.canRefresh || state.active;
+    return state;
   }
 
   function renderFreshness(payload, error = "") {
@@ -85,42 +171,105 @@
     const timeElement = freshness.querySelector("[data-ct-freshness-time]");
     if (error || !payload) {
       freshness.dataset.state = "UNAVAILABLE";
-      if (stateElement) stateElement.textContent = "UNAVAILABLE";
+      if (stateElement) stateElement.textContent = "Tidak tersedia";
       if (timeElement) timeElement.textContent = "Status data tidak tersedia";
       freshness.title = error || "Status freshness tidak dapat dibaca.";
       return;
     }
-    const state = freshnessState(payload);
-    freshness.dataset.state = state;
-    if (stateElement) stateElement.textContent = state;
-    if (timeElement) timeElement.textContent = formatFreshnessTime(payload.latest_trusted_completed_at);
-    const failure = payload.latest_failure_message ? ` Refresh terakhir: ${payload.latest_failure_message}` : "";
-    freshness.title = `Trusted snapshot: ${formatFreshnessTime(payload.latest_trusted_completed_at)}.${failure}`;
+    const ui = payload.refresh_ui || {};
+    const machineState = ui.active
+      ? "REFRESHING"
+      : ui.status === "FAILED"
+        ? "FAILED"
+        : ui.status === "STALE"
+          ? "STALE"
+          : ui.status === "NO_COMPLETED_EXTRACTION"
+            ? "NO_COMPLETED_EXTRACTION"
+            : payload?.freshness_classification?.state || payload?.freshness || "UNAVAILABLE";
+    freshness.dataset.state = machineState;
+    if (stateElement) stateElement.textContent = chipStateLabel(payload);
+    const trustedTime = ui.trusted?.timestamp || payload.latest_trusted_completed_at;
+    if (timeElement) timeElement.textContent = trustedTime ? formatFreshnessTime(trustedTime) : "Belum ada snapshot";
+    const failure = ui.message ? ` ${ui.message}` : "";
+    freshness.title = `Data terakhir diperbarui: ${trustedTime ? formatFreshnessTime(trustedTime) : "Belum ada"}.${failure}`;
   }
 
-  async function loadFreshness() {
-    if (!freshness) return null;
+  async function loadRefreshStatus() {
     try {
-      const response = await fetch("/api/control-tower/health", { headers: { Accept: "application/json" }, credentials: "same-origin" });
+      const response = await fetch("/api/control-tower/refresh", { headers: { Accept: "application/json" }, credentials: "same-origin" });
       if (!response.ok) throw new Error(`Status ${response.status}`);
       const payload = await response.json();
       renderFreshness(payload);
+      renderRefreshPanel(payload);
       return payload;
     } catch (error) {
       renderFreshness(null, error.message);
+      if (refreshPanel) {
+        refreshPanel.dataset.state = "UNAVAILABLE";
+        refreshPanel.hidden = false;
+      }
+      if (refreshStage) refreshStage.textContent = "Status tidak tersedia";
+      if (refreshMessage) refreshMessage.textContent = "Status pembaruan tidak dapat dibaca.";
       return null;
     }
+  }
+
+  function setRefreshPanelMinimized(minimized) {
+    if (!refreshPanel) return;
+    refreshPanel.classList.toggle("is-minimized", minimized);
+    if (refreshMinimize) {
+      refreshMinimize.setAttribute("aria-expanded", String(!minimized));
+      refreshMinimize.textContent = minimized ? "Perluas" : "Minimalkan";
+    }
+  }
+
+  function openRefreshPanel() {
+    if (!refreshPanel) return;
+    refreshPanelOpen = true;
+    refreshPanel.hidden = false;
+    setRefreshPanelMinimized(false);
+  }
+
+  function stopRefreshPolling() {
+    if (refreshPollTimer) {
+      window.clearInterval(refreshPollTimer);
+      refreshPollTimer = 0;
+    }
+  }
+
+  function startRefreshPolling() {
+    if (refreshPollTimer) return Promise.resolve();
+    refreshPollCount = 0;
+    return new Promise((resolve) => {
+      const tick = async () => {
+        refreshPollCount += 1;
+        const payload = await loadRefreshStatus();
+        const state = refreshPanelState(payload || {});
+        const terminal = !state.active && state.panelState !== "UNAVAILABLE" && state.panelState !== "LOADING";
+        const hardStop = refreshPollCount >= 900;
+        if (terminal) {
+          if (state.panelState === "SUCCESS" && refreshReloadEvidence) void refreshReloadEvidence();
+          stopRefreshPolling();
+          resolve();
+          return;
+        }
+        if (hardStop) {
+          if (refreshMessage) refreshMessage.textContent = "Status pembaruan belum berubah dalam batas waktu pemantauan. Muat ulang halaman untuk memeriksa ulang.";
+          stopRefreshPolling();
+          resolve();
+        }
+      };
+      void tick();
+      refreshPollTimer = window.setInterval(() => { void tick(); }, 4000);
+    });
   }
 
   async function requestRefresh() {
     if (!refreshButton) return;
     refreshButton.disabled = true;
-    refreshButton.textContent = "Refreshing...";
-    if (freshness) {
-      freshness.dataset.state = "REFRESHING";
-      const stateElement = freshness.querySelector("[data-ct-freshness-state]");
-      if (stateElement) stateElement.textContent = "REFRESHING";
-    }
+    openRefreshPanel();
+    if (refreshStage) refreshStage.textContent = "Menyiapkan pembaruan";
+    if (refreshMessage) refreshMessage.textContent = "Memeriksa ketersediaan pembaruan...";
     try {
       const response = await fetch("/api/control-tower/refresh", {
         method: "POST",
@@ -129,23 +278,37 @@
       });
       let payload = {};
       try { payload = await response.json(); } catch { /* response body is optional */ }
-      if (!response.ok) throw new Error(payload.detail || `Request gagal (${response.status}).`);
-
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, attempt === 0 ? 900 : 3000));
-        const health = await loadFreshness();
-        if (!health || freshnessState(health) !== "REFRESHING") break;
+      if (response.status === 409) {
+        const fresh = await loadRefreshStatus();
+        if (fresh) await startRefreshPolling();
+        return;
       }
+      if (!response.ok) throw new Error(payload.detail || `Request gagal (${response.status}).`);
+      await startRefreshPolling();
     } catch (error) {
-      renderFreshness(null, error.message);
+      if (refreshPanel) {
+        refreshPanel.dataset.state = "UNAVAILABLE";
+        refreshPanel.hidden = false;
+      }
+      if (refreshStage) refreshStage.textContent = "Gagal memulai pembaruan";
+      if (refreshMessage) refreshMessage.textContent = error.message || "Status pembaruan tidak dapat dibaca.";
     } finally {
       refreshButton.disabled = false;
-      refreshButton.textContent = "Refresh Data";
     }
   }
 
-  if (freshness) loadFreshness();
+  if (freshness) {
+    loadRefreshStatus().then((payload) => {
+      const state = refreshPanelState(payload || {});
+      if (state.active || state.panelState === "FAILED" || state.panelState === "STALE") openRefreshPanel();
+      if (state.active) void startRefreshPolling();
+    });
+  }
   refreshButton?.addEventListener("click", requestRefresh);
+  refreshMinimize?.addEventListener("click", () => {
+    if (!refreshPanel) return;
+    setRefreshPanelMinimized(!refreshPanel.classList.contains("is-minimized"));
+  });
 
   const contextBar = document.querySelector("[data-ct-context-return]");
   const returnTo = safeReturnPath(params.get("return_to"));
@@ -813,18 +976,26 @@
     setTemuanExpanded(temuanExpanded, false);
     updateScrollCue();
 
-    Promise.allSettled(categoryOrder.map(async (category) => {
-      const payload = await fetchEvidenceCategory(category);
-      ingestPayload(category, payload);
-    })).then((results) => {
-      allEvidenceUnavailable = categoryOrder.every((category) => !categoryAvailability[category]);
-      if (allEvidenceUnavailable) {
-        categoryOrder.forEach((category) => { categoryCounts[category] = null; });
-        if (mapStatus) mapStatus.textContent = "Data temuan tidak tersedia. Process Map tetap dapat digunakan untuk orientasi proses.";
-      }
-      renderCategoryCounts();
-      renderNodeSignals();
+    function loadEvidenceData(restoreSelection = false) {
+      return Promise.allSettled(categoryOrder.map(async (category) => {
+        const payload = await fetchEvidenceCategory(category);
+        ingestPayload(category, payload);
+      })).then((results) => {
+        allEvidenceUnavailable = categoryOrder.every((category) => !categoryAvailability[category]);
+        if (allEvidenceUnavailable) {
+          categoryOrder.forEach((category) => { categoryCounts[category] = null; });
+          if (mapStatus) mapStatus.textContent = "Data temuan tidak tersedia. Process Map tetap dapat digunakan untuk orientasi proses.";
+        }
+        renderCategoryCounts();
+        renderNodeSignals();
+        if (restoreSelection && selectedNode) openInspector(selectedNode, false, false);
+        return results;
+      });
+    }
 
+    refreshReloadEvidence = () => loadEvidenceData(true);
+
+    loadEvidenceData(false).then(() => {
       const requestedProcess = params.get("selected_process");
       const requestedNode = requestedProcess
         ? nodes.find((node) => aliasesFor(node.dataset.processKey).includes(requestedProcess) || node.dataset.processKey === requestedProcess)

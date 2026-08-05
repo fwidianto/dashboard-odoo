@@ -211,7 +211,7 @@ class ControlTowerService:
         try:
             attempt = self._row("""
                 SELECT run_id, status, started_at, completed_at, finished_at,
-                       duration_seconds, company_id, error_message,
+                       duration_seconds, company_id, error_message, model_counts,
                        trigger, requested_by
                 FROM ct_extraction_run
                 WHERE company_id = :company_id
@@ -223,7 +223,7 @@ class ControlTowerService:
             # retain health compatibility with the accepted pre-migration schema.
             attempt = self._row("""
                 SELECT run_id, status, started_at, completed_at,
-                       company_id, error_message
+                       company_id, error_message, model_counts
                 FROM ct_extraction_run
                 WHERE company_id = :company_id
                 ORDER BY started_at DESC

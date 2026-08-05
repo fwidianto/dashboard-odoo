@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 
 from src.control_tower.refresh import REFRESH_COORDINATOR, RefreshAlreadyRunning
+from src.control_tower.refresh_ui import refresh_ui_projection
 from src.control_tower.service import (
     COMPANY_ID,
     ControlTowerDatabaseUnavailable,
@@ -59,17 +60,23 @@ def control_tower_refresh_status(
     attempt_status = health.get("latest_refresh_attempt_status")
     candidate_pending = attempt_status == "READY_FOR_PUBLISH"
     stale_attempt = bool(health.get("latest_refresh_attempt_stale"))
-    active = coordinator["active_request"] or (attempt_status == "RUNNING" and not stale_attempt)
+    active = coordinator["active_request"] or (attempt_status in {"RUNNING", "READY_FOR_PUBLISH"} and not stale_attempt)
+    can_refresh = is_admin(request) and not candidate_pending and not stale_attempt
     return {
         "company_id": COMPANY_ID,
         "active": active,
-        "can_refresh": is_admin(request) and not candidate_pending and not stale_attempt,
+        "can_refresh": can_refresh,
         "candidate_pending": candidate_pending,
         "stale_attempt": stale_attempt,
         "coordinator": coordinator,
         "latest_attempt": health.get("latest_attempt"),
         "latest_trusted_run_id": health.get("latest_trusted_run_id"),
+        "latest_trusted_refresh_at": health.get("latest_trusted_completed_at"),
+        "displayed_snapshot_run_id": health.get("latest_trusted_run_id"),
         "serving_older_trusted_snapshot": health.get("serving_older_trusted_snapshot"),
+        "freshness": health.get("freshness"),
+        "freshness_classification": health.get("freshness_classification"),
+        "refresh_ui": refresh_ui_projection(health, coordinator, can_refresh),
     }
 
 

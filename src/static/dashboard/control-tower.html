@@ -28,14 +28,35 @@
 </nav>
 <div class="ct-header-tools">
 <div aria-live="polite" class="ct-freshness-compact" data-ct-freshness="" data-state="LOADING" title="Memeriksa status data">
-<span class="ct-freshness-state" data-ct-freshness-state="">LOADING</span>
-<span class="ct-freshness-time" data-ct-freshness-time="">Memeriksa data...</span>
+<span class="ct-freshness-state" data-ct-freshness-state="">Memeriksa</span>
+<span class="ct-freshness-label">Data terakhir diperbarui</span>
+<time class="ct-freshness-time" data-ct-freshness-time="">Memeriksa data...</time>
 </div>
-<button class="ct-refresh-compact" data-ct-refresh="" type="button">Refresh Data</button>
+<button class="ct-refresh-compact" data-ct-refresh="" type="button" hidden>Refresh Data</button>
 <button aria-pressed="true" class="ct-mode-toggle" data-ct-mode-toggle="" type="button">Desk mode</button>
 <a class="ct-exit" href="/logout">Keluar</a>
 </div>
 </header>
+<section aria-label="Pembaruan data Control Tower" class="ct-refresh-panel" data-ct-refresh-panel="" hidden="">
+<div class="ct-refresh-panel-head">
+<div class="ct-refresh-title-wrap">
+<span class="ct-window-kicker">Pembaruan Data</span>
+<strong data-ct-refresh-title="">Status pembaruan</strong>
+</div>
+<button aria-controls="ctRefreshBody" aria-expanded="true" class="ct-refresh-toggle" data-ct-refresh-minimize="" type="button">Minimalkan</button>
+</div>
+<div class="ct-refresh-panel-body" id="ctRefreshBody">
+<p class="ct-refresh-stage" data-ct-refresh-stage="">Memeriksa status data...</p>
+<p class="ct-refresh-message" data-ct-refresh-message=""></p>
+<p class="ct-refresh-diagnostic" data-ct-refresh-diagnostic="" hidden=""></p>
+<dl class="ct-refresh-detail">
+<div><dt>Snapshot terpercaya</dt><dd data-ct-refresh-trusted="">—</dd></div>
+<div><dt>Waktu berjalan</dt><dd data-ct-refresh-elapsed="">—</dd></div>
+<div><dt>Progres</dt><dd data-ct-refresh-counts="">—</dd></div>
+</dl>
+<p class="ct-refresh-note" data-ct-refresh-note="">Data yang ditampilkan tetap snapshot terpercaya selama pembaruan berjalan.</p>
+</div>
+</section>
 <section aria-labelledby="ctMapHeading" class="ct-map-stage" data-ct-map-stage="">
 <h1 class="ct-visually-hidden" id="ctMapHeading">Process Map Control Tower Operasional</h1>
 <section aria-labelledby="ctTemuanHeading" class="ct-floating-temuan is-collapsed" data-ct-temuan="">
