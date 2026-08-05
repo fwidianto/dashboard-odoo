@@ -5,6 +5,22 @@
 
 This file governs every future Codex task prompt and every ChatGPT GitHub review for the Control Tower.
 
+## Roadmap anchor
+
+The owner reactivated the frozen Control Tower roadmap on 2026-08-05. The current active capability is **Phase 3 — Real Refresh Data workflow** as recorded in the canonical PersonalOS status update.
+
+Every future prompt and review must anchor to these rules:
+
+- normal Refresh Data must use the incremental pipeline;
+- full extraction is maintenance/bootstrap/recovery only;
+- a visible button is not accepted unless its real execution path is operationally feasible;
+- mocked tests cannot prove operational runtime;
+- staging measurement is required before claiming the refresh capability is ready;
+- Phase 3 is the current active capability after the canonical PersonalOS status update;
+- no frontend redesign or later roadmap work may interrupt it unless a real blocker is demonstrated.
+
+Historical descriptions of frontend recovery or a full-extraction normal path remain historical, paused, or completed evidence only.
+
 ## Mandatory live preflight
 
 Before publishing any new Codex task, ChatGPT must freshly load the current authority files through the GitHub connector. Previously fetched content, conversation memory, and summaries are not sufficient substitutes.
