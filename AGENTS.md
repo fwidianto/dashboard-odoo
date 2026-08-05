@@ -94,6 +94,64 @@ Temporary gates must state their expiry condition. When that condition is met, r
 
 For frontend work, obtain an early screenshot comparison against the approved baseline before completing the full run. Stop for owner review when the emerging result is materially smaller, less capable, or visually inconsistent with the approved baseline.
 
+## Frontend visual preservation gate
+
+For significant frontend work, use this sub-lifecycle inside PDS-001:
+
+`Visual baseline → Golden screen → Owner approval → Implementation → Rendered comparison → Propagation`
+
+### Visual authority order
+
+1. latest owner-approved golden-screen image or browser-rendered prototype;
+2. owner-approved annotated layout, dimensions, and panel states;
+3. frozen business structure, terminology, interactions, and safety rules;
+4. approved component and design-system specification;
+5. accepted implementation behavior that does not conflict with the above;
+6. external references;
+7. agent-generated recommendations and implementation preferences.
+
+External references are **modifiers, not replacements**. They may improve only a named property such as spacing, density, panel behavior, typography, table treatment, or motion. They must not replace the approved visual identity, information hierarchy, process structure, terminology, or composition without explicit owner approval.
+
+### Mandatory frontend rules
+
+- Do not restart or reinterpret an owner-approved screen because a new session, agent, model, or reference begins.
+- Preserve the existing design lineage and identify the exact baseline artifact before editing UI code.
+- Complete and obtain owner approval for one representative screen before propagating the visual system across routes.
+- Use static HTML, Figma, or a browser-rendered prototype for precision UI approval. Generated images may support mood or early composition discussion only and are not authoritative layout specifications.
+- Compare the implementation side by side with the approved baseline at the required viewport and panel states.
+- Unit tests, DOM inspection, accessibility checks, and overflow checks do not substitute for rendered visual review.
+- If screenshot or rendered inspection is unavailable, report the visual status as `UNVERIFIED` or `BLOCKED` and stop for owner review.
+- Do not simplify real business structure, invent labels, counts, relationships, or process stages for visual convenience.
+- Do not modify unrelated pages during a bounded representative-screen task.
+
+### Required frontend preflight
+
+Before changing UI code, record:
+
+```text
+Frontend visual preflight
+- Authoritative baseline:
+- Exact screen and viewport:
+- Elements that must remain unchanged:
+- One visual problem being solved:
+- Allowed reference influence:
+- Explicit non-scope:
+- Required rendered states:
+- Owner acceptance path:
+- Stop condition:
+```
+
+If the baseline is missing, contradictory, or not recoverable, stop in Design and obtain owner approval before editing production UI.
+
+### Dual frontend status
+
+Every material frontend package must report both:
+
+- **Technical:** `COMPLETE`, `PARTIAL`, or `BLOCKED`;
+- **Visual:** `APPROVED`, `UNVERIFIED`, or `REJECTED`.
+
+A frontend package is complete only when `Technical = COMPLETE` and `Visual = APPROVED`.
+
 Default usage-efficient execution pattern:
 
 ```text
@@ -102,6 +160,8 @@ one Luna implementation run
 → tests and screenshots
 → one Terra independent review of the complete capability
 ```
+
+For original visual architecture or golden-screen composition, use Sol High before Luna implementation. Luna should reproduce an approved composition rather than inventing the visual architecture during a broad implementation campaign.
 
 Do not invoke independent review repeatedly for micro-changes that belong to the same capability.
 
@@ -249,7 +309,7 @@ Every substantial Codex run must finish with:
 1. **Evidence** — tests, database checks, reconciliation, visual proof, or operational proof actually performed.
 2. **Implementation** — the smallest relevant schema, API, files, or architecture changed.
 3. **Safety** — authentication, company scope, migration, rollback, and read-only evidence when applicable.
-4. **Readiness** — the narrowest justified capability gate and label.
+4. **Readiness** — the narrowest justified capability gate and label. For frontend work, include the dual Technical/Visual status.
 5. **Limitations and findings** — incomplete, uncertain, deferred, or unsafe areas, with each material issue classified as `BLOCKER`, `MUST DO NOW`, `IMPORTANT LATER`, or `LOW PRIORITY`.
 6. **Repository status** — branch, commit, push, PR, and uncommitted state.
 7. **Next task** — one bounded recommendation only after re-anchoring it to the approved goal and current meaningful capability.
