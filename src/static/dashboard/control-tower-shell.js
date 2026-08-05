@@ -461,10 +461,45 @@
     const categoryButtons = [...stage.querySelectorAll("[data-ct-category]")];
     const inspectorCategoryButtons = [...stage.querySelectorAll("[data-ct-inspector-category]")];
 
-    const categoryCounts = Object.fromEntries(categoryOrder.map((category) => [category, null]));
-    const categoryAvailability = Object.fromEntries(categoryOrder.map((category) => [category, false]));
-    const processCounts = new Map();
-    const rowsByCategory = new Map();
+    function createEvidenceAccumulator(categoryOrder) {
+      const state = {
+        categoryCounts: Object.fromEntries(categoryOrder.map((category) => [category, null])),
+        categoryAvailability: Object.fromEntries(categoryOrder.map((category) => [category, false])),
+        processCounts: new Map(),
+        rowsByCategory: new Map()
+      };
+      function reset() {
+        categoryOrder.forEach((category) => {
+          state.categoryCounts[category] = null;
+          state.categoryAvailability[category] = false;
+        });
+        state.processCounts.clear();
+        state.rowsByCategory.clear();
+      }
+      function ingest(category, payload) {
+        state.categoryAvailability[category] = true;
+        state.rowsByCategory.set(category, Array.isArray(payload?.rows) ? payload.rows : []);
+        const counts = payload?.category_counts || {};
+        categoryOrder.forEach((key) => {
+          if (counts[key] !== undefined && counts[key] !== null) state.categoryCounts[key] = Number(counts[key]) || 0;
+        });
+
+        const items = Array.isArray(payload?.process_counts) ? payload.process_counts : [];
+        items.forEach((item) => {
+          const key = String(item?.process_key || "");
+          if (!key) return;
+          if (!state.processCounts.has(key)) state.processCounts.set(key, Object.fromEntries(categoryOrder.map((name) => [name, 0])));
+          state.processCounts.get(key)[category] += Number(item?.count || 0);
+        });
+      }
+      return { state, reset, ingest };
+    }
+
+    const evidence = createEvidenceAccumulator(categoryOrder);
+    const categoryCounts = evidence.state.categoryCounts;
+    const categoryAvailability = evidence.state.categoryAvailability;
+    const processCounts = evidence.state.processCounts;
+    const rowsByCategory = evidence.state.rowsByCategory;
     let selectedNode = null;
     let allEvidenceUnavailable = false;
     let routeAnimationRun = 0;
@@ -582,20 +617,7 @@
     }
 
     function ingestPayload(category, payload) {
-      categoryAvailability[category] = true;
-      rowsByCategory.set(category, Array.isArray(payload?.rows) ? payload.rows : []);
-      const counts = payload?.category_counts || {};
-      categoryOrder.forEach((key) => {
-        if (counts[key] !== undefined && counts[key] !== null) categoryCounts[key] = Number(counts[key]) || 0;
-      });
-
-      const items = Array.isArray(payload?.process_counts) ? payload.process_counts : [];
-      items.forEach((item) => {
-        const key = String(item?.process_key || "");
-        if (!key) return;
-        if (!processCounts.has(key)) processCounts.set(key, Object.fromEntries(categoryOrder.map((name) => [name, 0])));
-        processCounts.get(key)[category] += Number(item?.count || 0);
-      });
+      evidence.ingest(category, payload);
     }
 
     async function fetchEvidenceCategory(category) {
@@ -977,6 +999,7 @@
     updateScrollCue();
 
     function loadEvidenceData(restoreSelection = false) {
+      evidence.reset();
       return Promise.allSettled(categoryOrder.map(async (category) => {
         const payload = await fetchEvidenceCategory(category);
         ingestPayload(category, payload);
